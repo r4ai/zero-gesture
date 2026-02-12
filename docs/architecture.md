@@ -8,8 +8,8 @@
 ### Core Philosophy
 
 - **Zero-Latency Hook:** マウス入力の監視と遮断は、OSのネイティブAPIを直接叩き、最小限のオーバーヘッドで行う。
-- **Native Rendering:** ジェスチャー軌跡（Trail）の描画にはWebview（HTML/CSS）を使用せず、Direct2D/GDIを用いて透明なオーバーレイウィンドウに直接描画する。
-- **On-Demand Webview:** 設定画面が必要な時のみWebview（Edge WebView2）をロードし、通常時はメモリから解放する。
+- **Native Rendering:** ジェスチャー軌跡（Trail）の描画にはWebviewを使用せず、Direct2D/GDIを用いて透明なオーバーレイウィンドウに直接描画する。
+- **On-Demand Webview:** 設定画面が必要な時のみWebviewをロードし、通常時はメモリから解放する。
 
 ---
 
@@ -28,7 +28,7 @@ graph TD
     end
 
     subgraph "Hook Thread (Win32 Message Loop)"
-        HM[Mouse Hook (WH_MOUSE_LL)]
+        HM["Mouse Hook (WH_MOUSE_LL)"]
         GL[Gesture Logic]
 
         HM -->|Raw Coords| GL
@@ -92,7 +92,7 @@ TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成
 
 ユーザーがジェスチャー定義を編集するための画面です。
 
-- **Technology:** Tauri Frontend (HTML/CSS/JS + Framework like Svelte/React)
+- **Technology:** Tauri Frontend (React + Tailwind CSS + shdcn/ui)
 - **Responsibility:**
   - ジェスチャーとアクションのマッピング編集。
   - 軌跡の色・太さの設定。
@@ -130,6 +130,7 @@ TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成
 | **Concurrency**      | `std::thread`, `crossbeam-channel` | スレッド管理と高速なメッセージパッシング         |
 | **State Mngt**       | `std::sync::{Arc, RwLock}`         | 設定データ等のスレッド間共有                     |
 | **Serialization**    | `serde`, `serde_json`              | 設定ファイルの保存・読み込み                     |
+| **Logging**          | `log`                              | ログ出力                                         |
 | **Input Simulation** | `windows` (SendInput)              | キーボード・マウス操作の自動実行                 |
 | **Frontend**         | React or Svelte + TypeScript       | 設定画面のUI構築                                 |
 
