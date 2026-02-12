@@ -90,6 +90,11 @@ pub fn run() {
     let shared_config = SharedConfig::new(config::load_or_default());
 
     let app = tauri::Builder::default()
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .level(tauri_plugin_log::log::LevelFilter::Info)
+                .build(),
+        )
         .plugin(tauri_plugin_opener::init())
         .manage(shared_config.clone())
         .manage(ExitState::new())
