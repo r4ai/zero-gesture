@@ -1996,6 +1996,7 @@ dependencies = [
 name = "mouse-gesture"
 version = "0.1.0"
 dependencies = [
+ "crossbeam-channel",
  "serde",
  "serde_json",
  "tauri",
