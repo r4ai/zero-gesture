@@ -27,7 +27,7 @@ const CONFIG_FILE_NAME: &str = "zero-gesture.config.json";
 /// assert_eq!(config.direction_switch_confirm_px, 8);
 /// assert_eq!(config.axis_ambiguity_deadzone_px, 2);
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct AppConfig {
     /// Mouse button that triggers a gesture (e.g. `"right"`).
