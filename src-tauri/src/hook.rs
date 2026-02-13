@@ -172,6 +172,40 @@ fn resolve_min_segment_px(value: i32) -> i32 {
     }
 }
 
+/// Resolves `direction_switch_confirm_px` from config with a safe fallback.
+///
+/// Values less than or equal to zero are invalid and replaced by
+/// [`AppConfig::DEFAULT_DIRECTION_SWITCH_CONFIRM_PX`].
+fn resolve_direction_switch_confirm_px(value: i32) -> i32 {
+    if value > 0 {
+        value
+    } else {
+        warn!(
+            "Invalid direction_switch_confirm_px={} in config, falling back to {}",
+            value,
+            AppConfig::DEFAULT_DIRECTION_SWITCH_CONFIRM_PX
+        );
+        AppConfig::DEFAULT_DIRECTION_SWITCH_CONFIRM_PX
+    }
+}
+
+/// Resolves `axis_ambiguity_deadzone_px` from config with a safe fallback.
+///
+/// Negative values are invalid and replaced by
+/// [`AppConfig::DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX`].
+fn resolve_axis_ambiguity_deadzone_px(value: i32) -> i32 {
+    if value >= 0 {
+        value
+    } else {
+        warn!(
+            "Invalid axis_ambiguity_deadzone_px={} in config, falling back to {}",
+            value,
+            AppConfig::DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX
+        );
+        AppConfig::DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX
+    }
+}
+
 /// Resolves `safety_timeout_ms` from config with a safe fallback.
 ///
 /// A value of zero is invalid and replaced by
@@ -280,6 +314,8 @@ struct HookConfig {
     gesture_threshold: i32,
     safety_timeout_ms: u32,
     min_segment_px: i32,
+    direction_switch_confirm_px: i32,
+    axis_ambiguity_deadzone_px: i32,
     /// Pre-parsed gesture-to-action bindings.
     ///
     /// String keys from the config are parsed into [`GestureKind`] at
@@ -444,6 +480,12 @@ pub fn spawn(
             gesture_threshold: resolve_gesture_threshold(cfg.gesture_threshold),
             safety_timeout_ms: resolve_safety_timeout_ms(cfg.safety_timeout_ms),
             min_segment_px: resolve_min_segment_px(cfg.min_segment_px),
+            direction_switch_confirm_px: resolve_direction_switch_confirm_px(
+                cfg.direction_switch_confirm_px,
+            ),
+            axis_ambiguity_deadzone_px: resolve_axis_ambiguity_deadzone_px(
+                cfg.axis_ambiguity_deadzone_px,
+            ),
             bindings,
         }
     };
@@ -705,7 +747,11 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
                         x: info.pt.x,
                         y: info.pt.y,
                     });
-                    let mut recognizer = GestureRecognizer::new(hs.config.min_segment_px);
+                    let mut recognizer = GestureRecognizer::new(
+                        hs.config.min_segment_px,
+                        hs.config.direction_switch_confirm_px,
+                        hs.config.axis_ambiguity_deadzone_px,
+                    );
                     recognizer.add_point(origin.x, origin.y);
                     recognizer.add_point(info.pt.x, info.pt.y);
                     hs.state = GestureState::Gesturing {

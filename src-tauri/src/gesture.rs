@@ -8,6 +8,8 @@ use std::cmp::Ordering;
 use log::debug;
 use serde::{Deserialize, Serialize};
 
+use crate::config::AppConfig;
+
 /// A single direction of mouse movement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
@@ -62,24 +64,37 @@ pub struct GestureRecognizer {
     last_point: Option<(i32, i32)>,
     /// Current direction being accumulated.
     current_dir: Option<Direction>,
+    /// Candidate direction waiting for hysteresis confirmation.
+    pending_dir: Option<Direction>,
+    /// Distance accumulated in the pending direction (pixels).
+    pending_accum: i32,
     /// Distance accumulated in the current segment (pixels).
     segment_accum: i32,
     /// Minimum distance (in pixels) before a segment is confirmed.
     min_segment_px: i32,
+    /// Minimum distance (in pixels) required to accept a direction change.
+    direction_switch_confirm_px: i32,
+    /// Deadzone used to ignore tiny diagonal moves with no clear dominant axis.
+    axis_ambiguity_deadzone_px: i32,
 }
 
 impl GestureRecognizer {
-    /// Default minimum distance (in pixels) before a segment is confirmed.
-    const DEFAULT_MIN_SEGMENT_PX: i32 = 30;
-
-    /// Creates a new gesture recognizer with the given minimum segment distance.
-    pub fn new(min_segment_px: i32) -> Self {
+    /// Creates a new gesture recognizer with explicit thresholds.
+    pub fn new(
+        min_segment_px: i32,
+        direction_switch_confirm_px: i32,
+        axis_ambiguity_deadzone_px: i32,
+    ) -> Self {
         Self {
             segments: Vec::new(),
             last_point: None,
             current_dir: None,
+            pending_dir: None,
+            pending_accum: 0,
             segment_accum: 0,
             min_segment_px,
+            direction_switch_confirm_px,
+            axis_ambiguity_deadzone_px,
         }
     }
 
@@ -105,8 +120,64 @@ impl GestureRecognizer {
             return;
         }
 
-        // Determine the primary direction based on which delta is larger in magnitude.
-        let new_dir = match dx.abs().cmp(&dy.abs()) {
+        // Determine the primary direction based on which delta is larger in
+        // magnitude. Tiny near-diagonal movement is treated as ambiguous jitter.
+        let new_dir = match Self::classify_direction(dx, dy, self.axis_ambiguity_deadzone_px) {
+            Some(dir) => dir,
+            None => {
+                // Even when direction classification is ignored, advance the
+                // cursor baseline so tiny jitter does not inflate later deltas.
+                self.last_point = Some((x, y));
+                return;
+            }
+        };
+
+        let distance = Self::distance_in_primary_axis(new_dir, dx, dy);
+
+        match self.current_dir {
+            // No active direction yet: lock the first direction only after it
+            // crosses a hysteresis threshold, so tiny low-speed wobble does not
+            // pick a wrong axis immediately.
+            None => {
+                self.accumulate_pending(new_dir, distance);
+                if self.pending_accum >= self.direction_switch_confirm_px {
+                    self.current_dir = self.pending_dir.take();
+                    self.segment_accum = self.pending_accum;
+                    self.pending_accum = 0;
+                }
+            }
+            Some(current) if new_dir == current => {
+                self.pending_dir = None;
+                self.pending_accum = 0;
+                self.segment_accum += distance;
+            }
+            Some(current) => {
+                self.accumulate_pending(new_dir, distance);
+                if self.pending_accum >= self.direction_switch_confirm_px {
+                    self.confirm_segment(current);
+                    self.current_dir = self.pending_dir.take();
+                    self.segment_accum = self.pending_accum;
+                    self.pending_accum = 0;
+                }
+            }
+        }
+
+        self.last_point = Some((x, y));
+    }
+
+    fn classify_direction(dx: i32, dy: i32, ambiguity_deadzone_px: i32) -> Option<Direction> {
+        let abs_dx = dx.abs();
+        let abs_dy = dy.abs();
+
+        if abs_dx > 0
+            && abs_dy > 0
+            && abs_dx.min(abs_dy) <= ambiguity_deadzone_px
+            && (abs_dx - abs_dy).abs() <= ambiguity_deadzone_px
+        {
+            return None;
+        }
+
+        Some(match abs_dx.cmp(&abs_dy) {
             Ordering::Greater => {
                 if dx > 0 {
                     Direction::Right
@@ -133,43 +204,48 @@ impl GestureRecognizer {
                     Direction::Up
                 }
             }
-        };
+        })
+    }
 
-        // If direction changed, confirm the previous segment and start a new one.
-        if let Some(current) = self.current_dir {
-            if new_dir != current {
-                if self.segment_accum >= self.min_segment_px {
-                    // Only push if it differs from the last confirmed segment (no duplicates)
-                    // and we haven't reached the 2-segment cap yet.
-                    if self.segments.last() != Some(&current) {
-                        if self.segments.len() < 2 {
-                            self.segments.push(current);
-                            debug!(
-                                "Segment confirmed: {:?} (segments: {:?})",
-                                current, self.segments
-                            );
-                        } else {
-                            debug!(
-                                "Segment {:?} dropped (cap reached, segments: {:?})",
-                                current, self.segments
-                            );
-                        }
-                    }
-                }
-                // Always reset the accumulator when direction changes.
-                self.segment_accum = 0;
-            }
-        }
-
-        // Accumulate distance and update state.
-        self.current_dir = Some(new_dir);
-        // Accumulate the movement distance in the primary direction.
-        let distance = match new_dir {
+    fn distance_in_primary_axis(dir: Direction, dx: i32, dy: i32) -> i32 {
+        match dir {
             Direction::Left | Direction::Right => dx.abs(),
             Direction::Up | Direction::Down => dy.abs(),
-        };
-        self.segment_accum += distance;
-        self.last_point = Some((x, y));
+        }
+    }
+
+    fn accumulate_pending(&mut self, dir: Direction, distance: i32) {
+        if self.pending_dir == Some(dir) {
+            self.pending_accum += distance;
+        } else {
+            self.pending_dir = Some(dir);
+            self.pending_accum = distance;
+        }
+    }
+
+    fn confirm_segment(&mut self, current: Direction) {
+        if self.segment_accum < self.min_segment_px {
+            return;
+        }
+
+        // Only push if it differs from the last confirmed segment (no duplicates)
+        // and we haven't reached the 2-segment cap yet.
+        if self.segments.last() == Some(&current) {
+            return;
+        }
+
+        if self.segments.len() < 2 {
+            self.segments.push(current);
+            debug!(
+                "Segment confirmed: {:?} (segments: {:?})",
+                current, self.segments
+            );
+        } else {
+            debug!(
+                "Segment {:?} dropped (cap reached, segments: {:?})",
+                current, self.segments
+            );
+        }
     }
 
     /// Attempts to recognize a gesture from the current segments and ongoing movement.
@@ -226,7 +302,11 @@ impl GestureRecognizer {
 
 impl Default for GestureRecognizer {
     fn default() -> Self {
-        Self::new(Self::DEFAULT_MIN_SEGMENT_PX)
+        Self::new(
+            AppConfig::DEFAULT_MIN_SEGMENT_PX,
+            AppConfig::DEFAULT_DIRECTION_SWITCH_CONFIRM_PX,
+            AppConfig::DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX,
+        )
     }
 }
 
@@ -471,6 +551,23 @@ mod tests {
     }
 
     #[test]
+    fn test_initial_direction_hysteresis_handles_slow_down_with_wobble() {
+        let mut rec = GestureRecognizer::default();
+        rec.add_point(100, 100);
+
+        // Slow downward movement with repeated tiny horizontal wobble.
+        rec.add_point(100, 109);
+        rec.add_point(101, 110);
+        rec.add_point(101, 119);
+        rec.add_point(102, 120);
+        rec.add_point(102, 129);
+        rec.add_point(103, 130);
+        rec.add_point(103, 139);
+
+        assert_eq!(rec.recognize(), Some(GestureKind::Down));
+    }
+
+    #[test]
     fn test_two_segment_down_left() {
         let mut rec = GestureRecognizer::default();
         rec.add_point(100, 100);
@@ -546,5 +643,28 @@ mod tests {
             rec.add_point(150 - i * 10, 100);
         }
         assert_eq!(rec.recognize(), Some(GestureKind::RightLeft));
+    }
+
+    #[test]
+    fn test_micro_diagonal_move_is_treated_as_ambiguous() {
+        let mut rec = GestureRecognizer::default();
+        rec.add_point(100, 100);
+        rec.add_point(101, 101);
+
+        assert_eq!(rec.current_dir, None);
+        assert_eq!(rec.pending_dir, None);
+        assert_eq!(rec.pending_accum, 0);
+    }
+
+    #[test]
+    fn test_ambiguous_move_does_not_count_toward_next_segment_distance() {
+        let mut rec = GestureRecognizer::new(10, 8, 2);
+        rec.add_point(0, 0);
+        rec.add_point(1, 1); // ambiguous diagonal (ignored)
+        rec.add_point(1, 10); // from updated baseline: Down 9px
+        assert_eq!(rec.recognize(), None);
+
+        rec.add_point(1, 11); // Down accum reaches 10px
+        assert_eq!(rec.recognize(), Some(GestureKind::Down));
     }
 }
