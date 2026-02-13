@@ -491,6 +491,18 @@ fn handle_start() {
         };
 
         state.trail.clear();
+
+        // Clear the persistent back buffer so no stale trail is visible.
+        unsafe {
+            let full_rc = RECT {
+                left: 0,
+                top: 0,
+                right: GetSystemMetrics(SM_CXVIRTUALSCREEN),
+                bottom: GetSystemMetrics(SM_CYVIRTUALSCREEN),
+            };
+            FillRect(state.mem_dc, &full_rc, state.black_brush);
+        }
+
         debug!("Overlay: StartGesture — showing window");
         Some(state.hwnd)
     });
@@ -503,11 +515,12 @@ fn handle_start() {
     }
 }
 
-/// Handle `WM_OVERLAY_TRACK`: append point, request repaint.
+/// Handle `WM_OVERLAY_TRACK`: draw new segment into back buffer, invalidate dirty rect.
 ///
-/// Only the bounding box from the previous point to the new point is
-/// invalidated (with padding for pen width), avoiding a full-screen
-/// repaint on every mouse move.
+/// The new line segment is drawn directly into the persistent back buffer
+/// (`mem_dc`), so `WM_PAINT` only needs to `BitBlt`. Only the bounding box
+/// from the previous point to the new point (padded by pen width) is
+/// invalidated.
 #[cfg(windows)]
 fn handle_track(x: i32, y: i32) {
     OVERLAY_STATE.with(|cell| {
@@ -528,9 +541,16 @@ fn handle_track(x: i32, y: i32) {
         let prev = state.trail.last().copied();
         state.trail.push(new_pt);
 
-        // Only invalidate the dirty rect when there is a previous point
-        // to draw a line segment from.
+        // Draw the new segment into the persistent back buffer and
+        // invalidate only the affected region.
         if let Some(prev) = prev {
+            unsafe {
+                let old_pen = SelectObject(state.mem_dc, state.pen as *mut _);
+                let pts = [prev, new_pt];
+                Polyline(state.mem_dc, pts.as_ptr(), 2);
+                SelectObject(state.mem_dc, old_pen);
+            }
+
             let pad = state.config.pen_width / 2 + 1;
             let dirty = RECT {
                 left: prev.x.min(new_pt.x) - pad,
@@ -566,6 +586,19 @@ fn handle_end() {
         };
 
         state.trail.clear();
+
+        // Clear the persistent back buffer so the next BitBlt shows black
+        // (= transparent via color key).
+        unsafe {
+            let full_rc = RECT {
+                left: 0,
+                top: 0,
+                right: GetSystemMetrics(SM_CXVIRTUALSCREEN),
+                bottom: GetSystemMetrics(SM_CYVIRTUALSCREEN),
+            };
+            FillRect(state.mem_dc, &full_rc, state.black_brush);
+        }
+
         debug!("Overlay: EndGesture — hiding window");
         Some(state.hwnd)
     });
