@@ -105,18 +105,8 @@ impl WorkerThreads {
 }
 
 pub struct ThreadRuntime {
-    lifecycle: Mutex<RuntimeLifecycle>,
+    workers: Mutex<Option<WorkerThreads>>,
     config_update_lock: Mutex<()>,
-}
-
-/// Lifecycle state of background worker threads.
-enum RuntimeLifecycle {
-    /// Workers are active and can be restarted.
-    Running(WorkerThreads),
-    /// Shutdown has started and workers are being torn down.
-    ShuttingDown,
-    /// Shutdown has completed and workers are fully stopped.
-    Stopped,
 }
 
 impl ThreadRuntime {
@@ -124,9 +114,7 @@ impl ThreadRuntime {
     /// their lifetimes.
     pub fn start(shared_config: SharedConfig) -> Self {
         Self {
-            lifecycle: Mutex::new(RuntimeLifecycle::Running(WorkerThreads::spawn(
-                shared_config,
-            ))),
+            workers: Mutex::new(Some(WorkerThreads::spawn(shared_config))),
             config_update_lock: Mutex::new(()),
         }
     }
@@ -134,8 +122,8 @@ impl ThreadRuntime {
     /// Returns `true` if [`ThreadRuntime::shutdown`] has been called,
     /// meaning the application is ready to exit.
     pub fn should_allow_exit(&self) -> bool {
-        match self.lifecycle.lock() {
-            Ok(state) => !matches!(*state, RuntimeLifecycle::Running(_)),
+        match self.workers.lock() {
+            Ok(workers) => workers.is_none(),
             Err(_) => {
                 warn!("thread runtime lock poisoned while checking exit state");
                 true
@@ -161,27 +149,14 @@ impl ThreadRuntime {
             }
         };
 
-        let mut workers = {
-            let mut lifecycle = match self.lifecycle.lock() {
-                Ok(state) => state,
-                Err(_) => {
-                    warn!("thread runtime lock poisoned during shutdown");
-                    return;
+        match self.workers.lock() {
+            Ok(mut workers) => {
+                if let Some(mut running_workers) = workers.take() {
+                    running_workers.shutdown();
                 }
-            };
-
-            match std::mem::replace(&mut *lifecycle, RuntimeLifecycle::ShuttingDown) {
-                RuntimeLifecycle::Running(workers) => workers,
-                RuntimeLifecycle::ShuttingDown | RuntimeLifecycle::Stopped => return,
             }
-        };
-
-        workers.shutdown();
-
-        match self.lifecycle.lock() {
-            Ok(mut lifecycle) => *lifecycle = RuntimeLifecycle::Stopped,
             Err(_) => {
-                warn!("thread runtime lock poisoned after shutdown");
+                warn!("thread runtime lock poisoned during shutdown");
             }
         }
     }
@@ -189,32 +164,20 @@ impl ThreadRuntime {
     /// Restarts hook/overlay worker threads so they snapshot the latest config.
     ///
     /// Returns an error if the runtime has already started shutting down.
-    pub fn restart_workers(&self, shared_config: SharedConfig) -> Result<(), String> {
-        let mut lifecycle = self
-            .lifecycle
+    fn restart_workers(&self, shared_config: SharedConfig) -> Result<(), String> {
+        let mut workers = self
+            .workers
             .lock()
             .map_err(|_| "thread runtime lock poisoned".to_string())?;
 
-        let workers = match &mut *lifecycle {
-            RuntimeLifecycle::Running(workers) => workers,
-            RuntimeLifecycle::ShuttingDown | RuntimeLifecycle::Stopped => {
-                return Err("thread runtime is already shut down".to_string());
-            }
-        };
-
-        workers.shutdown();
-        *workers = WorkerThreads::spawn(shared_config);
+        let mut current = workers
+            .take()
+            .ok_or_else(|| "thread runtime is already shut down".to_string())?;
+        current.shutdown();
+        *workers = Some(WorkerThreads::spawn(shared_config));
 
         Ok(())
     }
-}
-
-/// Returns `true` when applying `next` requires worker-thread restart.
-///
-/// Hook and overlay threads snapshot configuration at startup, so any actual
-/// value change must restart both threads.
-fn should_restart_workers(current: &config::AppConfig, next: &config::AppConfig) -> bool {
-    current != next
 }
 
 /// Replaces the in-memory config and returns whether workers should restart.
@@ -228,7 +191,7 @@ fn replace_live_config(
         .map_err(|_| "shared config lock poisoned".to_string())?;
 
     let previous = current.clone();
-    let restart_required = should_restart_workers(&previous, &next);
+    let restart_required = previous != next;
     *current = next;
     Ok((restart_required, previous))
 }
@@ -349,24 +312,6 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn should_restart_workers_when_config_changes() {
-        let next = config::AppConfig {
-            trail_thickness: 5.0,
-            ..config::AppConfig::default()
-        };
-
-        assert!(should_restart_workers(&config::AppConfig::default(), &next));
-    }
-
-    #[test]
-    fn should_not_restart_workers_when_config_is_identical() {
-        let current = config::AppConfig::default();
-        let next = current.clone();
-
-        assert!(!should_restart_workers(&current, &next));
-    }
 
     #[test]
     fn replace_live_config_updates_shared_state() {
