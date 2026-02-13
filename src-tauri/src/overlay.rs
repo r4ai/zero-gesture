@@ -695,8 +695,8 @@ fn handle_end() {
 /// Window procedure for the overlay window.
 ///
 /// Handles:
-/// - `WM_ERASEBKGND` — fills with black (the transparent color key).
-/// - `WM_PAINT` — fills black background, then draws the trail with `Polyline`.
+/// - `WM_ERASEBKGND` — no-op (returns handled) to avoid redundant clears.
+/// - `WM_PAINT` — blits only the dirty rectangle from the persistent back buffer.
 /// - `WM_DESTROY` — posts `WM_QUIT` to exit the message loop.
 ///
 /// All other messages are passed to [`DefWindowProcW`].
