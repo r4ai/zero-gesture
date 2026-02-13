@@ -70,8 +70,18 @@ impl ThreadRuntime {
         }
     }
 
+    /// Returns `true` if [`ThreadRuntime::shutdown`] has been called,
+    /// meaning the application is ready to exit.
+    pub fn should_allow_exit(&self) -> bool {
+        self.is_shutdown.load(Ordering::SeqCst)
+    }
+
     /// Sends shutdown signals to both background threads and waits for them
     /// to terminate.
+    ///
+    /// After this call, [`ThreadRuntime::should_allow_exit`] returns `true`
+    /// and subsequent `RunEvent::ExitRequested` events will no longer be
+    /// prevented.
     ///
     /// This method is idempotent — calling it more than once is safe and has
     /// no effect after the first call.
@@ -92,33 +102,6 @@ impl ThreadRuntime {
     }
 }
 
-/// Controls whether the Tauri application is allowed to exit.
-///
-/// By default the app prevents exit (to keep running in the system tray).
-/// Call [`ExitState::request_exit`] to allow the process to terminate.
-pub struct ExitState {
-    allow_exit: AtomicBool,
-}
-
-impl ExitState {
-    /// Creates a new [`ExitState`] that blocks exit by default.
-    fn new() -> Self {
-        Self {
-            allow_exit: AtomicBool::new(false),
-        }
-    }
-
-    /// Marks the application as ready to exit. Subsequent
-    /// `RunEvent::ExitRequested` events will no longer be prevented.
-    pub fn request_exit(&self) {
-        self.allow_exit.store(true, Ordering::SeqCst);
-    }
-
-    /// Returns `true` if [`ExitState::request_exit`] has been called.
-    fn should_allow_exit(&self) -> bool {
-        self.allow_exit.load(Ordering::SeqCst)
-    }
-}
 
 /// Tauri command that opens (or focuses) the settings window.
 #[tauri::command]
@@ -142,7 +125,6 @@ pub fn run() {
         )
         .plugin(tauri_plugin_opener::init())
         .manage(shared_config.clone())
-        .manage(ExitState::new())
         .setup(move |app| {
             app.manage(ThreadRuntime::start(shared_config.clone()));
             tray::setup(app)?;
@@ -155,8 +137,8 @@ pub fn run() {
 
     app.run(|app, event| {
         if let tauri::RunEvent::ExitRequested { api, .. } = event {
-            let exit_state = app.state::<ExitState>();
-            if !exit_state.should_allow_exit() {
+            let runtime = app.state::<ThreadRuntime>();
+            if !runtime.should_allow_exit() {
                 api.prevent_exit();
             }
         }

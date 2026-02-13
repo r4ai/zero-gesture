@@ -41,8 +41,6 @@ pub fn setup<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
             }
             MENU_QUIT => {
                 let runtime = app.state::<crate::ThreadRuntime>();
-                let exit_state = app.state::<crate::ExitState>();
-                exit_state.request_exit();
                 runtime.shutdown();
                 app.exit(0);
             }
