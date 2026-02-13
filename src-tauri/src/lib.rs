@@ -1,4 +1,5 @@
 pub mod config;
+pub mod gesture;
 mod hook;
 #[path = "log.rs"]
 mod log_config;

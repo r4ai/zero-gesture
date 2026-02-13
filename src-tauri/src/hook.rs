@@ -87,9 +87,10 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
 use crossbeam_channel::{Receiver, Sender};
-use log::{debug, error, trace, warn};
+use log::{debug, error, info, trace, warn};
 
 use crate::config::AppConfig;
+use crate::gesture::GestureRecognizer;
 use crate::overlay::OverlayCommand;
 use crate::SharedConfig;
 
@@ -293,6 +294,8 @@ enum GestureState {
         /// [`GetTickCount`](windows_sys::Win32::System::SystemInformation::GetTickCount)
         /// value when we entered this state (for safety timeout).
         entered_tick: u32,
+        /// Recognizer for converting mouse movement into gesture patterns.
+        recognizer: GestureRecognizer,
     },
 }
 
@@ -613,7 +616,7 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
     let trigger_up = hs.config.trigger.up_msg();
     let tick = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount() };
 
-    match &hs.state {
+    match &mut hs.state {
         GestureState::Idle => {
             if msg == trigger_down {
                 debug!("Idle → ButtonDown at ({}, {})", info.pt.x, info.pt.y);
@@ -625,6 +628,7 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
             }
         }
         GestureState::ButtonDown { origin, .. } => {
+            let origin = *origin; // Copy origin before any potential state change
             if msg == WM_MOUSEMOVE {
                 let dx = info.pt.x - origin.x;
                 let dy = info.pt.y - origin.y;
@@ -641,13 +645,18 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
                         x: info.pt.x,
                         y: info.pt.y,
                     });
-                    hs.state = GestureState::Gesturing { entered_tick: tick };
+                    let mut recognizer = GestureRecognizer::new();
+                    recognizer.add_point(origin.x, origin.y);
+                    recognizer.add_point(info.pt.x, info.pt.y);
+                    hs.state = GestureState::Gesturing {
+                        entered_tick: tick,
+                        recognizer,
+                    };
                 }
                 return false; // never suppress mouse move
             }
             if msg == trigger_up {
                 debug!("ButtonDown → Idle (replay click)");
-                let origin = *origin;
                 hs.pending_replay = Some(ReplayInfo { origin });
                 hs.state = GestureState::Idle;
                 // Post WM_REPLAY_CLICK to the message loop (outside callback).
@@ -657,9 +666,10 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
                 return true; // suppress the button-up
             }
         }
-        GestureState::Gesturing { .. } => {
+        GestureState::Gesturing { recognizer, .. } => {
             if msg == WM_MOUSEMOVE {
                 trace!("Gesturing → Gesturing at ({}, {})", info.pt.x, info.pt.y);
+                recognizer.add_point(info.pt.x, info.pt.y);
                 let _ = hs.overlay_tx.send(OverlayCommand::TrackPoint {
                     x: info.pt.x,
                     y: info.pt.y,
@@ -668,6 +678,15 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
             }
             if msg == trigger_up {
                 debug!("Gesturing → Idle (end gesture)");
+                // Extract gesture result before transitioning state
+                let gesture = if let GestureState::Gesturing { recognizer, .. } = &hs.state {
+                    recognizer.recognize()
+                } else {
+                    None
+                };
+                if let Some(gesture) = gesture {
+                    info!("Gesture recognized: {:?}", gesture);
+                }
                 let _ = hs.overlay_tx.send(OverlayCommand::EndGesture);
                 hs.state = GestureState::Idle;
                 return true; // suppress the button-up
@@ -765,7 +784,7 @@ fn handle_safety_timer() {
         let stuck = match &hs.state {
             GestureState::Idle => false,
             GestureState::ButtonDown { entered_tick, .. }
-            | GestureState::Gesturing { entered_tick } => {
+            | GestureState::Gesturing { entered_tick, .. } => {
                 tick.wrapping_sub(*entered_tick) > timeout_ms
             }
         };
