@@ -23,7 +23,7 @@ const CONFIG_FILE_NAME: &str = "zero-gesture.config.json";
 /// assert_eq!(config.trail_thickness, 3.0);
 /// assert_eq!(config.gesture_threshold, 10);
 /// assert_eq!(config.safety_timeout_ms, 2000);
-/// assert_eq!(config.min_segment_px, 24);
+/// assert_eq!(config.min_segment_px, 12);
 /// assert_eq!(config.direction_switch_confirm_px, 8);
 /// assert_eq!(config.axis_ambiguity_deadzone_px, 2);
 /// ```
@@ -71,7 +71,7 @@ impl AppConfig {
     pub const DEFAULT_SAFETY_TIMEOUT_MS: u32 = 2000;
 
     /// Default minimum segment distance for gesture direction confirmation.
-    pub const DEFAULT_MIN_SEGMENT_PX: i32 = 24;
+    pub const DEFAULT_MIN_SEGMENT_PX: i32 = 12;
 
     /// Default hysteresis distance for direction switching.
     pub const DEFAULT_DIRECTION_SWITCH_CONFIRM_PX: i32 = 8;
