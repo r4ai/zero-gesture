@@ -1504,4 +1504,117 @@ mod tests {
             OverlayCommand::EndGesture
         ));
     }
+
+    // ── OverlayCommands unit tests ──────────────────────────────────────
+
+    #[test]
+    fn overlay_commands_new_is_empty() {
+        let cmds: OverlayCommands<3> = OverlayCommands::new();
+        assert!(cmds.is_empty());
+        assert_eq!(cmds.len(), 0);
+    }
+
+    #[test]
+    fn overlay_commands_push_and_len() {
+        let mut cmds: OverlayCommands<3> = OverlayCommands::new();
+        cmds.push(OverlayCommand::StartGesture);
+        assert_eq!(cmds.len(), 1);
+        assert!(!cmds.is_empty());
+
+        cmds.push(OverlayCommand::TrackPoint { x: 10, y: 20 });
+        cmds.push(OverlayCommand::EndGesture);
+        assert_eq!(cmds.len(), 3);
+    }
+
+    #[test]
+    #[should_panic(expected = "OverlayCommands overflow")]
+    fn overlay_commands_push_overflow_panics() {
+        let mut cmds: OverlayCommands<2> = OverlayCommands::new();
+        cmds.push(OverlayCommand::StartGesture);
+        cmds.push(OverlayCommand::EndGesture);
+        cmds.push(OverlayCommand::StartGesture); // should panic
+    }
+
+    #[test]
+    fn overlay_commands_index() {
+        let mut cmds: OverlayCommands<3> = OverlayCommands::new();
+        cmds.push(OverlayCommand::StartGesture);
+        cmds.push(OverlayCommand::TrackPoint { x: 5, y: 15 });
+        cmds.push(OverlayCommand::EndGesture);
+
+        assert!(matches!(cmds[0], OverlayCommand::StartGesture));
+        assert!(matches!(
+            cmds[1],
+            OverlayCommand::TrackPoint { x: 5, y: 15 }
+        ));
+        assert!(matches!(cmds[2], OverlayCommand::EndGesture));
+    }
+
+    #[test]
+    #[should_panic(expected = "index out of bounds")]
+    fn overlay_commands_index_out_of_bounds_panics() {
+        let cmds: OverlayCommands<3> = OverlayCommands::new();
+        let _ = &cmds[0];
+    }
+
+    #[test]
+    fn overlay_commands_last() {
+        let mut cmds: OverlayCommands<3> = OverlayCommands::new();
+        assert!(cmds.last().is_none());
+
+        cmds.push(OverlayCommand::StartGesture);
+        assert!(matches!(cmds.last(), Some(OverlayCommand::StartGesture)));
+
+        cmds.push(OverlayCommand::EndGesture);
+        assert!(matches!(cmds.last(), Some(OverlayCommand::EndGesture)));
+    }
+
+    #[test]
+    fn overlay_commands_into_iter() {
+        let mut cmds: OverlayCommands<3> = OverlayCommands::new();
+        cmds.push(OverlayCommand::StartGesture);
+        cmds.push(OverlayCommand::TrackPoint { x: 1, y: 2 });
+        cmds.push(OverlayCommand::EndGesture);
+
+        let collected: Vec<_> = cmds.into_iter().collect();
+        assert_eq!(collected.len(), 3);
+        assert!(matches!(collected[0], OverlayCommand::StartGesture));
+        assert!(matches!(
+            collected[1],
+            OverlayCommand::TrackPoint { x: 1, y: 2 }
+        ));
+        assert!(matches!(collected[2], OverlayCommand::EndGesture));
+    }
+
+    #[test]
+    fn overlay_commands_into_iter_empty() {
+        let cmds: OverlayCommands<3> = OverlayCommands::new();
+        let collected: Vec<_> = cmds.into_iter().collect();
+        assert!(collected.is_empty());
+    }
+
+    #[test]
+    fn overlay_commands_into_iter_partial_consume() {
+        let mut cmds: OverlayCommands<3> = OverlayCommands::new();
+        cmds.push(OverlayCommand::StartGesture);
+        cmds.push(OverlayCommand::TrackPoint { x: 0, y: 0 });
+        cmds.push(OverlayCommand::EndGesture);
+
+        let mut iter = cmds.into_iter();
+        // Consume only the first element; dropping the iterator should
+        // safely drop the remaining two.
+        let first = iter.next().unwrap();
+        assert!(matches!(first, OverlayCommand::StartGesture));
+        drop(iter);
+    }
+
+    #[test]
+    fn overlay_commands_drop_without_consume() {
+        // Ensure dropping a non-empty OverlayCommands without iterating
+        // does not leak or cause UB.
+        let mut cmds: OverlayCommands<3> = OverlayCommands::new();
+        cmds.push(OverlayCommand::StartGesture);
+        cmds.push(OverlayCommand::TrackPoint { x: 42, y: 99 });
+        drop(cmds);
+    }
 }
