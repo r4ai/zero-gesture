@@ -5,6 +5,8 @@
 
 use std::cmp::Ordering;
 
+use log::debug;
+
 /// A single direction of mouse movement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
@@ -132,6 +134,7 @@ impl GestureRecognizer {
                 if self.segments.len() > 2 {
                     self.segments.remove(0);
                 }
+                debug!("Segment confirmed: {:?} (segments: {:?})", current, self.segments);
                 self.segment_accum = 0;
             }
         }
