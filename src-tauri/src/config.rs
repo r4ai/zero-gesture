@@ -18,6 +18,7 @@ const CONFIG_FILE_NAME: &str = "zero-gesture.config.json";
 /// use zero_gesture_lib::config::AppConfig;
 ///
 /// let config = AppConfig::default();
+/// assert!(config.enabled);
 /// assert_eq!(config.gesture_trigger_button, "right");
 /// assert_eq!(config.trail_color, "#00BFFF");
 /// assert_eq!(config.trail_thickness, 3.0);
@@ -30,6 +31,11 @@ const CONFIG_FILE_NAME: &str = "zero-gesture.config.json";
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct AppConfig {
+    /// Whether gesture recognition is enabled.
+    ///
+    /// When `false`, worker threads (hook/overlay) are not started.
+    pub enabled: bool,
+
     /// Mouse button that triggers a gesture (e.g. `"right"`).
     pub gesture_trigger_button: String,
 
@@ -125,6 +131,7 @@ impl AppConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
+            enabled: true,
             gesture_trigger_button: "right".to_string(),
             trail_color: "#00BFFF".to_string(),
             trail_thickness: 3.0,
@@ -263,6 +270,20 @@ mod tests {
         assert!(cfg.bindings.contains_key("Left"));
         assert!(cfg.bindings.contains_key("Right"));
         assert!(cfg.bindings.contains_key("Down"));
+    }
+
+    #[test]
+    fn deserialize_json_with_enabled_false() {
+        let raw = r##"{ "gesture_trigger_button": "right", "enabled": false }"##;
+        let cfg: AppConfig = serde_json::from_str(raw).expect("JSON with enabled=false must parse");
+        assert!(!cfg.enabled);
+    }
+
+    #[test]
+    fn deserialize_legacy_json_defaults_enabled_to_true() {
+        let raw = r##"{ "gesture_trigger_button": "right" }"##;
+        let cfg: AppConfig = serde_json::from_str(raw).expect("legacy JSON must parse");
+        assert!(cfg.enabled);
     }
 
     #[test]
