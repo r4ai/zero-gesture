@@ -136,23 +136,26 @@ impl GestureRecognizer {
 
         // If direction changed, confirm the previous segment and start a new one.
         if let Some(current) = self.current_dir {
-            if new_dir != current && self.segment_accum >= self.min_segment_px {
-                // Only push if it differs from the last confirmed segment (no duplicates)
-                // and we haven't reached the 2-segment cap yet.
-                if self.segments.last() != Some(&current) {
-                    if self.segments.len() < 2 {
-                        self.segments.push(current);
-                        debug!(
-                            "Segment confirmed: {:?} (segments: {:?})",
-                            current, self.segments
-                        );
-                    } else {
-                        debug!(
-                            "Segment {:?} dropped (cap reached, segments: {:?})",
-                            current, self.segments
-                        );
+            if new_dir != current {
+                if self.segment_accum >= self.min_segment_px {
+                    // Only push if it differs from the last confirmed segment (no duplicates)
+                    // and we haven't reached the 2-segment cap yet.
+                    if self.segments.last() != Some(&current) {
+                        if self.segments.len() < 2 {
+                            self.segments.push(current);
+                            debug!(
+                                "Segment confirmed: {:?} (segments: {:?})",
+                                current, self.segments
+                            );
+                        } else {
+                            debug!(
+                                "Segment {:?} dropped (cap reached, segments: {:?})",
+                                current, self.segments
+                            );
+                        }
                     }
                 }
+                // Always reset the accumulator when direction changes.
                 self.segment_accum = 0;
             }
         }
@@ -464,5 +467,83 @@ mod tests {
 
         // Should still be just Right, not Right+Right
         assert_eq!(rec.recognize(), Some(GestureKind::Right));
+    }
+
+    #[test]
+    fn test_two_segment_down_left() {
+        let mut rec = GestureRecognizer::default();
+        rec.add_point(100, 100);
+        for i in 1..=5 {
+            rec.add_point(100, 100 + i * 10);
+        }
+        for i in 1..=5 {
+            rec.add_point(100 - i * 10, 150);
+        }
+        assert_eq!(rec.recognize(), Some(GestureKind::DownLeft));
+    }
+
+    #[test]
+    fn test_two_segment_left_down() {
+        let mut rec = GestureRecognizer::default();
+        rec.add_point(100, 100);
+        for i in 1..=5 {
+            rec.add_point(100 - i * 10, 100);
+        }
+        for i in 1..=5 {
+            rec.add_point(50, 100 + i * 10);
+        }
+        assert_eq!(rec.recognize(), Some(GestureKind::LeftDown));
+    }
+
+    #[test]
+    fn test_two_segment_down_up() {
+        let mut rec = GestureRecognizer::default();
+        rec.add_point(100, 100);
+        for i in 1..=5 {
+            rec.add_point(100, 100 + i * 10);
+        }
+        for i in 1..=5 {
+            rec.add_point(100, 150 - i * 10);
+        }
+        assert_eq!(rec.recognize(), Some(GestureKind::DownUp));
+    }
+
+    #[test]
+    fn test_two_segment_up_down() {
+        let mut rec = GestureRecognizer::default();
+        rec.add_point(100, 100);
+        for i in 1..=5 {
+            rec.add_point(100, 100 - i * 10);
+        }
+        for i in 1..=5 {
+            rec.add_point(100, 50 + i * 10);
+        }
+        assert_eq!(rec.recognize(), Some(GestureKind::UpDown));
+    }
+
+    #[test]
+    fn test_two_segment_left_right() {
+        let mut rec = GestureRecognizer::default();
+        rec.add_point(100, 100);
+        for i in 1..=5 {
+            rec.add_point(100 - i * 10, 100);
+        }
+        for i in 1..=5 {
+            rec.add_point(50 + i * 10, 100);
+        }
+        assert_eq!(rec.recognize(), Some(GestureKind::LeftRight));
+    }
+
+    #[test]
+    fn test_two_segment_right_left() {
+        let mut rec = GestureRecognizer::default();
+        rec.add_point(100, 100);
+        for i in 1..=5 {
+            rec.add_point(100 + i * 10, 100);
+        }
+        for i in 1..=5 {
+            rec.add_point(150 - i * 10, 100);
+        }
+        assert_eq!(rec.recognize(), Some(GestureKind::RightLeft));
     }
 }
