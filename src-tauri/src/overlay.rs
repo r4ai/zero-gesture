@@ -189,6 +189,8 @@ struct OverlayState {
     mem_dc: HDC,
     /// Cached bitmap selected into `mem_dc`.
     mem_bmp: HBITMAP,
+    /// Previous bitmap originally selected in `mem_dc` before `mem_bmp`.
+    old_mem_bmp: HBITMAP,
     /// Cached solid-black brush for clearing the back buffer.
     black_brush: HBRUSH,
     /// Virtual screen origin X — subtracted from screen coordinates to get
@@ -401,7 +403,7 @@ fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<OverlayCommand>) {
         let screen_dc = GetDC(hwnd);
         let mem_dc = CreateCompatibleDC(screen_dc);
         let mem_bmp = CreateCompatibleBitmap(screen_dc, vw, vh);
-        SelectObject(mem_dc, mem_bmp as *mut _);
+        let old_mem_bmp = SelectObject(mem_dc, mem_bmp as *mut _) as HBITMAP;
         ReleaseDC(hwnd, screen_dc);
         let black_brush = CreateSolidBrush(0x00000000);
 
@@ -427,6 +429,7 @@ fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<OverlayCommand>) {
                 pen,
                 mem_dc,
                 mem_bmp,
+                old_mem_bmp,
                 black_brush,
                 origin_x: vx,
                 origin_y: vy,
@@ -460,6 +463,9 @@ fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<OverlayCommand>) {
             if let Some(state) = cell.borrow_mut().take() {
                 DeleteObject(state.pen as *mut _);
                 DeleteObject(state.black_brush as *mut _);
+                if !state.old_mem_bmp.is_null() {
+                    SelectObject(state.mem_dc, state.old_mem_bmp as *mut _);
+                }
                 DeleteObject(state.mem_bmp as *mut _);
                 DeleteDC(state.mem_dc);
             }
