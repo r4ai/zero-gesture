@@ -666,37 +666,44 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
 /// [`low_level_mouse_proc`]).
 #[cfg(windows)]
 fn handle_replay_click() {
-    HOOK_STATE.with(|cell| {
+    // Drop the RefCell borrow before calling SendInput. SendInput can
+    // synchronously re-enter low_level_mouse_proc on this same thread.
+    let replay = HOOK_STATE.with(|cell| {
         let mut borrow = cell.borrow_mut();
         let hs = match borrow.as_mut() {
             Some(hs) => hs,
-            None => return,
+            None => return None,
         };
 
-        if let Some(replay) = hs.pending_replay.take() {
-            let (vx, vy) = screen_to_absolute(replay.origin.x, replay.origin.y);
-            let base_flags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
-            let down_flag = hs.config.trigger.send_input_down_flag();
-            let up_flag = hs.config.trigger.send_input_up_flag();
+        hs.pending_replay.take().map(|replay| {
+            (
+                replay,
+                hs.config.trigger.send_input_down_flag(),
+                hs.config.trigger.send_input_up_flag(),
+            )
+        })
+    });
 
-            let inputs = [
-                make_mouse_input(vx, vy, base_flags | down_flag),
-                make_mouse_input(vx, vy, base_flags | up_flag),
-            ];
+    if let Some((replay, down_flag, up_flag)) = replay {
+        let (vx, vy) = screen_to_absolute(replay.origin.x, replay.origin.y);
+        let base_flags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
+        let inputs = [
+            make_mouse_input(vx, vy, base_flags | down_flag),
+            make_mouse_input(vx, vy, base_flags | up_flag),
+        ];
 
-            unsafe {
-                SendInput(
-                    inputs.len() as u32,
-                    inputs.as_ptr(),
-                    std::mem::size_of::<INPUT>() as i32,
-                );
-            }
-            debug!(
-                "Replayed click at ({}, {}) → virtual ({vx}, {vy})",
-                replay.origin.x, replay.origin.y
+        unsafe {
+            SendInput(
+                inputs.len() as u32,
+                inputs.as_ptr(),
+                std::mem::size_of::<INPUT>() as i32,
             );
         }
-    });
+        debug!(
+            "Replayed click at ({}, {}) → virtual ({vx}, {vy})",
+            replay.origin.x, replay.origin.y
+        );
+    }
 }
 
 /// Safety timer handler — resets the state machine if stuck.
