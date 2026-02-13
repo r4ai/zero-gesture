@@ -63,6 +63,48 @@ impl AppConfig {
 
     /// Default minimum segment distance for gesture direction confirmation.
     pub const DEFAULT_MIN_SEGMENT_PX: i32 = 30;
+
+    /// Default gesture-to-action bindings.
+    fn default_bindings() -> HashMap<String, Action> {
+        HashMap::from([
+            (
+                "Left".to_string(),
+                Action::Keyboard {
+                    keys: vec!["alt".to_string(), "left".to_string()],
+                },
+            ),
+            (
+                "Right".to_string(),
+                Action::Keyboard {
+                    keys: vec!["alt".to_string(), "right".to_string()],
+                },
+            ),
+            (
+                "Up".to_string(),
+                Action::Keyboard {
+                    keys: vec!["pageup".to_string()],
+                },
+            ),
+            (
+                "Down".to_string(),
+                Action::Keyboard {
+                    keys: vec!["pagedown".to_string()],
+                },
+            ),
+            (
+                "DownUp".to_string(),
+                Action::Keyboard {
+                    keys: vec!["ctrl".to_string(), "home".to_string()],
+                },
+            ),
+            (
+                "UpDown".to_string(),
+                Action::Keyboard {
+                    keys: vec!["ctrl".to_string(), "end".to_string()],
+                },
+            ),
+        ])
+    }
 }
 
 impl Default for AppConfig {
@@ -74,7 +116,7 @@ impl Default for AppConfig {
             gesture_threshold: Self::DEFAULT_GESTURE_THRESHOLD,
             safety_timeout_ms: Self::DEFAULT_SAFETY_TIMEOUT_MS,
             min_segment_px: Self::DEFAULT_MIN_SEGMENT_PX,
-            bindings: HashMap::new(),
+            bindings: Self::default_bindings(),
         }
     }
 }
@@ -137,6 +179,13 @@ mod tests {
         assert_eq!(cfg.gesture_threshold, AppConfig::DEFAULT_GESTURE_THRESHOLD);
         assert_eq!(cfg.safety_timeout_ms, AppConfig::DEFAULT_SAFETY_TIMEOUT_MS);
         assert_eq!(cfg.min_segment_px, AppConfig::DEFAULT_MIN_SEGMENT_PX);
+        assert_eq!(cfg.bindings.len(), 6);
+        assert!(cfg.bindings.contains_key("Left"));
+        assert!(cfg.bindings.contains_key("Right"));
+        assert!(cfg.bindings.contains_key("Up"));
+        assert!(cfg.bindings.contains_key("Down"));
+        assert!(cfg.bindings.contains_key("DownUp"));
+        assert!(cfg.bindings.contains_key("UpDown"));
     }
 
     #[test]
@@ -154,6 +203,13 @@ mod tests {
         assert_eq!(cfg.gesture_threshold, AppConfig::DEFAULT_GESTURE_THRESHOLD);
         assert_eq!(cfg.safety_timeout_ms, AppConfig::DEFAULT_SAFETY_TIMEOUT_MS);
         assert_eq!(cfg.min_segment_px, AppConfig::DEFAULT_MIN_SEGMENT_PX);
+        assert_eq!(cfg.bindings.len(), 6);
+        assert!(cfg.bindings.contains_key("Left"));
+        assert!(cfg.bindings.contains_key("Right"));
+        assert!(cfg.bindings.contains_key("Up"));
+        assert!(cfg.bindings.contains_key("Down"));
+        assert!(cfg.bindings.contains_key("DownUp"));
+        assert!(cfg.bindings.contains_key("UpDown"));
     }
 
     #[test]
@@ -177,9 +233,15 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_legacy_json_gets_empty_bindings() {
+    fn deserialize_legacy_json_gets_default_bindings() {
         let raw = r##"{ "gesture_trigger_button": "right" }"##;
         let cfg: AppConfig = serde_json::from_str(raw).expect("legacy JSON must parse");
-        assert!(cfg.bindings.is_empty());
+        assert_eq!(cfg.bindings.len(), 6);
+        assert!(cfg.bindings.contains_key("Left"));
+        assert!(cfg.bindings.contains_key("Right"));
+        assert!(cfg.bindings.contains_key("Up"));
+        assert!(cfg.bindings.contains_key("Down"));
+        assert!(cfg.bindings.contains_key("DownUp"));
+        assert!(cfg.bindings.contains_key("UpDown"));
     }
 }
