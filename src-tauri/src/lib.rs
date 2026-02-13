@@ -165,6 +165,11 @@ impl ThreadRuntime {
         }
 
         workers.shutdown();
+
+        if self.should_allow_exit() {
+            return Err("thread runtime is already shut down".to_string());
+        }
+
         *workers = WorkerThreads::spawn(shared_config);
 
         Ok(())
