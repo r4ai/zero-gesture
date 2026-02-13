@@ -383,12 +383,119 @@ enum MouseEvent {
     Other,
 }
 
+/// Stack-allocated collection of up to `N` overlay commands.
+///
+/// Avoids heap allocation in the hot path of [`process_event_pure`].
+/// The maximum number of commands produced per event is 3 (StartGesture +
+/// two TrackPoints when transitioning to Gesturing).
+struct OverlayCommands<const N: usize> {
+    buf: [std::mem::MaybeUninit<OverlayCommand>; N],
+    len: usize,
+}
+
+impl<const N: usize> OverlayCommands<N> {
+    fn new() -> Self {
+        Self {
+            // SAFETY: An array of `MaybeUninit` does not require initialisation.
+            buf: unsafe { std::mem::MaybeUninit::uninit().assume_init() },
+            len: 0,
+        }
+    }
+
+    fn push(&mut self, cmd: OverlayCommand) {
+        assert!(self.len < N, "OverlayCommands overflow");
+        self.buf[self.len].write(cmd);
+        self.len += 1;
+    }
+
+    #[cfg(test)]
+    fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    #[cfg(test)]
+    fn last(&self) -> Option<&OverlayCommand> {
+        if self.len == 0 {
+            None
+        } else {
+            // SAFETY: elements at indices 0..self.len are initialised.
+            Some(unsafe { self.buf[self.len - 1].assume_init_ref() })
+        }
+    }
+}
+
+impl<const N: usize> std::ops::Index<usize> for OverlayCommands<N> {
+    type Output = OverlayCommand;
+    fn index(&self, idx: usize) -> &OverlayCommand {
+        assert!(idx < self.len, "index out of bounds");
+        // SAFETY: elements at indices 0..self.len are initialised.
+        unsafe { self.buf[idx].assume_init_ref() }
+    }
+}
+
+impl<const N: usize> Drop for OverlayCommands<N> {
+    fn drop(&mut self) {
+        for i in 0..self.len {
+            // SAFETY: elements at indices 0..self.len are initialised.
+            unsafe { self.buf[i].assume_init_drop() };
+        }
+    }
+}
+
+impl<const N: usize> IntoIterator for OverlayCommands<N> {
+    type Item = OverlayCommand;
+    type IntoIter = OverlayCommandsIntoIter<N>;
+    fn into_iter(self) -> Self::IntoIter {
+        let iter = OverlayCommandsIntoIter {
+            // SAFETY: We transfer ownership without dropping `self`.
+            buf: unsafe { std::ptr::read(&self.buf) },
+            len: self.len,
+            pos: 0,
+        };
+        std::mem::forget(self);
+        iter
+    }
+}
+
+struct OverlayCommandsIntoIter<const N: usize> {
+    buf: [std::mem::MaybeUninit<OverlayCommand>; N],
+    len: usize,
+    pos: usize,
+}
+
+impl<const N: usize> Iterator for OverlayCommandsIntoIter<N> {
+    type Item = OverlayCommand;
+    fn next(&mut self) -> Option<OverlayCommand> {
+        if self.pos >= self.len {
+            None
+        } else {
+            let val = unsafe { self.buf[self.pos].assume_init_read() };
+            self.pos += 1;
+            Some(val)
+        }
+    }
+}
+
+impl<const N: usize> Drop for OverlayCommandsIntoIter<N> {
+    fn drop(&mut self) {
+        // Drop remaining un-consumed elements.
+        for i in self.pos..self.len {
+            unsafe { self.buf[i].assume_init_drop() };
+        }
+    }
+}
+
 /// Side effects produced by [`process_event_pure`], applied by the caller.
 struct EventEffect {
     /// Whether the event should be suppressed (swallowed by the hook).
     suppress: bool,
-    /// Overlay commands to send.
-    overlay_commands: Vec<OverlayCommand>,
+    /// Overlay commands to send (stack-allocated, max 3).
+    overlay_commands: OverlayCommands<3>,
     /// If set, a click should be replayed at these screen coordinates.
     request_replay: Option<(i32, i32)>,
     /// If set, the given action should be executed.
@@ -748,7 +855,7 @@ fn process_event_pure(
 ) -> EventEffect {
     let mut effect = EventEffect {
         suppress: false,
-        overlay_commands: Vec::new(),
+        overlay_commands: OverlayCommands::new(),
         request_replay: None,
         request_execute: None,
     };
