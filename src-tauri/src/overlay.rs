@@ -653,7 +653,17 @@ unsafe extern "system" fn overlay_wnd_proc(
             OVERLAY_STATE.with(|cell| {
                 let borrow = cell.borrow();
                 if let Some(state) = borrow.as_ref() {
-                    BitBlt(hdc, rc.left, rc.top, w, h, state.mem_dc, rc.left, rc.top, SRCCOPY);
+                    BitBlt(
+                        hdc,
+                        rc.left,
+                        rc.top,
+                        w,
+                        h,
+                        state.mem_dc,
+                        rc.left,
+                        rc.top,
+                        SRCCOPY,
+                    );
                 }
             });
 
