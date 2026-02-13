@@ -8,7 +8,7 @@ pub mod overlay;
 mod tray;
 
 use std::sync::{
-    atomic::{AtomicBool, AtomicU32, Ordering},
+    atomic::{AtomicU32, Ordering},
     Arc, Mutex, RwLock, RwLockWriteGuard,
 };
 use std::thread::JoinHandle;
@@ -105,9 +105,18 @@ impl WorkerThreads {
 }
 
 pub struct ThreadRuntime {
-    workers: Mutex<WorkerThreads>,
+    lifecycle: Mutex<RuntimeLifecycle>,
     config_update_lock: Mutex<()>,
-    is_shutdown: AtomicBool,
+}
+
+/// Lifecycle state of background worker threads.
+enum RuntimeLifecycle {
+    /// Workers are active and can be restarted.
+    Running(WorkerThreads),
+    /// Shutdown has started and workers are being torn down.
+    ShuttingDown,
+    /// Shutdown has completed and workers are fully stopped.
+    Stopped,
 }
 
 impl ThreadRuntime {
@@ -115,16 +124,23 @@ impl ThreadRuntime {
     /// their lifetimes.
     pub fn start(shared_config: SharedConfig) -> Self {
         Self {
-            workers: Mutex::new(WorkerThreads::spawn(shared_config)),
+            lifecycle: Mutex::new(RuntimeLifecycle::Running(WorkerThreads::spawn(
+                shared_config,
+            ))),
             config_update_lock: Mutex::new(()),
-            is_shutdown: AtomicBool::new(false),
         }
     }
 
     /// Returns `true` if [`ThreadRuntime::shutdown`] has been called,
     /// meaning the application is ready to exit.
     pub fn should_allow_exit(&self) -> bool {
-        self.is_shutdown.load(Ordering::SeqCst)
+        match self.lifecycle.lock() {
+            Ok(state) => !matches!(*state, RuntimeLifecycle::Running(_)),
+            Err(_) => {
+                warn!("thread runtime lock poisoned while checking exit state");
+                true
+            }
+        }
     }
 
     /// Sends shutdown signals to both background threads and waits for them
@@ -137,14 +153,35 @@ impl ThreadRuntime {
     /// This method is idempotent — calling it more than once is safe and has
     /// no effect after the first call.
     pub fn shutdown(&self) {
-        if self.is_shutdown.swap(true, Ordering::SeqCst) {
-            return;
-        }
-
-        match self.workers.lock() {
-            Ok(mut workers) => workers.shutdown(),
+        let _update_guard = match self.config_update_lock.lock() {
+            Ok(guard) => guard,
             Err(_) => {
-                warn!("thread runtime lock poisoned during shutdown");
+                warn!("config update lock poisoned during shutdown");
+                return;
+            }
+        };
+
+        let mut workers = {
+            let mut lifecycle = match self.lifecycle.lock() {
+                Ok(state) => state,
+                Err(_) => {
+                    warn!("thread runtime lock poisoned during shutdown");
+                    return;
+                }
+            };
+
+            match std::mem::replace(&mut *lifecycle, RuntimeLifecycle::ShuttingDown) {
+                RuntimeLifecycle::Running(workers) => workers,
+                RuntimeLifecycle::ShuttingDown | RuntimeLifecycle::Stopped => return,
+            }
+        };
+
+        workers.shutdown();
+
+        match self.lifecycle.lock() {
+            Ok(mut lifecycle) => *lifecycle = RuntimeLifecycle::Stopped,
+            Err(_) => {
+                warn!("thread runtime lock poisoned after shutdown");
             }
         }
     }
@@ -153,25 +190,19 @@ impl ThreadRuntime {
     ///
     /// Returns an error if the runtime has already started shutting down.
     pub fn restart_workers(&self, shared_config: SharedConfig) -> Result<(), String> {
-        if self.should_allow_exit() {
-            return Err("thread runtime is already shut down".to_string());
-        }
-
-        let mut workers = self
-            .workers
+        let mut lifecycle = self
+            .lifecycle
             .lock()
             .map_err(|_| "thread runtime lock poisoned".to_string())?;
 
-        if self.should_allow_exit() {
-            return Err("thread runtime is already shut down".to_string());
-        }
+        let workers = match &mut *lifecycle {
+            RuntimeLifecycle::Running(workers) => workers,
+            RuntimeLifecycle::ShuttingDown | RuntimeLifecycle::Stopped => {
+                return Err("thread runtime is already shut down".to_string());
+            }
+        };
 
         workers.shutdown();
-
-        if self.should_allow_exit() {
-            return Err("thread runtime is already shut down".to_string());
-        }
-
         *workers = WorkerThreads::spawn(shared_config);
 
         Ok(())
