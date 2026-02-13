@@ -48,9 +48,9 @@ impl SharedConfig {
 /// Owns the background threads (hook and overlay) and provides a way to shut
 /// them down cleanly.
 ///
-/// Created via [`ThreadRuntime::start`] during application setup and stored as
-/// Tauri managed state so that the tray "Quit" handler can trigger a graceful
-/// shutdown.
+/// This is an internal helper owned by [`ThreadRuntime`].
+/// [`ThreadRuntime`] itself is stored as Tauri managed state so that, for
+/// example, the tray "Quit" handler can trigger a graceful shutdown.
 struct WorkerThreads {
     hook_control_tx: Sender<hook::HookControl>,
     hook_thread_tid: Arc<AtomicU32>,
