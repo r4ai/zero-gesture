@@ -29,7 +29,7 @@
 use std::thread::{self, JoinHandle};
 
 use crossbeam_channel::{unbounded, Receiver, Sender};
-use log::{debug, error, trace};
+use log::{debug, error, info, trace};
 
 #[cfg(not(windows))]
 use log::warn;
@@ -237,6 +237,7 @@ thread_local! {
 /// handle.join().unwrap();
 /// ```
 pub fn spawn(shared_config: SharedConfig) -> (Sender<OverlayCommand>, JoinHandle<()>) {
+    info!("starting overlay thread");
     let (overlay_tx, overlay_rx) = unbounded();
 
     // Snapshot config before entering the thread.
@@ -260,6 +261,7 @@ pub fn spawn(shared_config: SharedConfig) -> (Sender<OverlayCommand>, JoinHandle
             }
         })
         .expect("failed to spawn overlay thread");
+    info!("overlay thread spawned");
 
     (overlay_tx, handle)
 }
@@ -314,6 +316,7 @@ fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<OverlayCommand>) {
         );
 
         let tid = GetCurrentThreadId();
+        info!("overlay thread started (tid={tid})");
 
         // Bridge thread: crossbeam channel → Win32 messages.
         let bridge = thread::Builder::new()
@@ -538,7 +541,7 @@ fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<OverlayCommand>) {
         });
         DestroyWindow(hwnd);
         UnregisterClassW(CLASS_NAME.as_ptr(), hinstance);
-        debug!("Overlay thread exiting");
+        info!("overlay thread stopped (tid={tid})");
 
         let _ = bridge.join();
     }

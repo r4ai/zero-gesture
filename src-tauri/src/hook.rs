@@ -450,6 +450,7 @@ pub fn spawn(
     shared_config: SharedConfig,
     overlay_tx: Sender<OverlayCommand>,
 ) -> (Sender<HookControl>, Arc<AtomicU32>, JoinHandle<()>) {
+    info!("starting hook thread");
     let (control_tx, control_rx) = crossbeam_channel::unbounded();
     let tid = Arc::new(AtomicU32::new(0));
     let tid_clone = tid.clone();
@@ -502,6 +503,7 @@ pub fn spawn(
             }
         })
         .expect("failed to spawn hook thread");
+    info!("hook thread spawned");
 
     (control_tx, tid, handle)
 }
@@ -547,6 +549,7 @@ fn run_loop_win32(
         // Publish our thread ID so the main thread can post WM_QUIT.
         let tid = GetCurrentThreadId();
         tid_arc.store(tid, Ordering::Release);
+        info!("hook thread started (tid={tid})");
 
         // Spawn a watchdog thread that monitors the control channel and
         // posts WM_QUIT if HookControl::Shutdown is received. This ensures
@@ -625,6 +628,7 @@ fn run_loop_win32(
         // The watchdog thread will exit once the control channel is dropped
         // or after it posts WM_QUIT. Join it to avoid detached threads.
         let _ = watchdog.join();
+        info!("hook thread stopped (tid={tid})");
     }
 }
 

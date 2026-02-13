@@ -14,7 +14,7 @@ use std::sync::{
 use std::thread::JoinHandle;
 
 use crossbeam_channel::Sender;
-use log::{info, warn};
+use log::{debug, info, warn};
 use tauri::Manager;
 
 /// Thread-safe, clonable handle to the application configuration.
@@ -62,9 +62,11 @@ struct WorkerThreads {
 impl WorkerThreads {
     /// Spawns the hook and overlay threads from the current shared config.
     fn spawn(shared_config: SharedConfig) -> Self {
+        info!("starting worker threads");
         let (overlay_tx, overlay_handle) = overlay::spawn(shared_config.clone());
         let (hook_control_tx, hook_thread_tid, hook_handle) =
             hook::spawn(shared_config, overlay_tx.clone());
+        info!("worker threads started");
 
         Self {
             hook_control_tx,
@@ -77,6 +79,7 @@ impl WorkerThreads {
 
     /// Sends shutdown signals to both background threads and waits for them.
     fn shutdown(&mut self) {
+        info!("stopping worker threads");
         // Post WM_QUIT to the hook thread's Win32 message loop.
         let tid = self.hook_thread_tid.load(Ordering::Acquire);
         if tid != 0 {
@@ -101,6 +104,7 @@ impl WorkerThreads {
         if let Some(handle) = self.overlay_handle.take() {
             let _ = handle.join();
         }
+        info!("worker threads stopped");
     }
 }
 
@@ -128,8 +132,10 @@ impl ThreadRuntime {
     pub fn start(shared_config: SharedConfig) -> Self {
         let enabled = shared_config.0.read().map(|c| c.enabled).unwrap_or(true);
         let initial_state = if enabled {
+            info!("thread runtime starting in enabled mode");
             RuntimeState::Running(WorkerThreads::spawn(shared_config))
         } else {
+            info!("thread runtime starting in disabled mode");
             RuntimeState::Disabled
         };
         Self {
@@ -160,6 +166,7 @@ impl ThreadRuntime {
     /// This method is idempotent — calling it more than once is safe and has
     /// no effect after the first call.
     pub fn shutdown(&self) {
+        info!("thread runtime shutdown requested");
         let _update_guard = match self.config_update_lock.lock() {
             Ok(guard) => guard,
             Err(_) => {
@@ -171,9 +178,14 @@ impl ThreadRuntime {
         match self.state.lock() {
             Ok(mut state) => {
                 let prev = std::mem::replace(&mut *state, RuntimeState::ShutDown);
-                if let RuntimeState::Running(mut workers) = prev {
-                    workers.shutdown();
+                match prev {
+                    RuntimeState::Running(mut workers) => workers.shutdown(),
+                    RuntimeState::Disabled => info!("workers already stopped"),
+                    RuntimeState::ShutDown => {
+                        debug!("thread runtime already shut down");
+                    }
                 }
+                info!("thread runtime shut down");
             }
             Err(_) => {
                 warn!("thread runtime lock poisoned during shutdown");
@@ -199,12 +211,24 @@ impl ThreadRuntime {
         }
 
         if enabled {
+            let was_running = matches!(*state, RuntimeState::Running(_));
+            if was_running {
+                info!("enabled=true: restarting worker threads");
+            } else {
+                info!("enabled=true: starting worker threads");
+            }
             let prev = std::mem::replace(&mut *state, RuntimeState::Disabled);
             if let RuntimeState::Running(mut workers) = prev {
                 workers.shutdown();
             }
             *state = RuntimeState::Running(WorkerThreads::spawn(shared_config));
         } else {
+            let was_running = matches!(*state, RuntimeState::Running(_));
+            if was_running {
+                info!("enabled=false: stopping worker threads");
+            } else {
+                info!("enabled=false: workers already stopped");
+            }
             let prev = std::mem::replace(&mut *state, RuntimeState::Disabled);
             if let RuntimeState::Running(mut workers) = prev {
                 workers.shutdown();
