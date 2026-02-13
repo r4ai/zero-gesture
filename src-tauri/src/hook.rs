@@ -87,7 +87,7 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
 use crossbeam_channel::{Receiver, Sender};
-use log::{debug, error, warn, trace};
+use log::{debug, error, trace, warn};
 
 use crate::overlay::OverlayCommand;
 use crate::SharedConfig;
@@ -97,15 +97,15 @@ use windows_sys::Win32::{
     Foundation::{LPARAM, LRESULT, POINT, WPARAM},
     UI::{
         Input::KeyboardAndMouse::{
-            SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_ABSOLUTE,
-            MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP,
-            MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT,
+            SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_MIDDLEDOWN,
+            MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP,
+            MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT,
         },
         WindowsAndMessaging::{
-            CallNextHookEx, DispatchMessageW, GetMessageW, KillTimer, PostThreadMessageW,
-            SetTimer, SetWindowsHookExW, UnhookWindowsHookEx, LLMHF_INJECTED, MSLLHOOKSTRUCT,
-            MSG, WH_MOUSE_LL, WM_APP, WM_MBUTTONDOWN,
-            WM_MBUTTONUP, WM_MOUSEMOVE, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_TIMER,
+            CallNextHookEx, DispatchMessageW, GetMessageW, KillTimer, PostThreadMessageW, SetTimer,
+            SetWindowsHookExW, UnhookWindowsHookEx, LLMHF_INJECTED, MSG, MSLLHOOKSTRUCT,
+            WH_MOUSE_LL, WM_APP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE, WM_RBUTTONDOWN,
+            WM_RBUTTONUP, WM_TIMER,
         },
     },
 };
@@ -443,7 +443,12 @@ fn run_loop_win32(
         });
 
         // Install the low-level mouse hook.
-        let hook = SetWindowsHookExW(WH_MOUSE_LL, Some(low_level_mouse_proc), std::ptr::null_mut(), 0);
+        let hook = SetWindowsHookExW(
+            WH_MOUSE_LL,
+            Some(low_level_mouse_proc),
+            std::ptr::null_mut(),
+            0,
+        );
         if hook.is_null() {
             error!("SetWindowsHookExW failed");
             return;
@@ -451,7 +456,12 @@ fn run_loop_win32(
         debug!("WH_MOUSE_LL hook installed (tid={tid})");
 
         // Set a safety timer.
-        SetTimer(std::ptr::null_mut(), SAFETY_TIMER_ID, SAFETY_TIMEOUT_MS, None);
+        SetTimer(
+            std::ptr::null_mut(),
+            SAFETY_TIMER_ID,
+            SAFETY_TIMEOUT_MS,
+            None,
+        );
 
         // Win32 message loop — exits on WM_QUIT.
         let mut msg: MSG = std::mem::zeroed();
@@ -601,9 +611,7 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
                         x: info.pt.x,
                         y: info.pt.y,
                     });
-                    hs.state = GestureState::Gesturing {
-                        entered_tick: tick,
-                    };
+                    hs.state = GestureState::Gesturing { entered_tick: tick };
                 }
                 return false; // never suppress mouse move
             }

@@ -119,7 +119,6 @@ impl ThreadRuntime {
     }
 }
 
-
 /// Tauri command that opens (or focuses) the settings window.
 #[tauri::command]
 fn show_settings_window(app: tauri::AppHandle) -> Result<(), String> {
