@@ -1,5 +1,8 @@
 pub mod config;
+pub mod gesture;
 mod hook;
+#[path = "log.rs"]
+mod log_config;
 pub mod overlay;
 mod tray;
 
@@ -132,13 +135,10 @@ fn show_settings_window(app: tauri::AppHandle) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let shared_config = SharedConfig::new(config::load_or_default());
+    let log_level = log_config::resolve_log_level();
 
     let app = tauri::Builder::default()
-        .plugin(
-            tauri_plugin_log::Builder::new()
-                .level(tauri_plugin_log::log::LevelFilter::Debug)
-                .build(),
-        )
+        .plugin(tauri_plugin_log::Builder::new().level(log_level).build())
         .plugin(tauri_plugin_opener::init())
         .manage(shared_config.clone())
         .setup(move |app| {

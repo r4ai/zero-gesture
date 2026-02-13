@@ -18,8 +18,12 @@ const CONFIG_FILE_NAME: &str = "zero-gesture.config.json";
 /// assert_eq!(config.gesture_trigger_button, "right");
 /// assert_eq!(config.trail_color, "#00BFFF");
 /// assert_eq!(config.trail_thickness, 3.0);
+/// assert_eq!(config.gesture_threshold, 10);
+/// assert_eq!(config.safety_timeout_ms, 2000);
+/// assert_eq!(config.min_segment_px, 30);
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AppConfig {
     /// Mouse button that triggers a gesture (e.g. `"right"`).
     pub gesture_trigger_button: String,
@@ -29,6 +33,27 @@ pub struct AppConfig {
 
     /// Thickness in logical pixels for the gesture trail line.
     pub trail_thickness: f32,
+
+    /// Pixel distance threshold before a held button becomes a gesture.
+    pub gesture_threshold: i32,
+
+    /// Timeout in milliseconds used for stuck-state recovery.
+    pub safety_timeout_ms: u32,
+
+    /// Minimum movement distance (in pixels) required to confirm a gesture
+    /// direction segment.
+    pub min_segment_px: i32,
+}
+
+impl AppConfig {
+    /// Default pixel distance threshold for gesture activation.
+    pub const DEFAULT_GESTURE_THRESHOLD: i32 = 10;
+
+    /// Default timeout used by the safety timer.
+    pub const DEFAULT_SAFETY_TIMEOUT_MS: u32 = 2000;
+
+    /// Default minimum segment distance for gesture direction confirmation.
+    pub const DEFAULT_MIN_SEGMENT_PX: i32 = 30;
 }
 
 impl Default for AppConfig {
@@ -37,6 +62,9 @@ impl Default for AppConfig {
             gesture_trigger_button: "right".to_string(),
             trail_color: "#00BFFF".to_string(),
             trail_thickness: 3.0,
+            gesture_threshold: Self::DEFAULT_GESTURE_THRESHOLD,
+            safety_timeout_ms: Self::DEFAULT_SAFETY_TIMEOUT_MS,
+            min_segment_px: Self::DEFAULT_MIN_SEGMENT_PX,
         }
     }
 }
@@ -87,4 +115,34 @@ pub fn save(config: &AppConfig) -> io::Result<()> {
 /// Returns the path to the configuration file.
 fn config_path() -> PathBuf {
     PathBuf::from(CONFIG_FILE_NAME)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AppConfig;
+
+    #[test]
+    fn default_contains_hook_related_values() {
+        let cfg = AppConfig::default();
+        assert_eq!(cfg.gesture_threshold, AppConfig::DEFAULT_GESTURE_THRESHOLD);
+        assert_eq!(cfg.safety_timeout_ms, AppConfig::DEFAULT_SAFETY_TIMEOUT_MS);
+        assert_eq!(cfg.min_segment_px, AppConfig::DEFAULT_MIN_SEGMENT_PX);
+    }
+
+    #[test]
+    fn deserialize_legacy_json_fills_new_fields_from_defaults() {
+        let raw = r##"{
+            "gesture_trigger_button": "middle",
+            "trail_color": "#ffffff",
+            "trail_thickness": 5.0
+        }"##;
+
+        let cfg: AppConfig = serde_json::from_str(raw).expect("legacy JSON must deserialize");
+        assert_eq!(cfg.gesture_trigger_button, "middle");
+        assert_eq!(cfg.trail_color, "#ffffff");
+        assert_eq!(cfg.trail_thickness, 5.0);
+        assert_eq!(cfg.gesture_threshold, AppConfig::DEFAULT_GESTURE_THRESHOLD);
+        assert_eq!(cfg.safety_timeout_ms, AppConfig::DEFAULT_SAFETY_TIMEOUT_MS);
+        assert_eq!(cfg.min_segment_px, AppConfig::DEFAULT_MIN_SEGMENT_PX);
+    }
 }

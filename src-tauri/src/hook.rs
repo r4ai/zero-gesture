@@ -31,7 +31,7 @@
 //! | From | Event | Condition | To | Side Effects |
 //! |---|---|---|---|---|
 //! | `Idle` | trigger DOWN | — | `ButtonDown` | Record origin; **suppress event** |
-//! | `ButtonDown` | `WM_MOUSEMOVE` | dist > [`GESTURE_THRESHOLD`] | `Gesturing` | Send `StartGesture` + `TrackPoint`s; **pass through** |
+//! | `ButtonDown` | `WM_MOUSEMOVE` | dist > configured threshold | `Gesturing` | Send `StartGesture` + `TrackPoint`s; **pass through** |
 //! | `ButtonDown` | `WM_MOUSEMOVE` | dist ≤ threshold | `ButtonDown` | **pass through** |
 //! | `ButtonDown` | trigger UP | — | `Idle` | Post [`WM_REPLAY_CLICK`]; **suppress event** |
 //! | `Gesturing` | `WM_MOUSEMOVE` | — | `Gesturing` | Send `TrackPoint`; **pass through** |
@@ -76,10 +76,10 @@
 //!
 //! ## Safety Timer
 //!
-//! A [`SetTimer`]-based timer fires every [`SAFETY_TIMEOUT_MS`] (2 s). If the
-//! state machine has been stuck in `ButtonDown` or `Gesturing` for longer than
-//! that, it is conservatively reset to `Idle` to recover from edge cases such
-//! as a lost button-up event.
+//! A [`SetTimer`]-based timer fires at a configured interval. If the state
+//! machine has been stuck in `ButtonDown` or `Gesturing` for longer than that,
+//! it is conservatively reset to `Idle` to recover from edge cases such as a
+//! lost button-up event.
 
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -87,8 +87,10 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
 use crossbeam_channel::{Receiver, Sender};
-use log::{debug, error, trace, warn};
+use log::{debug, error, info, trace, warn};
 
+use crate::config::AppConfig;
+use crate::gesture::GestureRecognizer;
 use crate::overlay::OverlayCommand;
 use crate::SharedConfig;
 
@@ -122,24 +124,60 @@ use windows_sys::Win32::System::Threading::GetCurrentThreadId;
 #[cfg(windows)]
 const WM_REPLAY_CLICK: u32 = WM_APP + 1;
 
-/// Pixel distance threshold before a held button becomes a gesture.
-///
-/// Compared against the squared Euclidean distance from the button-down
-/// origin to avoid a `sqrt` call in the hot path. A value of 10 means the
-/// user must move at least ~10 px in any direction before a gesture begins.
-const GESTURE_THRESHOLD: i32 = 10;
-
-/// Safety timeout in milliseconds — if state is stuck, reset to Idle.
-///
-/// If the state machine remains in `ButtonDown` or `Gesturing` for longer
-/// than this duration, [`handle_safety_timer`] will force-reset it to `Idle`.
-/// This guards against lost button-up events (e.g. focus changes, remote
-/// desktop disconnects) that would otherwise leave the hook in a stuck state.
-const SAFETY_TIMEOUT_MS: u32 = 2000;
-
 /// Timer ID for the safety timeout.
 #[cfg(windows)]
 const SAFETY_TIMER_ID: usize = 1;
+
+/// Resolves `gesture_threshold` from config with a safe fallback.
+///
+/// Values less than or equal to zero are invalid and replaced by
+/// [`AppConfig::DEFAULT_GESTURE_THRESHOLD`].
+fn resolve_gesture_threshold(value: i32) -> i32 {
+    if value > 0 {
+        value
+    } else {
+        warn!(
+            "Invalid gesture_threshold={} in config, falling back to {}",
+            value,
+            AppConfig::DEFAULT_GESTURE_THRESHOLD
+        );
+        AppConfig::DEFAULT_GESTURE_THRESHOLD
+    }
+}
+
+/// Resolves `min_segment_px` from config with a safe fallback.
+///
+/// Values less than or equal to zero are invalid and replaced by
+/// [`AppConfig::DEFAULT_MIN_SEGMENT_PX`].
+fn resolve_min_segment_px(value: i32) -> i32 {
+    if value > 0 {
+        value
+    } else {
+        warn!(
+            "Invalid min_segment_px={} in config, falling back to {}",
+            value,
+            AppConfig::DEFAULT_MIN_SEGMENT_PX
+        );
+        AppConfig::DEFAULT_MIN_SEGMENT_PX
+    }
+}
+
+/// Resolves `safety_timeout_ms` from config with a safe fallback.
+///
+/// A value of zero is invalid and replaced by
+/// [`AppConfig::DEFAULT_SAFETY_TIMEOUT_MS`].
+fn resolve_safety_timeout_ms(value: u32) -> u32 {
+    if value > 0 {
+        value
+    } else {
+        warn!(
+            "Invalid safety_timeout_ms={} in config, falling back to {}",
+            value,
+            AppConfig::DEFAULT_SAFETY_TIMEOUT_MS
+        );
+        AppConfig::DEFAULT_SAFETY_TIMEOUT_MS
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Public interface
@@ -229,6 +267,9 @@ impl TriggerButton {
 #[derive(Debug, Clone)]
 struct HookConfig {
     trigger: TriggerButton,
+    gesture_threshold: i32,
+    safety_timeout_ms: u32,
+    min_segment_px: i32,
 }
 
 // ---------------------------------------------------------------------------
@@ -250,7 +291,8 @@ enum GestureState {
     Idle,
     /// Trigger button is held; no significant movement yet.
     ///
-    /// If the user releases the button without exceeding [`GESTURE_THRESHOLD`],
+    /// If the user releases the button without exceeding the configured
+    /// gesture threshold,
     /// the click is replayed to the target application. If movement exceeds the
     /// threshold, we transition to [`Gesturing`](GestureState::Gesturing).
     ButtonDown {
@@ -260,7 +302,8 @@ enum GestureState {
         /// value when we entered this state (for safety timeout).
         entered_tick: u32,
     },
-    /// Actively gesturing — movement has exceeded [`GESTURE_THRESHOLD`].
+    /// Actively gesturing — movement has exceeded the configured gesture
+    /// threshold.
     ///
     /// Mouse move events are forwarded to the overlay as [`OverlayCommand::TrackPoint`].
     /// When the trigger button is released, [`OverlayCommand::EndGesture`] is
@@ -269,6 +312,8 @@ enum GestureState {
         /// [`GetTickCount`](windows_sys::Win32::System::SystemInformation::GetTickCount)
         /// value when we entered this state (for safety timeout).
         entered_tick: u32,
+        /// Recognizer for converting mouse movement into gesture patterns.
+        recognizer: GestureRecognizer,
     },
 }
 
@@ -359,6 +404,9 @@ pub fn spawn(
         let cfg = shared_config.0.read().unwrap();
         HookConfig {
             trigger: TriggerButton::from_config(&cfg.gesture_trigger_button),
+            gesture_threshold: resolve_gesture_threshold(cfg.gesture_threshold),
+            safety_timeout_ms: resolve_safety_timeout_ms(cfg.safety_timeout_ms),
+            min_segment_px: resolve_min_segment_px(cfg.min_segment_px),
         }
     };
 
@@ -390,8 +438,8 @@ pub fn spawn(
 /// 3. **Install hook** — calls [`SetWindowsHookExW`] with `WH_MOUSE_LL`
 ///    and our [`low_level_mouse_proc`] callback. Passing `null` for the
 ///    module handle and `0` for the thread ID makes this a global hook.
-/// 4. **Start safety timer** — [`SetTimer`] fires `WM_TIMER` every
-///    [`SAFETY_TIMEOUT_MS`] for stuck-state recovery.
+/// 4. **Start safety timer** — [`SetTimer`] fires `WM_TIMER` at the
+///    configured timeout interval for stuck-state recovery.
 /// 5. **Run message loop** — [`GetMessageW`] blocks until a message arrives.
 ///    - `WM_REPLAY_CLICK` → [`handle_replay_click`]
 ///    - `WM_TIMER` → [`handle_safety_timer`]
@@ -414,6 +462,8 @@ fn run_loop_win32(
     control_rx: Receiver<HookControl>,
 ) {
     unsafe {
+        let safety_timeout_ms = hook_config.safety_timeout_ms;
+
         // Publish our thread ID so the main thread can post WM_QUIT.
         let tid = GetCurrentThreadId();
         tid_arc.store(tid, Ordering::Release);
@@ -459,7 +509,7 @@ fn run_loop_win32(
         SetTimer(
             std::ptr::null_mut(),
             SAFETY_TIMER_ID,
-            SAFETY_TIMEOUT_MS,
+            safety_timeout_ms,
             None,
         );
 
@@ -585,7 +635,7 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
     let trigger_up = hs.config.trigger.up_msg();
     let tick = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount() };
 
-    match &hs.state {
+    match &mut hs.state {
         GestureState::Idle => {
             if msg == trigger_down {
                 debug!("Idle → ButtonDown at ({}, {})", info.pt.x, info.pt.y);
@@ -597,10 +647,13 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
             }
         }
         GestureState::ButtonDown { origin, .. } => {
+            let origin = *origin; // Copy origin before any potential state change
             if msg == WM_MOUSEMOVE {
                 let dx = info.pt.x - origin.x;
                 let dy = info.pt.y - origin.y;
-                if dx * dx + dy * dy > GESTURE_THRESHOLD * GESTURE_THRESHOLD {
+                let dist_squared = i64::from(dx) * i64::from(dx) + i64::from(dy) * i64::from(dy);
+                let threshold = i64::from(hs.config.gesture_threshold);
+                if dist_squared > threshold * threshold {
                     debug!("ButtonDown → Gesturing");
                     let _ = hs.overlay_tx.send(OverlayCommand::StartGesture);
                     let _ = hs.overlay_tx.send(OverlayCommand::TrackPoint {
@@ -611,13 +664,18 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
                         x: info.pt.x,
                         y: info.pt.y,
                     });
-                    hs.state = GestureState::Gesturing { entered_tick: tick };
+                    let mut recognizer = GestureRecognizer::new(hs.config.min_segment_px);
+                    recognizer.add_point(origin.x, origin.y);
+                    recognizer.add_point(info.pt.x, info.pt.y);
+                    hs.state = GestureState::Gesturing {
+                        entered_tick: tick,
+                        recognizer,
+                    };
                 }
                 return false; // never suppress mouse move
             }
             if msg == trigger_up {
                 debug!("ButtonDown → Idle (replay click)");
-                let origin = *origin;
                 hs.pending_replay = Some(ReplayInfo { origin });
                 hs.state = GestureState::Idle;
                 // Post WM_REPLAY_CLICK to the message loop (outside callback).
@@ -627,9 +685,10 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
                 return true; // suppress the button-up
             }
         }
-        GestureState::Gesturing { .. } => {
+        GestureState::Gesturing { recognizer, .. } => {
             if msg == WM_MOUSEMOVE {
                 trace!("Gesturing → Gesturing at ({}, {})", info.pt.x, info.pt.y);
+                recognizer.add_point(info.pt.x, info.pt.y);
                 let _ = hs.overlay_tx.send(OverlayCommand::TrackPoint {
                     x: info.pt.x,
                     y: info.pt.y,
@@ -638,6 +697,12 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
             }
             if msg == trigger_up {
                 debug!("Gesturing → Idle (end gesture)");
+                // Feed the final cursor position before recognizing.
+                recognizer.add_point(info.pt.x, info.pt.y);
+                let gesture = recognizer.recognize();
+                if let Some(gesture) = gesture {
+                    info!("Gesture recognized: {:?}", gesture);
+                }
                 let _ = hs.overlay_tx.send(OverlayCommand::EndGesture);
                 hs.state = GestureState::Idle;
                 return true; // suppress the button-up
@@ -708,7 +773,7 @@ fn handle_replay_click() {
 
 /// Safety timer handler — resets the state machine if stuck.
 ///
-/// Called every [`SAFETY_TIMEOUT_MS`] from the message loop on `WM_TIMER`.
+/// Called every configured timeout interval from the message loop on `WM_TIMER`.
 /// Compares the current [`GetTickCount`] against the `entered_tick` stored
 /// in `ButtonDown` or `Gesturing`. If the elapsed time exceeds the timeout,
 /// the state is conservatively reset to `Idle`.
@@ -731,11 +796,12 @@ fn handle_safety_timer() {
         };
 
         let tick = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount() };
+        let timeout_ms = hs.config.safety_timeout_ms;
         let stuck = match &hs.state {
             GestureState::Idle => false,
             GestureState::ButtonDown { entered_tick, .. }
-            | GestureState::Gesturing { entered_tick } => {
-                tick.wrapping_sub(*entered_tick) > SAFETY_TIMEOUT_MS
+            | GestureState::Gesturing { entered_tick, .. } => {
+                tick.wrapping_sub(*entered_tick) > timeout_ms
             }
         };
 
