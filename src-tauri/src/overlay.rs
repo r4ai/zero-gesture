@@ -398,14 +398,74 @@ fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<OverlayCommand>) {
         let (r, g, b) = config.color;
         let colorref = (r as u32) | ((g as u32) << 8) | ((b as u32) << 16);
         let pen = CreatePen(PS_SOLID, config.pen_width, colorref);
+        if pen.is_null() {
+            error!("CreatePen failed for overlay window");
+            DestroyWindow(hwnd);
+            UnregisterClassW(CLASS_NAME.as_ptr(), hinstance);
+            let _ = bridge.join();
+            return;
+        }
 
         // Create persistent back-buffer resources (full virtual-screen size).
         let screen_dc = GetDC(hwnd);
+        if screen_dc.is_null() {
+            error!("GetDC failed for overlay window");
+            DeleteObject(pen as *mut _);
+            DestroyWindow(hwnd);
+            UnregisterClassW(CLASS_NAME.as_ptr(), hinstance);
+            let _ = bridge.join();
+            return;
+        }
+
         let mem_dc = CreateCompatibleDC(screen_dc);
+        if mem_dc.is_null() {
+            error!("CreateCompatibleDC failed for overlay window");
+            ReleaseDC(hwnd, screen_dc);
+            DeleteObject(pen as *mut _);
+            DestroyWindow(hwnd);
+            UnregisterClassW(CLASS_NAME.as_ptr(), hinstance);
+            let _ = bridge.join();
+            return;
+        }
+
         let mem_bmp = CreateCompatibleBitmap(screen_dc, vw, vh);
+        if mem_bmp.is_null() {
+            error!("CreateCompatibleBitmap failed for overlay window");
+            DeleteDC(mem_dc);
+            ReleaseDC(hwnd, screen_dc);
+            DeleteObject(pen as *mut _);
+            DestroyWindow(hwnd);
+            UnregisterClassW(CLASS_NAME.as_ptr(), hinstance);
+            let _ = bridge.join();
+            return;
+        }
+
         let old_mem_bmp = SelectObject(mem_dc, mem_bmp as *mut _) as HBITMAP;
+        if old_mem_bmp.is_null() {
+            error!("SelectObject failed for overlay back buffer");
+            DeleteObject(mem_bmp as *mut _);
+            DeleteDC(mem_dc);
+            ReleaseDC(hwnd, screen_dc);
+            DeleteObject(pen as *mut _);
+            DestroyWindow(hwnd);
+            UnregisterClassW(CLASS_NAME.as_ptr(), hinstance);
+            let _ = bridge.join();
+            return;
+        }
+
         ReleaseDC(hwnd, screen_dc);
         let black_brush = CreateSolidBrush(0x00000000);
+        if black_brush.is_null() {
+            error!("CreateSolidBrush failed for overlay back buffer");
+            SelectObject(mem_dc, old_mem_bmp as *mut _);
+            DeleteObject(mem_bmp as *mut _);
+            DeleteDC(mem_dc);
+            DeleteObject(pen as *mut _);
+            DestroyWindow(hwnd);
+            UnregisterClassW(CLASS_NAME.as_ptr(), hinstance);
+            let _ = bridge.join();
+            return;
+        }
 
         // Clear the back buffer initially.
         let full_rc = RECT {
