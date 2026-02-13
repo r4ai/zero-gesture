@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "mouse-gesture",
+  "productName": "Zero Gesture",
   "version": "0.1.0",
-  "identifier": "dev.r4ai.mouse-gesture",
+  "identifier": "dev.r4ai.zero-gesture",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",

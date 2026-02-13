@@ -5,14 +5,14 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 /// Configuration file name placed in the working directory.
-const CONFIG_FILE_NAME: &str = "mouse-gesture.config.json";
+const CONFIG_FILE_NAME: &str = "zero-gesture.config.json";
 
 /// Application-wide configuration persisted as JSON.
 ///
 /// # Examples
 ///
 /// ```
-/// use mouse_gesture_lib::config::AppConfig;
+/// use zero_gesture_lib::config::AppConfig;
 ///
 /// let config = AppConfig::default();
 /// assert_eq!(config.gesture_trigger_button, "right");
@@ -47,7 +47,7 @@ impl Default for AppConfig {
 /// # Examples
 ///
 /// ```no_run
-/// use mouse_gesture_lib::config::load_or_default;
+/// use zero_gesture_lib::config::load_or_default;
 ///
 /// let config = load_or_default();
 /// println!("trigger button: {}", config.gesture_trigger_button);
@@ -72,7 +72,7 @@ pub fn load_or_default() -> AppConfig {
 /// # Examples
 ///
 /// ```no_run
-/// use mouse_gesture_lib::config::{save, AppConfig};
+/// use zero_gesture_lib::config::{save, AppConfig};
 ///
 /// let config = AppConfig::default();
 /// save(&config).expect("failed to save config");

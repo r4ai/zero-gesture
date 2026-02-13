@@ -83,7 +83,7 @@ pub fn show_settings_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()>
     }
 
     let window = tauri::WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
-        .title("mouse-gesture")
+        .title("Zero Gesture")
         .inner_size(800.0, 600.0)
         .build()?;
 

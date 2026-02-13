@@ -12,7 +12,7 @@ use crossbeam_channel::{unbounded, Receiver, Sender};
 /// # Examples
 ///
 /// ```
-/// use mouse_gesture_lib::overlay::OverlayCommand;
+/// use zero_gesture_lib::overlay::OverlayCommand;
 ///
 /// let cmd = OverlayCommand::TrackPoint { x: 100, y: 200 };
 /// println!("{cmd:?}");
@@ -44,7 +44,7 @@ pub enum OverlayCommand {
 /// # Examples
 ///
 /// ```no_run
-/// use mouse_gesture_lib::overlay::{self, OverlayCommand};
+/// use zero_gesture_lib::overlay::{self, OverlayCommand};
 ///
 /// let (tx, handle) = overlay::spawn();
 /// tx.send(OverlayCommand::Shutdown).unwrap();

@@ -20,8 +20,8 @@ use tauri::Manager;
 /// # Examples
 ///
 /// ```
-/// use mouse_gesture_lib::SharedConfig;
-/// use mouse_gesture_lib::config::AppConfig;
+/// use zero_gesture_lib::SharedConfig;
+/// use zero_gesture_lib::config::AppConfig;
 ///
 /// let shared = SharedConfig::new(AppConfig::default());
 /// let cloned = shared.clone();

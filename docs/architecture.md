@@ -1,8 +1,8 @@
-# Architecture Design Document
+# Zero Gesture Architecture Design Document
 
 ## 1. Overview
 
-本プロジェクトは、Windows専用の高性能マウスジェスチャーツールです。
+Zero Gesture は、Windows専用の高性能マウスジェスチャーツールです。
 **"Hybrid Native/Web Architecture"** を採用し、設定画面の柔軟性と、常駐時の極限までの軽量化・低遅延を両立させます。
 
 ### Core Philosophy
@@ -154,7 +154,8 @@ TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成
 ├── src/                    // Frontend (Settings UI)
 │   ├── App.tsx
 │   └── components/
-└── ARCHITECTURE.md
+└── docs/
+    └── architecture.md
 ```
 
 ## 7. Performance Considerations
