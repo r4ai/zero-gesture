@@ -47,10 +47,12 @@ pub enum GestureKind {
 ///
 /// Tracks mouse movement in real time, accumulating distance within each
 /// direction and "completing" a segment when movement changes direction
-/// significantly. Maintains up to 2 confirmed segments for pattern matching.
+/// significantly. Supports up to 2 confirmed segments for pattern matching.
+/// If a 3rd distinct segment is confirmed, the gesture is marked as invalid
+/// and [`recognize`](Self::recognize) will return `None`.
 #[derive(Debug)]
 pub struct GestureRecognizer {
-    /// Confirmed segments (max 2), stored as they are completed.
+    /// Confirmed segments (max 2 before the gesture is marked invalid).
     segments: Vec<Direction>,
     /// Last recorded point (x, y).
     last_point: Option<(i32, i32)>,
@@ -58,6 +60,8 @@ pub struct GestureRecognizer {
     current_dir: Option<Direction>,
     /// Distance accumulated in the current segment (pixels).
     segment_accum: i32,
+    /// Set to `true` when a 3rd segment is confirmed, invalidating the gesture.
+    failed: bool,
 }
 
 impl GestureRecognizer {
@@ -71,6 +75,7 @@ impl GestureRecognizer {
             last_point: None,
             current_dir: None,
             segment_accum: 0,
+            failed: false,
         }
     }
 
@@ -131,11 +136,13 @@ impl GestureRecognizer {
             if new_dir != current && self.segment_accum >= Self::MIN_SEGMENT_PX {
                 // Only push if it differs from the last confirmed segment (no duplicates).
                 if self.segments.last() != Some(&current) {
-                    self.segments.push(current);
-                    if self.segments.len() > 2 {
-                        self.segments.remove(0);
+                    if self.segments.len() >= 2 {
+                        debug!("Too many segments, gesture invalidated");
+                        self.failed = true;
+                    } else {
+                        self.segments.push(current);
+                        debug!("Segment confirmed: {:?} (segments: {:?})", current, self.segments);
                     }
-                    debug!("Segment confirmed: {:?} (segments: {:?})", current, self.segments);
                 }
                 self.segment_accum = 0;
             }
@@ -162,6 +169,10 @@ impl GestureRecognizer {
     ///
     /// Only uses the last 2 segments (confirmed + current) for matching.
     pub fn recognize(&self) -> Option<GestureKind> {
+        if self.failed {
+            return None;
+        }
+
         // Build the effective sequence: confirmed segments + current direction (if significant).
         // Skip the current direction if it duplicates the last confirmed segment.
         let mut effective_segments = self.segments.clone();
@@ -173,9 +184,9 @@ impl GestureRecognizer {
             }
         }
 
-        // Keep only the last 2 segments.
+        // 3+ effective segments means the gesture is too complex to match.
         if effective_segments.len() > 2 {
-            effective_segments = effective_segments[effective_segments.len() - 2..].to_vec();
+            return None;
         }
 
         match effective_segments.len() {
@@ -390,7 +401,7 @@ mod tests {
     }
 
     #[test]
-    fn test_more_than_two_segments_keeps_last_two() {
+    fn test_three_segments_returns_none() {
         let mut rec = GestureRecognizer::new();
         rec.add_point(100, 100); // Start
         // Move right
@@ -401,13 +412,12 @@ mod tests {
         for i in 1..=5 {
             rec.add_point(150, 100 + i * 10);
         }
-        // Move left
+        // Move left — this is a 3rd distinct segment, so the gesture is invalid
         for i in 1..=5 {
             rec.add_point(150 - i * 10, 150);
         }
 
-        // Only last two segments (Down, Left) should be kept
-        assert_eq!(rec.recognize(), Some(GestureKind::DownLeft));
+        assert_eq!(rec.recognize(), None);
     }
 
     #[test]
