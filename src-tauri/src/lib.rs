@@ -217,13 +217,13 @@ impl ThreadRuntime {
             } else {
                 info!("enabled=true: starting worker threads");
             }
-            // Spawn new workers before updating the runtime state to avoid
-            // leaving the state as Disabled if spawning panics or fails.
-            let new_workers = WorkerThreads::spawn(shared_config);
-            let prev = std::mem::replace(&mut *state, RuntimeState::Running(new_workers));
+            // Tear down existing workers first so replacement overlay startup
+            // cannot race with the old overlay's Win32 class registration.
+            let prev = std::mem::replace(&mut *state, RuntimeState::Disabled);
             if let RuntimeState::Running(mut workers) = prev {
                 workers.shutdown();
             }
+            *state = RuntimeState::Running(WorkerThreads::spawn(shared_config));
         } else {
             match &mut *state {
                 RuntimeState::Running(workers) => {
