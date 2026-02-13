@@ -504,6 +504,10 @@ fn handle_start() {
 }
 
 /// Handle `WM_OVERLAY_TRACK`: append point, request repaint.
+///
+/// Only the bounding box from the previous point to the new point is
+/// invalidated (with padding for pen width), avoiding a full-screen
+/// repaint on every mouse move.
 #[cfg(windows)]
 fn handle_track(x: i32, y: i32) {
     OVERLAY_STATE.with(|cell| {
@@ -516,13 +520,27 @@ fn handle_track(x: i32, y: i32) {
         trace!("Overlay: TrackPoint ({x}, {y})");
         // Convert screen coordinates to client coordinates by subtracting
         // the virtual screen origin (window top-left).
-        state.trail.push(POINT {
+        let new_pt = POINT {
             x: x - state.origin_x,
             y: y - state.origin_y,
-        });
-        unsafe {
-            // bErase = FALSE (0) — don't erase background, we redraw fully in WM_PAINT.
-            InvalidateRect(state.hwnd, std::ptr::null(), 0);
+        };
+
+        let prev = state.trail.last().copied();
+        state.trail.push(new_pt);
+
+        // Only invalidate the dirty rect when there is a previous point
+        // to draw a line segment from.
+        if let Some(prev) = prev {
+            let pad = state.config.pen_width / 2 + 1;
+            let dirty = RECT {
+                left: prev.x.min(new_pt.x) - pad,
+                top: prev.y.min(new_pt.y) - pad,
+                right: prev.x.max(new_pt.x) + pad,
+                bottom: prev.y.max(new_pt.y) + pad,
+            };
+            unsafe {
+                InvalidateRect(state.hwnd, &dirty, 0);
+            }
         }
     });
 }
