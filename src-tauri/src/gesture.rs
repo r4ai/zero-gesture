@@ -62,15 +62,23 @@ pub struct GestureRecognizer {
     last_point: Option<(i32, i32)>,
     /// Current direction being accumulated.
     current_dir: Option<Direction>,
+    /// Candidate direction waiting for hysteresis confirmation.
+    pending_dir: Option<Direction>,
+    /// Distance accumulated in the pending direction (pixels).
+    pending_accum: i32,
     /// Distance accumulated in the current segment (pixels).
     segment_accum: i32,
     /// Minimum distance (in pixels) before a segment is confirmed.
     min_segment_px: i32,
+    /// Minimum distance (in pixels) required to accept a direction change.
+    direction_switch_confirm_px: i32,
 }
 
 impl GestureRecognizer {
     /// Default minimum distance (in pixels) before a segment is confirmed.
     const DEFAULT_MIN_SEGMENT_PX: i32 = 30;
+    /// Default hysteresis threshold for direction changes.
+    const DEFAULT_DIRECTION_SWITCH_CONFIRM_PX: i32 = 8;
 
     /// Creates a new gesture recognizer with the given minimum segment distance.
     pub fn new(min_segment_px: i32) -> Self {
@@ -78,8 +86,11 @@ impl GestureRecognizer {
             segments: Vec::new(),
             last_point: None,
             current_dir: None,
+            pending_dir: None,
+            pending_accum: 0,
             segment_accum: 0,
             min_segment_px,
+            direction_switch_confirm_px: Self::DEFAULT_DIRECTION_SWITCH_CONFIRM_PX,
         }
     }
 
@@ -135,41 +146,78 @@ impl GestureRecognizer {
             }
         };
 
-        // If direction changed, confirm the previous segment and start a new one.
-        if let Some(current) = self.current_dir {
-            if new_dir != current {
-                if self.segment_accum >= self.min_segment_px {
-                    // Only push if it differs from the last confirmed segment (no duplicates)
-                    // and we haven't reached the 2-segment cap yet.
-                    if self.segments.last() != Some(&current) {
-                        if self.segments.len() < 2 {
-                            self.segments.push(current);
-                            debug!(
-                                "Segment confirmed: {:?} (segments: {:?})",
-                                current, self.segments
-                            );
-                        } else {
-                            debug!(
-                                "Segment {:?} dropped (cap reached, segments: {:?})",
-                                current, self.segments
-                            );
-                        }
-                    }
+        let distance = Self::distance_in_primary_axis(new_dir, dx, dy);
+
+        match self.current_dir {
+            // No active direction yet: lock the first direction only after it
+            // crosses a hysteresis threshold, so tiny low-speed wobble does not
+            // pick a wrong axis immediately.
+            None => {
+                self.accumulate_pending(new_dir, distance);
+                if self.pending_accum >= self.direction_switch_confirm_px {
+                    self.current_dir = self.pending_dir.take();
+                    self.segment_accum = self.pending_accum;
+                    self.pending_accum = 0;
                 }
-                // Always reset the accumulator when direction changes.
-                self.segment_accum = 0;
+            }
+            Some(current) if new_dir == current => {
+                self.pending_dir = None;
+                self.pending_accum = 0;
+                self.segment_accum += distance;
+            }
+            Some(current) => {
+                self.accumulate_pending(new_dir, distance);
+                if self.pending_accum >= self.direction_switch_confirm_px {
+                    self.confirm_segment(current);
+                    self.current_dir = self.pending_dir.take();
+                    self.segment_accum = self.pending_accum;
+                    self.pending_accum = 0;
+                }
             }
         }
 
-        // Accumulate distance and update state.
-        self.current_dir = Some(new_dir);
-        // Accumulate the movement distance in the primary direction.
-        let distance = match new_dir {
+        self.last_point = Some((x, y));
+    }
+
+    fn distance_in_primary_axis(dir: Direction, dx: i32, dy: i32) -> i32 {
+        match dir {
             Direction::Left | Direction::Right => dx.abs(),
             Direction::Up | Direction::Down => dy.abs(),
-        };
-        self.segment_accum += distance;
-        self.last_point = Some((x, y));
+        }
+    }
+
+    fn accumulate_pending(&mut self, dir: Direction, distance: i32) {
+        if self.pending_dir == Some(dir) {
+            self.pending_accum += distance;
+        } else {
+            self.pending_dir = Some(dir);
+            self.pending_accum = distance;
+        }
+    }
+
+    fn confirm_segment(&mut self, current: Direction) {
+        if self.segment_accum < self.min_segment_px {
+            return;
+        }
+
+        // Only push if it differs from the last confirmed segment (no duplicates)
+        // and we haven't reached the 2-segment cap yet.
+        if self.segments.last() == Some(&current) {
+            return;
+        }
+
+        if self.segments.len() < 2 {
+            self.segments.push(current);
+            debug!(
+                "Segment confirmed: {:?} (segments: {:?})",
+                current, self.segments
+            );
+        } else {
+            debug!(
+                "Segment {:?} dropped (cap reached, segments: {:?})",
+                current, self.segments
+            );
+        }
     }
 
     /// Attempts to recognize a gesture from the current segments and ongoing movement.
@@ -468,6 +516,23 @@ mod tests {
 
         // Should still be just Right, not Right+Right
         assert_eq!(rec.recognize(), Some(GestureKind::Right));
+    }
+
+    #[test]
+    fn test_initial_direction_hysteresis_handles_slow_down_with_wobble() {
+        let mut rec = GestureRecognizer::default();
+        rec.add_point(100, 100);
+
+        // Slow downward movement with repeated tiny horizontal wobble.
+        rec.add_point(100, 109);
+        rec.add_point(101, 110);
+        rec.add_point(101, 119);
+        rec.add_point(102, 120);
+        rec.add_point(102, 129);
+        rec.add_point(103, 130);
+        rec.add_point(103, 139);
+
+        assert_eq!(rec.recognize(), Some(GestureKind::Down));
     }
 
     #[test]
