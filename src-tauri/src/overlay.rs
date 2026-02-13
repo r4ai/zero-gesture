@@ -41,11 +41,12 @@ use std::cell::RefCell;
 
 #[cfg(windows)]
 use windows_sys::Win32::{
-    Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM},
+    Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
     Graphics::Gdi::{
         BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreatePen,
-        CreateSolidBrush, DeleteDC, DeleteObject, EndPaint, FillRect, InvalidateRect, Polyline,
-        SelectObject, HPEN, PAINTSTRUCT, PS_SOLID, SRCCOPY,
+        CreateSolidBrush, DeleteDC, DeleteObject, EndPaint, FillRect, GetDC, InvalidateRect,
+        Polyline, ReleaseDC, SelectObject, HBITMAP, HBRUSH, HDC, HPEN, PAINTSTRUCT, PS_SOLID,
+        SRCCOPY,
     },
     System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentThreadId},
     UI::WindowsAndMessaging::{
@@ -184,13 +185,18 @@ struct OverlayState {
     trail: Vec<POINT>,
     /// GDI pen used to draw the trail.
     pen: HPEN,
+    /// Cached memory DC for the back buffer (full virtual-screen size).
+    mem_dc: HDC,
+    /// Cached bitmap selected into `mem_dc`.
+    mem_bmp: HBITMAP,
+    /// Cached solid-black brush for clearing the back buffer.
+    black_brush: HBRUSH,
     /// Virtual screen origin X — subtracted from screen coordinates to get
     /// client coordinates.
     origin_x: i32,
     /// Virtual screen origin Y.
     origin_y: i32,
     /// Snapshotted configuration (retained for future use, e.g. dynamic pen recreation).
-    #[allow(dead_code)]
     config: OverlayConfig,
 }
 
@@ -391,6 +397,23 @@ fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<OverlayCommand>) {
         let colorref = (r as u32) | ((g as u32) << 8) | ((b as u32) << 16);
         let pen = CreatePen(PS_SOLID, config.pen_width, colorref);
 
+        // Create persistent back-buffer resources (full virtual-screen size).
+        let screen_dc = GetDC(hwnd);
+        let mem_dc = CreateCompatibleDC(screen_dc);
+        let mem_bmp = CreateCompatibleBitmap(screen_dc, vw, vh);
+        SelectObject(mem_dc, mem_bmp as *mut _);
+        ReleaseDC(hwnd, screen_dc);
+        let black_brush = CreateSolidBrush(0x00000000);
+
+        // Clear the back buffer initially.
+        let full_rc = RECT {
+            left: 0,
+            top: 0,
+            right: vw,
+            bottom: vh,
+        };
+        FillRect(mem_dc, &full_rc, black_brush);
+
         debug!(
             "Overlay window created: hwnd={:?}, size={}x{} at ({},{}), color=#{:02X}{:02X}{:02X}, width={}",
             hwnd, vw, vh, vx, vy, r, g, b, config.pen_width
@@ -402,6 +425,9 @@ fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<OverlayCommand>) {
                 hwnd,
                 trail: Vec::with_capacity(256),
                 pen,
+                mem_dc,
+                mem_bmp,
+                black_brush,
                 origin_x: vx,
                 origin_y: vy,
                 config,
@@ -433,6 +459,9 @@ fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<OverlayCommand>) {
         OVERLAY_STATE.with(|cell| {
             if let Some(state) = cell.borrow_mut().take() {
                 DeleteObject(state.pen as *mut _);
+                DeleteObject(state.black_brush as *mut _);
+                DeleteObject(state.mem_bmp as *mut _);
+                DeleteDC(state.mem_dc);
             }
         });
         DestroyWindow(hwnd);
@@ -569,53 +598,13 @@ unsafe extern "system" fn overlay_wnd_proc(
             let w = rc.right - rc.left;
             let h = rc.bottom - rc.top;
 
-            // Double-buffer: draw into an off-screen bitmap, then blit once.
-            let mem_dc = CreateCompatibleDC(hdc);
-            let mem_bmp = CreateCompatibleBitmap(hdc, w, h);
-            let old_bmp = SelectObject(mem_dc, mem_bmp as *mut _);
-
-            // Fill back buffer with black (the transparent color key).
-            // Offset the fill rect to (0,0) in the memory DC.
-            let fill_rc = windows_sys::Win32::Foundation::RECT {
-                left: 0,
-                top: 0,
-                right: w,
-                bottom: h,
-            };
-            let black_brush = CreateSolidBrush(0x00000000);
-            FillRect(mem_dc, &fill_rc, black_brush);
-            DeleteObject(black_brush as *mut _);
-
-            // Draw the trail into the back buffer.
+            // Blit the dirty region from the persistent back buffer.
             OVERLAY_STATE.with(|cell| {
                 let borrow = cell.borrow();
                 if let Some(state) = borrow.as_ref() {
-                    if state.trail.len() >= 2 {
-                        // Shift the coordinate origin so that screen-relative
-                        // client coordinates map correctly into the memory DC
-                        // whose origin is the dirty rect's top-left corner.
-                        let shifted: Vec<POINT> = state
-                            .trail
-                            .iter()
-                            .map(|p| POINT {
-                                x: p.x - rc.left,
-                                y: p.y - rc.top,
-                            })
-                            .collect();
-                        let old_pen = SelectObject(mem_dc, state.pen as *mut _);
-                        Polyline(mem_dc, shifted.as_ptr(), shifted.len() as i32);
-                        SelectObject(mem_dc, old_pen);
-                    }
+                    BitBlt(hdc, rc.left, rc.top, w, h, state.mem_dc, rc.left, rc.top, SRCCOPY);
                 }
             });
-
-            // Single
-            BitBlt(hdc, rc.left, rc.top, w, h, mem_dc, 0, 0, SRCCOPY);
-
-            // Cleanup back buffer.
-            SelectObject(mem_dc, old_bmp);
-            DeleteObject(mem_bmp as *mut _);
-            DeleteDC(mem_dc);
 
             EndPaint(hwnd, &ps);
             0
