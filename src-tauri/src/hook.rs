@@ -887,9 +887,10 @@ fn handle_execute_action() {
 /// Uses serde deserialization of the enum variant name for consistency with
 /// the config format.
 fn parse_gesture_kind(name: &str) -> Option<GestureKind> {
-    // GestureKind derives Deserialize, so we can parse a quoted string.
-    let json = format!("\"{}\"", name);
-    serde_json::from_str(&json).ok()
+    // GestureKind derives Deserialize, so we can deserialize directly from a JSON string value
+    // without manually formatting JSON.
+    let value = serde_json::Value::String(name.to_owned());
+    serde_json::from_value(value).ok()
 }
 
 // ---------------------------------------------------------------------------
