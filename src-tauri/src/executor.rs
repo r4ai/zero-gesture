@@ -146,11 +146,24 @@ fn execute_keyboard(keys: &[String]) {
         inputs.len()
     );
 
-    unsafe {
+    let expected_events = inputs.len() as u32;
+    let sent_events = unsafe {
         SendInput(
-            inputs.len() as u32,
+            expected_events,
             inputs.as_ptr(),
             std::mem::size_of::<INPUT>() as i32,
+        )
+    };
+
+    if sent_events == 0 {
+        warn!(
+            "SendInput failed to inject any keyboard events (expected {} events)",
+            expected_events
+        );
+    } else if sent_events < expected_events {
+        warn!(
+            "SendInput injected only {} of {} keyboard events",
+            sent_events, expected_events
         );
     }
 }
