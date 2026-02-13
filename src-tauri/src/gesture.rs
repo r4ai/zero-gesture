@@ -78,7 +78,7 @@ pub struct GestureRecognizer {
 
 impl GestureRecognizer {
     /// Default minimum distance (in pixels) before a segment is confirmed.
-    const DEFAULT_MIN_SEGMENT_PX: i32 = 30;
+    const DEFAULT_MIN_SEGMENT_PX: i32 = 24;
     /// Default hysteresis threshold for direction changes.
     const DEFAULT_DIRECTION_SWITCH_CONFIRM_PX: i32 = 8;
     /// Default deadzone for ambiguous tiny diagonal movement.
