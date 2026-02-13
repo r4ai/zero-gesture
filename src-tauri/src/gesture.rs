@@ -29,18 +29,18 @@ pub enum GestureKind {
     Up,
     Down,
     // Two-segment gestures (12 types)
-    DownRight,   // [D, R]
-    LeftUp,      // [L, U]
-    RightUp,     // [R, U]
-    RightDown,   // [R, D]
-    UpLeft,      // [U, L]
-    UpRight,     // [U, R]
-    DownLeft,    // [D, L]
-    LeftDown,    // [L, D]
-    DownUp,      // [D, U]
-    UpDown,      // [U, D]
-    LeftRight,   // [L, R]
-    RightLeft,   // [R, L]
+    DownRight, // [D, R]
+    LeftUp,    // [L, U]
+    RightUp,   // [R, U]
+    RightDown, // [R, D]
+    UpLeft,    // [U, L]
+    UpRight,   // [U, R]
+    DownLeft,  // [D, L]
+    LeftDown,  // [L, D]
+    DownUp,    // [D, U]
+    UpDown,    // [U, D]
+    LeftRight, // [L, R]
+    RightLeft, // [R, L]
 }
 
 /// Recognizes gesture patterns from accumulated mouse movement segments.
@@ -142,9 +142,15 @@ impl GestureRecognizer {
                 if self.segments.last() != Some(&current) {
                     if self.segments.len() < 2 {
                         self.segments.push(current);
-                        debug!("Segment confirmed: {:?} (segments: {:?})", current, self.segments);
+                        debug!(
+                            "Segment confirmed: {:?} (segments: {:?})",
+                            current, self.segments
+                        );
                     } else {
-                        debug!("Segment {:?} dropped (cap reached, segments: {:?})", current, self.segments);
+                        debug!(
+                            "Segment {:?} dropped (cap reached, segments: {:?})",
+                            current, self.segments
+                        );
                     }
                 }
                 self.segment_accum = 0;
@@ -176,8 +182,7 @@ impl GestureRecognizer {
         // Skip the current direction if it duplicates the last confirmed segment.
         let mut effective_segments = self.segments.clone();
         if let Some(dir) = self.current_dir {
-            if self.segment_accum >= self.min_segment_px
-                && effective_segments.last() != Some(&dir)
+            if self.segment_accum >= self.min_segment_px && effective_segments.last() != Some(&dir)
             {
                 effective_segments.push(dir);
             }
@@ -229,8 +234,8 @@ mod tests {
     fn test_single_direction_left() {
         let mut rec = GestureRecognizer::default();
         rec.add_point(100, 100); // Start
-        rec.add_point(70, 100);  // Move left
-        rec.add_point(50, 100);  // Continue left
+        rec.add_point(70, 100); // Move left
+        rec.add_point(50, 100); // Continue left
 
         assert_eq!(rec.recognize(), Some(GestureKind::Left));
     }
@@ -269,7 +274,7 @@ mod tests {
     fn test_two_segment_down_right() {
         let mut rec = GestureRecognizer::default();
         rec.add_point(100, 100); // Start
-        // Move down
+                                 // Move down
         rec.add_point(100, 130);
         rec.add_point(100, 150);
         rec.add_point(100, 170);
@@ -285,7 +290,7 @@ mod tests {
     fn test_two_segment_left_up() {
         let mut rec = GestureRecognizer::default();
         rec.add_point(100, 100); // Start
-        // Move left
+                                 // Move left
         rec.add_point(70, 100);
         rec.add_point(50, 100);
         rec.add_point(30, 100);
@@ -301,7 +306,7 @@ mod tests {
     fn test_two_segment_right_up() {
         let mut rec = GestureRecognizer::default();
         rec.add_point(100, 100); // Start
-        // Move right
+                                 // Move right
         rec.add_point(130, 100);
         rec.add_point(150, 100);
         rec.add_point(170, 100);
@@ -317,7 +322,7 @@ mod tests {
     fn test_two_segment_right_down() {
         let mut rec = GestureRecognizer::default();
         rec.add_point(100, 100); // Start
-        // Move right
+                                 // Move right
         rec.add_point(130, 100);
         rec.add_point(150, 100);
         rec.add_point(170, 100);
@@ -333,7 +338,7 @@ mod tests {
     fn test_two_segment_up_left() {
         let mut rec = GestureRecognizer::default();
         rec.add_point(100, 100); // Start
-        // Move up
+                                 // Move up
         rec.add_point(100, 70);
         rec.add_point(100, 50);
         rec.add_point(100, 30);
@@ -349,7 +354,7 @@ mod tests {
     fn test_two_segment_up_right() {
         let mut rec = GestureRecognizer::default();
         rec.add_point(100, 100); // Start
-        // Move up
+                                 // Move up
         rec.add_point(100, 70);
         rec.add_point(100, 50);
         rec.add_point(100, 30);
@@ -365,7 +370,7 @@ mod tests {
     fn test_short_segment_not_confirmed() {
         let mut rec = GestureRecognizer::default();
         rec.add_point(100, 100); // Start
-        // Move left only a small amount (< MIN_SEGMENT_PX)
+                                 // Move left only a small amount (< MIN_SEGMENT_PX)
         rec.add_point(95, 100);
         // Then move down significantly
         rec.add_point(95, 150);
@@ -403,7 +408,7 @@ mod tests {
     fn test_three_distinct_segments_returns_none() {
         let mut rec = GestureRecognizer::default();
         rec.add_point(100, 100); // Start
-        // Move right
+                                 // Move right
         for i in 1..=5 {
             rec.add_point(100 + i * 10, 100);
         }
@@ -424,7 +429,7 @@ mod tests {
     fn test_three_segments_recovers_if_current_matches_last() {
         let mut rec = GestureRecognizer::default();
         rec.add_point(100, 100); // Start
-        // Move right
+                                 // Move right
         for i in 1..=5 {
             rec.add_point(100 + i * 10, 100);
         }
@@ -449,7 +454,7 @@ mod tests {
     fn test_same_direction_not_duplicated() {
         let mut rec = GestureRecognizer::default();
         rec.add_point(100, 100); // Start
-        // Move right significantly
+                                 // Move right significantly
         rec.add_point(140, 100);
         // Briefly move left (< MIN_SEGMENT_PX, so Right is confirmed but Left is not)
         rec.add_point(130, 100);
