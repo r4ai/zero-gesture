@@ -6,6 +6,7 @@
 use std::cmp::Ordering;
 
 use log::debug;
+use serde::{Deserialize, Serialize};
 
 /// A single direction of mouse movement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,7 +22,7 @@ pub enum Direction {
 /// The mapping between gesture names and direction sequences:
 /// - Single direction: [L], [R], [U], [D]
 /// - Two-segment gestures: all combinations of direction pairs
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum GestureKind {
     // Single direction (4 types)
     Left,

@@ -82,6 +82,7 @@
 //! lost button-up event.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
@@ -90,7 +91,8 @@ use crossbeam_channel::{Receiver, Sender};
 use log::{debug, error, info, trace, warn};
 
 use crate::config::AppConfig;
-use crate::gesture::GestureRecognizer;
+use crate::executor::{self, Action};
+use crate::gesture::{GestureKind, GestureRecognizer};
 use crate::overlay::OverlayCommand;
 use crate::SharedConfig;
 
@@ -123,6 +125,14 @@ use windows_sys::Win32::System::Threading::GetCurrentThreadId;
 /// can be called safely outside the hook callback (avoiding re-entrancy).
 #[cfg(windows)]
 const WM_REPLAY_CLICK: u32 = WM_APP + 1;
+
+/// Custom message used to execute a gesture-bound action outside the hook callback.
+///
+/// Defined as `WM_APP + 2`. Posted when a gesture is recognised and has a
+/// matching binding, so that [`executor::execute`] runs safely in the message
+/// loop (avoiding re-entrancy with the low-level hook).
+#[cfg(windows)]
+const WM_EXECUTE_ACTION: u32 = WM_APP + 2;
 
 /// Timer ID for the safety timeout.
 #[cfg(windows)]
@@ -270,6 +280,12 @@ struct HookConfig {
     gesture_threshold: i32,
     safety_timeout_ms: u32,
     min_segment_px: i32,
+    /// Pre-parsed gesture-to-action bindings.
+    ///
+    /// String keys from the config are parsed into [`GestureKind`] at
+    /// startup so that the hot-path hook callback only needs a `HashMap`
+    /// lookup.
+    bindings: HashMap<GestureKind, Action>,
 }
 
 // ---------------------------------------------------------------------------
@@ -349,6 +365,9 @@ struct HookThreadState {
     /// Set by the hook callback when a click needs to be replayed;
     /// consumed by [`handle_replay_click`] in the message loop.
     pending_replay: Option<ReplayInfo>,
+    /// Set by the hook callback when a gesture has a matching binding;
+    /// consumed by the `WM_EXECUTE_ACTION` handler in the message loop.
+    pending_action: Option<Action>,
 }
 
 // Thread-local storage for the hook state.
@@ -402,11 +421,30 @@ pub fn spawn(
     // Snapshot config before entering the thread.
     let hook_config = {
         let cfg = shared_config.0.read().unwrap();
+
+        // Parse string keys into GestureKind at startup (not in the hot path).
+        let bindings: HashMap<GestureKind, Action> = cfg
+            .bindings
+            .iter()
+            .filter_map(|(name, action)| {
+                let kind = parse_gesture_kind(name);
+                if kind.is_none() {
+                    warn!("Unknown gesture name in bindings: {:?}", name);
+                }
+                kind.map(|k| (k, action.clone()))
+            })
+            .collect();
+
+        if !bindings.is_empty() {
+            info!("Loaded {} gesture binding(s)", bindings.len());
+        }
+
         HookConfig {
             trigger: TriggerButton::from_config(&cfg.gesture_trigger_button),
             gesture_threshold: resolve_gesture_threshold(cfg.gesture_threshold),
             safety_timeout_ms: resolve_safety_timeout_ms(cfg.safety_timeout_ms),
             min_segment_px: resolve_min_segment_px(cfg.min_segment_px),
+            bindings,
         }
     };
 
@@ -489,6 +527,7 @@ fn run_loop_win32(
                 config: hook_config,
                 overlay_tx,
                 pending_replay: None,
+                pending_action: None,
             });
         });
 
@@ -523,6 +562,8 @@ fn run_loop_win32(
 
             if msg.message == WM_REPLAY_CLICK {
                 handle_replay_click();
+            } else if msg.message == WM_EXECUTE_ACTION {
+                handle_execute_action();
             } else if msg.message == WM_TIMER {
                 handle_safety_timer();
             } else {
@@ -700,8 +741,15 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
                 // Feed the final cursor position before recognizing.
                 recognizer.add_point(info.pt.x, info.pt.y);
                 let gesture = recognizer.recognize();
-                if let Some(gesture) = gesture {
-                    info!("Gesture recognized: {:?}", gesture);
+                if let Some(kind) = gesture {
+                    info!("Gesture recognized: {:?}", kind);
+                    if let Some(action) = hs.config.bindings.get(&kind) {
+                        debug!("Gesture {:?} matched binding: {:?}", kind, action);
+                        hs.pending_action = Some(action.clone());
+                        unsafe {
+                            PostThreadMessageW(GetCurrentThreadId(), WM_EXECUTE_ACTION, 0, 0);
+                        }
+                    }
                 }
                 let _ = hs.overlay_tx.send(OverlayCommand::EndGesture);
                 hs.state = GestureState::Idle;
@@ -814,6 +862,34 @@ fn handle_safety_timer() {
             hs.state = GestureState::Idle;
         }
     });
+}
+
+/// Execute a pending gesture-bound action via [`executor::execute`].
+///
+/// Called from the message loop (on `WM_EXECUTE_ACTION`), **not** from the
+/// hook callback, following the same deferred-execution pattern as click
+/// replay to avoid re-entrancy.
+#[cfg(windows)]
+fn handle_execute_action() {
+    let action = HOOK_STATE.with(|cell| {
+        let mut borrow = cell.borrow_mut();
+        borrow.as_mut().and_then(|hs| hs.pending_action.take())
+    });
+
+    if let Some(action) = action {
+        debug!("Executing bound action: {:?}", action);
+        executor::execute(&action);
+    }
+}
+
+/// Parse a gesture kind name (e.g. `"Left"`, `"DownRight"`) into a [`GestureKind`].
+///
+/// Uses serde deserialization of the enum variant name for consistency with
+/// the config format.
+fn parse_gesture_kind(name: &str) -> Option<GestureKind> {
+    // GestureKind derives Deserialize, so we can parse a quoted string.
+    let json = format!("\"{}\"", name);
+    serde_json::from_str(&json).ok()
 }
 
 // ---------------------------------------------------------------------------
