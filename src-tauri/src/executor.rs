@@ -113,9 +113,7 @@ pub fn execute(action: &Action) {
 
 #[cfg(windows)]
 fn execute_keyboard(keys: &[String]) {
-    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-        SendInput, INPUT, KEYEVENTF_KEYUP,
-    };
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, KEYEVENTF_KEYUP};
 
     let vks: Vec<u16> = keys
         .iter()
@@ -165,7 +163,10 @@ fn execute_keyboard(keys: &[String]) {
 
 /// Build an [`INPUT`] struct for a keyboard event.
 #[cfg(windows)]
-fn make_keyboard_input(vk: u16, flags: u32) -> windows_sys::Win32::UI::Input::KeyboardAndMouse::INPUT {
+fn make_keyboard_input(
+    vk: u16,
+    flags: u32,
+) -> windows_sys::Win32::UI::Input::KeyboardAndMouse::INPUT {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
 
     INPUT {
