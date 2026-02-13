@@ -118,8 +118,7 @@ fn handle_toggle<R: Runtime>(app: &AppHandle<R>, toggle_item: &MenuItem<R>) {
 
     let new_enabled = new_config.enabled;
 
-    if let Err(err) =
-        crate::apply_config_update(new_config, shared_config.inner(), runtime.inner())
+    if let Err(err) = crate::apply_config_update(new_config, shared_config.inner(), runtime.inner())
     {
         warn!("failed to toggle gestures: {err}");
         return;
