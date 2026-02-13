@@ -448,22 +448,30 @@ fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<OverlayCommand>) {
 // ---------------------------------------------------------------------------
 
 /// Handle `WM_OVERLAY_START`: clear trail, show window.
+///
+/// The `RefCell` borrow is dropped **before** calling Win32 APIs that may
+/// synchronously dispatch `WM_PAINT` (e.g. `ShowWindow`), because
+/// `overlay_wnd_proc` borrows the same `RefCell` to read the trail.
 #[cfg(windows)]
 fn handle_start() {
-    OVERLAY_STATE.with(|cell| {
+    let hwnd = OVERLAY_STATE.with(|cell| {
         let mut borrow = cell.borrow_mut();
         let state = match borrow.as_mut() {
             Some(s) => s,
-            None => return,
+            None => return None,
         };
 
         state.trail.clear();
         debug!("Overlay: StartGesture — showing window");
-        unsafe {
-            ShowWindow(state.hwnd, SW_SHOWNOACTIVATE);
-            InvalidateRect(state.hwnd, std::ptr::null(), 1);
-        }
+        Some(state.hwnd)
     });
+
+    if let Some(hwnd) = hwnd {
+        unsafe {
+            ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            InvalidateRect(hwnd, std::ptr::null(), 1);
+        }
+    }
 }
 
 /// Handle `WM_OVERLAY_TRACK`: append point, request repaint.
@@ -496,26 +504,36 @@ fn handle_track(x: i32, y: i32) {
 /// hiding so that the window surface is cleared. Without this, the next
 /// `ShowWindow` would briefly display the stale trail from the previous
 /// gesture.
+///
+/// The `RefCell` borrow is dropped **before** calling `UpdateWindow`,
+/// which synchronously dispatches `WM_PAINT`. If the borrow were still
+/// held, `overlay_wnd_proc` would panic trying to borrow the same
+/// `RefCell`.
 #[cfg(windows)]
 fn handle_end() {
-    OVERLAY_STATE.with(|cell| {
+    let hwnd = OVERLAY_STATE.with(|cell| {
         let mut borrow = cell.borrow_mut();
         let state = match borrow.as_mut() {
             Some(s) => s,
-            None => return,
+            None => return None,
         };
 
         state.trail.clear();
         debug!("Overlay: EndGesture — hiding window");
+        Some(state.hwnd)
+    });
+    // Borrow is now released — safe to call Win32 APIs that trigger WndProc.
+
+    if let Some(hwnd) = hwnd {
         unsafe {
             // Force a synchronous repaint (empty trail → all-black → transparent)
             // while the window is still visible, so the surface is clean when
             // the window is shown again for the next gesture.
-            InvalidateRect(state.hwnd, std::ptr::null(), 1);
-            windows_sys::Win32::Graphics::Gdi::UpdateWindow(state.hwnd);
-            ShowWindow(state.hwnd, SW_HIDE);
+            InvalidateRect(hwnd, std::ptr::null(), 1);
+            windows_sys::Win32::Graphics::Gdi::UpdateWindow(hwnd);
+            ShowWindow(hwnd, SW_HIDE);
         }
-    });
+    }
 }
 
 // ---------------------------------------------------------------------------
