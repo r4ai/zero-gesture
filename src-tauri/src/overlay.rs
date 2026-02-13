@@ -44,7 +44,11 @@ pub enum OverlayCommand {
 /// # Examples
 ///
 /// ```no_run
-/// # // overlay::spawn is crate-private, so this is illustrative.
+/// use mouse_gesture_lib::overlay::{self, OverlayCommand};
+///
+/// let (tx, handle) = overlay::spawn();
+/// tx.send(OverlayCommand::Shutdown).unwrap();
+/// handle.join().unwrap();
 /// ```
 pub fn spawn() -> (Sender<OverlayCommand>, JoinHandle<()>) {
     let (overlay_tx, overlay_rx) = unbounded();
