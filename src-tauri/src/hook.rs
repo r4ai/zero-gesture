@@ -145,6 +145,23 @@ fn resolve_gesture_threshold(value: i32) -> i32 {
     }
 }
 
+/// Resolves `min_segment_px` from config with a safe fallback.
+///
+/// Values less than or equal to zero are invalid and replaced by
+/// [`AppConfig::DEFAULT_MIN_SEGMENT_PX`].
+fn resolve_min_segment_px(value: i32) -> i32 {
+    if value > 0 {
+        value
+    } else {
+        warn!(
+            "Invalid min_segment_px={} in config, falling back to {}",
+            value,
+            AppConfig::DEFAULT_MIN_SEGMENT_PX
+        );
+        AppConfig::DEFAULT_MIN_SEGMENT_PX
+    }
+}
+
 /// Resolves `safety_timeout_ms` from config with a safe fallback.
 ///
 /// A value of zero is invalid and replaced by
@@ -252,6 +269,7 @@ struct HookConfig {
     trigger: TriggerButton,
     gesture_threshold: i32,
     safety_timeout_ms: u32,
+    min_segment_px: i32,
 }
 
 // ---------------------------------------------------------------------------
@@ -388,6 +406,7 @@ pub fn spawn(
             trigger: TriggerButton::from_config(&cfg.gesture_trigger_button),
             gesture_threshold: resolve_gesture_threshold(cfg.gesture_threshold),
             safety_timeout_ms: resolve_safety_timeout_ms(cfg.safety_timeout_ms),
+            min_segment_px: resolve_min_segment_px(cfg.min_segment_px),
         }
     };
 
@@ -645,7 +664,7 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
                         x: info.pt.x,
                         y: info.pt.y,
                     });
-                    let mut recognizer = GestureRecognizer::new();
+                    let mut recognizer = GestureRecognizer::new(hs.config.min_segment_px);
                     recognizer.add_point(origin.x, origin.y);
                     recognizer.add_point(info.pt.x, info.pt.y);
                     hs.state = GestureState::Gesturing {

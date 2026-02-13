@@ -60,21 +60,24 @@ pub struct GestureRecognizer {
     current_dir: Option<Direction>,
     /// Distance accumulated in the current segment (pixels).
     segment_accum: i32,
+    /// Minimum distance (in pixels) before a segment is confirmed.
+    min_segment_px: i32,
     /// Set to `true` when a 3rd segment is confirmed, invalidating the gesture.
     failed: bool,
 }
 
 impl GestureRecognizer {
-    /// Minimum distance (in pixels) before a segment is confirmed.
-    const MIN_SEGMENT_PX: i32 = 30;
+    /// Default minimum distance (in pixels) before a segment is confirmed.
+    const DEFAULT_MIN_SEGMENT_PX: i32 = 30;
 
-    /// Creates a new gesture recognizer.
-    pub fn new() -> Self {
+    /// Creates a new gesture recognizer with the given minimum segment distance.
+    pub fn new(min_segment_px: i32) -> Self {
         Self {
             segments: Vec::new(),
             last_point: None,
             current_dir: None,
             segment_accum: 0,
+            min_segment_px,
             failed: false,
         }
     }
@@ -133,7 +136,7 @@ impl GestureRecognizer {
 
         // If direction changed, confirm the previous segment and start a new one.
         if let Some(current) = self.current_dir {
-            if new_dir != current && self.segment_accum >= Self::MIN_SEGMENT_PX {
+            if new_dir != current && self.segment_accum >= self.min_segment_px {
                 // Only push if it differs from the last confirmed segment (no duplicates).
                 if self.segments.last() != Some(&current) {
                     if self.segments.len() >= 2 {
@@ -177,7 +180,7 @@ impl GestureRecognizer {
         // Skip the current direction if it duplicates the last confirmed segment.
         let mut effective_segments = self.segments.clone();
         if let Some(dir) = self.current_dir {
-            if self.segment_accum >= Self::MIN_SEGMENT_PX
+            if self.segment_accum >= self.min_segment_px
                 && effective_segments.last() != Some(&dir)
             {
                 effective_segments.push(dir);
@@ -218,7 +221,7 @@ impl GestureRecognizer {
 
 impl Default for GestureRecognizer {
     fn default() -> Self {
-        Self::new()
+        Self::new(Self::DEFAULT_MIN_SEGMENT_PX)
     }
 }
 
@@ -228,7 +231,7 @@ mod tests {
 
     #[test]
     fn test_single_direction_left() {
-        let mut rec = GestureRecognizer::new();
+        let mut rec = GestureRecognizer::default();
         rec.add_point(100, 100); // Start
         rec.add_point(70, 100);  // Move left
         rec.add_point(50, 100);  // Continue left
@@ -238,7 +241,7 @@ mod tests {
 
     #[test]
     fn test_single_direction_right() {
-        let mut rec = GestureRecognizer::new();
+        let mut rec = GestureRecognizer::default();
         rec.add_point(100, 100);
         rec.add_point(130, 100);
         rec.add_point(150, 100);
@@ -248,7 +251,7 @@ mod tests {
 
     #[test]
     fn test_single_direction_up() {
-        let mut rec = GestureRecognizer::new();
+        let mut rec = GestureRecognizer::default();
         rec.add_point(100, 100);
         rec.add_point(100, 70);
         rec.add_point(100, 50);
@@ -258,7 +261,7 @@ mod tests {
 
     #[test]
     fn test_single_direction_down() {
-        let mut rec = GestureRecognizer::new();
+        let mut rec = GestureRecognizer::default();
         rec.add_point(100, 100);
         rec.add_point(100, 130);
         rec.add_point(100, 150);
@@ -268,7 +271,7 @@ mod tests {
 
     #[test]
     fn test_two_segment_down_right() {
-        let mut rec = GestureRecognizer::new();
+        let mut rec = GestureRecognizer::default();
         rec.add_point(100, 100); // Start
         // Move down
         rec.add_point(100, 130);
@@ -284,7 +287,7 @@ mod tests {
 
     #[test]
     fn test_two_segment_left_up() {
-        let mut rec = GestureRecognizer::new();
+        let mut rec = GestureRecognizer::default();
         rec.add_point(100, 100); // Start
         // Move left
         rec.add_point(70, 100);
@@ -300,7 +303,7 @@ mod tests {
 
     #[test]
     fn test_two_segment_right_up() {
-        let mut rec = GestureRecognizer::new();
+        let mut rec = GestureRecognizer::default();
         rec.add_point(100, 100); // Start
         // Move right
         rec.add_point(130, 100);
@@ -316,7 +319,7 @@ mod tests {
 
     #[test]
     fn test_two_segment_right_down() {
-        let mut rec = GestureRecognizer::new();
+        let mut rec = GestureRecognizer::default();
         rec.add_point(100, 100); // Start
         // Move right
         rec.add_point(130, 100);
@@ -332,7 +335,7 @@ mod tests {
 
     #[test]
     fn test_two_segment_up_left() {
-        let mut rec = GestureRecognizer::new();
+        let mut rec = GestureRecognizer::default();
         rec.add_point(100, 100); // Start
         // Move up
         rec.add_point(100, 70);
@@ -348,7 +351,7 @@ mod tests {
 
     #[test]
     fn test_two_segment_up_right() {
-        let mut rec = GestureRecognizer::new();
+        let mut rec = GestureRecognizer::default();
         rec.add_point(100, 100); // Start
         // Move up
         rec.add_point(100, 70);
@@ -364,7 +367,7 @@ mod tests {
 
     #[test]
     fn test_short_segment_not_confirmed() {
-        let mut rec = GestureRecognizer::new();
+        let mut rec = GestureRecognizer::default();
         rec.add_point(100, 100); // Start
         // Move left only a small amount (< MIN_SEGMENT_PX)
         rec.add_point(95, 100);
@@ -378,7 +381,7 @@ mod tests {
 
     #[test]
     fn test_diagonal_prefers_horizontal() {
-        let mut rec = GestureRecognizer::new();
+        let mut rec = GestureRecognizer::default();
         rec.add_point(100, 100);
         // Move with equal horizontal and vertical component
         rec.add_point(120, 120);
@@ -390,7 +393,7 @@ mod tests {
 
     #[test]
     fn test_diagonal_prefers_vertical() {
-        let mut rec = GestureRecognizer::new();
+        let mut rec = GestureRecognizer::default();
         rec.add_point(100, 100);
         // Move with larger vertical component
         rec.add_point(110, 140);
@@ -402,7 +405,7 @@ mod tests {
 
     #[test]
     fn test_three_segments_returns_none() {
-        let mut rec = GestureRecognizer::new();
+        let mut rec = GestureRecognizer::default();
         rec.add_point(100, 100); // Start
         // Move right
         for i in 1..=5 {
@@ -422,7 +425,7 @@ mod tests {
 
     #[test]
     fn test_same_direction_not_duplicated() {
-        let mut rec = GestureRecognizer::new();
+        let mut rec = GestureRecognizer::default();
         rec.add_point(100, 100); // Start
         // Move right significantly
         rec.add_point(140, 100);
