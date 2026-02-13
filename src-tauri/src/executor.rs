@@ -174,13 +174,45 @@ fn execute_keyboard(keys: &[String]) {
     warn!("Keyboard action execution is only supported on Windows");
 }
 
+/// Returns `true` if the given virtual-key code is an extended key that
+/// requires the `KEYEVENTF_EXTENDEDKEY` flag for [`SendInput`].
+#[cfg(windows)]
+fn is_extended_key(vk: u16) -> bool {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
+
+    matches!(
+        vk,
+        VK_UP
+            | VK_DOWN
+            | VK_LEFT
+            | VK_RIGHT
+            | VK_HOME
+            | VK_END
+            | VK_PRIOR
+            | VK_NEXT
+            | VK_INSERT
+            | VK_DELETE
+            | VK_LWIN
+            | VK_RWIN
+    )
+}
+
 /// Build an [`INPUT`] struct for a keyboard event.
+///
+/// Automatically sets `KEYEVENTF_EXTENDEDKEY` for navigation and other
+/// extended keys so that applications recognise them correctly.
 #[cfg(windows)]
 fn make_keyboard_input(
     vk: u16,
     flags: u32,
 ) -> windows_sys::Win32::UI::Input::KeyboardAndMouse::INPUT {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
+
+    let flags = if is_extended_key(vk) {
+        flags | KEYEVENTF_EXTENDEDKEY
+    } else {
+        flags
+    };
 
     INPUT {
         r#type: INPUT_KEYBOARD,
