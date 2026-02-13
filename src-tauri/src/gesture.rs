@@ -129,12 +129,14 @@ impl GestureRecognizer {
         // If direction changed, confirm the previous segment and start a new one.
         if let Some(current) = self.current_dir {
             if new_dir != current && self.segment_accum >= Self::MIN_SEGMENT_PX {
-                // Confirm the previous segment and keep max 2 segments.
-                self.segments.push(current);
-                if self.segments.len() > 2 {
-                    self.segments.remove(0);
+                // Only push if it differs from the last confirmed segment (no duplicates).
+                if self.segments.last() != Some(&current) {
+                    self.segments.push(current);
+                    if self.segments.len() > 2 {
+                        self.segments.remove(0);
+                    }
+                    debug!("Segment confirmed: {:?} (segments: {:?})", current, self.segments);
                 }
-                debug!("Segment confirmed: {:?} (segments: {:?})", current, self.segments);
                 self.segment_accum = 0;
             }
         }
@@ -160,10 +162,13 @@ impl GestureRecognizer {
     ///
     /// Only uses the last 2 segments (confirmed + current) for matching.
     pub fn recognize(&self) -> Option<GestureKind> {
-        // Build the effective sequence: confirmed segments + current direction (if significant)
+        // Build the effective sequence: confirmed segments + current direction (if significant).
+        // Skip the current direction if it duplicates the last confirmed segment.
         let mut effective_segments = self.segments.clone();
         if let Some(dir) = self.current_dir {
-            if self.segment_accum >= Self::MIN_SEGMENT_PX {
+            if self.segment_accum >= Self::MIN_SEGMENT_PX
+                && effective_segments.last() != Some(&dir)
+            {
                 effective_segments.push(dir);
             }
         }
@@ -403,5 +408,21 @@ mod tests {
 
         // Only last two segments (Down, Left) should be kept
         assert_eq!(rec.recognize(), Some(GestureKind::DownLeft));
+    }
+
+    #[test]
+    fn test_same_direction_not_duplicated() {
+        let mut rec = GestureRecognizer::new();
+        rec.add_point(100, 100); // Start
+        // Move right significantly
+        rec.add_point(140, 100);
+        // Briefly move left (< MIN_SEGMENT_PX, so Right is confirmed but Left is not)
+        rec.add_point(130, 100);
+        // Move right again significantly
+        rec.add_point(170, 100);
+        rec.add_point(200, 100);
+
+        // Should still be just Right, not Right+Right
+        assert_eq!(rec.recognize(), Some(GestureKind::Right));
     }
 }
