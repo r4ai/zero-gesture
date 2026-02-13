@@ -4,7 +4,7 @@ pub mod overlay;
 mod tray;
 
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU32, Ordering},
     Arc, Mutex, RwLock,
 };
 use std::thread::JoinHandle;
@@ -48,6 +48,7 @@ impl SharedConfig {
 /// shutdown.
 pub struct ThreadRuntime {
     hook_control_tx: Sender<hook::HookControl>,
+    hook_thread_tid: Arc<AtomicU32>,
     overlay_tx: Sender<overlay::OverlayCommand>,
     hook_handle: Mutex<Option<JoinHandle<()>>>,
     overlay_handle: Mutex<Option<JoinHandle<()>>>,
@@ -59,10 +60,12 @@ impl ThreadRuntime {
     /// their lifetimes.
     fn start(shared_config: SharedConfig) -> Self {
         let (overlay_tx, overlay_handle) = overlay::spawn();
-        let (hook_control_tx, hook_handle) = hook::spawn(shared_config, overlay_tx.clone());
+        let (hook_control_tx, hook_thread_tid, hook_handle) =
+            hook::spawn(shared_config, overlay_tx.clone());
 
         Self {
             hook_control_tx,
+            hook_thread_tid,
             overlay_tx,
             hook_handle: Mutex::new(Some(hook_handle)),
             overlay_handle: Mutex::new(Some(overlay_handle)),
@@ -90,6 +93,20 @@ impl ThreadRuntime {
             return;
         }
 
+        // Post WM_QUIT to the hook thread's Win32 message loop.
+        let tid = self.hook_thread_tid.load(Ordering::Acquire);
+        if tid != 0 {
+            #[cfg(windows)]
+            unsafe {
+                windows_sys::Win32::UI::WindowsAndMessaging::PostThreadMessageW(
+                    tid,
+                    windows_sys::Win32::UI::WindowsAndMessaging::WM_QUIT,
+                    0,
+                    0,
+                );
+            }
+        }
+        // Also send through the channel as a fallback.
         let _ = self.hook_control_tx.send(hook::HookControl::Shutdown);
         let _ = self.overlay_tx.send(overlay::OverlayCommand::Shutdown);
 
@@ -120,7 +137,7 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(
             tauri_plugin_log::Builder::new()
-                .level(tauri_plugin_log::log::LevelFilter::Info)
+                .level(tauri_plugin_log::log::LevelFilter::Debug)
                 .build(),
         )
         .plugin(tauri_plugin_opener::init())

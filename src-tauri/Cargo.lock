@@ -2137,12 +2137,14 @@ name = "mouse-gesture"
 version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
+ "log",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-log",
  "tauri-plugin-opener",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
