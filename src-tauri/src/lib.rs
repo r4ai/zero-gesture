@@ -127,7 +127,7 @@ impl ThreadRuntime {
     /// Spawns the hook and overlay threads and returns a runtime that manages
     /// their lifetimes.
     ///
-    /// If `config.enabled` is `false`, the runtime starts in the [`Disabled`]
+    /// If `config.enabled` is `false`, the runtime starts in the Disabled
     /// state and no worker threads are created.
     pub fn start(shared_config: SharedConfig) -> Self {
         let enabled = shared_config.0.read().map(|c| c.enabled).unwrap_or(true);
@@ -217,21 +217,23 @@ impl ThreadRuntime {
             } else {
                 info!("enabled=true: starting worker threads");
             }
-            let prev = std::mem::replace(&mut *state, RuntimeState::Disabled);
+            // Spawn new workers before updating the runtime state to avoid
+            // leaving the state as Disabled if spawning panics or fails.
+            let new_workers = WorkerThreads::spawn(shared_config);
+            let prev = std::mem::replace(&mut *state, RuntimeState::Running(new_workers));
             if let RuntimeState::Running(mut workers) = prev {
                 workers.shutdown();
             }
-            *state = RuntimeState::Running(WorkerThreads::spawn(shared_config));
         } else {
-            let was_running = matches!(*state, RuntimeState::Running(_));
-            if was_running {
-                info!("enabled=false: stopping worker threads");
-            } else {
-                info!("enabled=false: workers already stopped");
-            }
-            let prev = std::mem::replace(&mut *state, RuntimeState::Disabled);
-            if let RuntimeState::Running(mut workers) = prev {
-                workers.shutdown();
+            match &mut *state {
+                RuntimeState::Running(workers) => {
+                    info!("enabled=false: stopping worker threads");
+                    workers.shutdown();
+                    *state = RuntimeState::Disabled;
+                }
+                _ => {
+                    info!("enabled=false: workers already stopped");
+                }
             }
         }
 

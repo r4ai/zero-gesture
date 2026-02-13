@@ -273,6 +273,13 @@ mod tests {
     }
 
     #[test]
+    fn deserialize_json_with_enabled_false() {
+        let raw = r##"{ "gesture_trigger_button": "right", "enabled": false }"##;
+        let cfg: AppConfig = serde_json::from_str(raw).expect("JSON with enabled=false must parse");
+        assert!(!cfg.enabled);
+    }
+
+    #[test]
     fn deserialize_legacy_json_defaults_enabled_to_true() {
         let raw = r##"{ "gesture_trigger_button": "right" }"##;
         let cfg: AppConfig = serde_json::from_str(raw).expect("legacy JSON must parse");
