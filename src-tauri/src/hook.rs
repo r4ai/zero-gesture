@@ -1116,14 +1116,27 @@ mod tests {
         let mut state = GestureState::Idle;
         let config = test_config();
 
-        let effect = process_event_pure(&mut state, &config, MouseEvent::TriggerDown, (100, 200), 1000);
+        let effect = process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::TriggerDown,
+            (100, 200),
+            1000,
+        );
 
         assert!(effect.suppress, "trigger down should be suppressed");
         assert!(effect.overlay_commands.is_empty());
         assert!(effect.request_replay.is_none());
         assert!(effect.request_execute.is_none());
         assert!(
-            matches!(state, GestureState::ButtonDown { origin_x: 100, origin_y: 200, entered_tick: 1000 }),
+            matches!(
+                state,
+                GestureState::ButtonDown {
+                    origin_x: 100,
+                    origin_y: 200,
+                    entered_tick: 1000
+                }
+            ),
             "should transition to ButtonDown"
         );
     }
@@ -1137,10 +1150,15 @@ mod tests {
         };
         let config = test_config();
 
-        let effect = process_event_pure(&mut state, &config, MouseEvent::TriggerUp, (101, 201), 1050);
+        let effect =
+            process_event_pure(&mut state, &config, MouseEvent::TriggerUp, (101, 201), 1050);
 
         assert!(effect.suppress, "trigger up should be suppressed");
-        assert_eq!(effect.request_replay, Some((100, 200)), "should request replay at origin");
+        assert_eq!(
+            effect.request_replay,
+            Some((100, 200)),
+            "should request replay at origin"
+        );
         assert!(effect.request_execute.is_none());
         assert!(matches!(state, GestureState::Idle));
     }
@@ -1154,15 +1172,25 @@ mod tests {
         };
         let config = test_config();
         // Move 20px right — exceeds threshold of 10
-        let effect = process_event_pure(&mut state, &config, MouseEvent::MouseMove, (120, 200), 1010);
+        let effect =
+            process_event_pure(&mut state, &config, MouseEvent::MouseMove, (120, 200), 1010);
 
         assert!(!effect.suppress, "mouse move is never suppressed");
         assert!(effect.request_replay.is_none());
         // Should have StartGesture + 2 TrackPoints
         assert_eq!(effect.overlay_commands.len(), 3);
-        assert!(matches!(effect.overlay_commands[0], OverlayCommand::StartGesture));
-        assert!(matches!(effect.overlay_commands[1], OverlayCommand::TrackPoint { x: 100, y: 200 }));
-        assert!(matches!(effect.overlay_commands[2], OverlayCommand::TrackPoint { x: 120, y: 200 }));
+        assert!(matches!(
+            effect.overlay_commands[0],
+            OverlayCommand::StartGesture
+        ));
+        assert!(matches!(
+            effect.overlay_commands[1],
+            OverlayCommand::TrackPoint { x: 100, y: 200 }
+        ));
+        assert!(matches!(
+            effect.overlay_commands[2],
+            OverlayCommand::TrackPoint { x: 120, y: 200 }
+        ));
         assert!(matches!(state, GestureState::Gesturing { .. }));
     }
 
@@ -1175,7 +1203,8 @@ mod tests {
         };
         let config = test_config();
         // Move 5px — below threshold of 10
-        let effect = process_event_pure(&mut state, &config, MouseEvent::MouseMove, (105, 200), 1010);
+        let effect =
+            process_event_pure(&mut state, &config, MouseEvent::MouseMove, (105, 200), 1010);
 
         assert!(!effect.suppress);
         assert!(effect.overlay_commands.is_empty());
@@ -1190,7 +1219,8 @@ mod tests {
         };
         let config = test_config();
 
-        let effect = process_event_pure(&mut state, &config, MouseEvent::TriggerUp, (200, 300), 1100);
+        let effect =
+            process_event_pure(&mut state, &config, MouseEvent::TriggerUp, (200, 300), 1100);
 
         assert!(effect.suppress, "trigger up should be suppressed");
         assert!(effect.request_replay.is_none());
@@ -1211,7 +1241,8 @@ mod tests {
         };
         let config = test_config();
 
-        let effect = process_event_pure(&mut state, &config, MouseEvent::MouseMove, (150, 250), 1050);
+        let effect =
+            process_event_pure(&mut state, &config, MouseEvent::MouseMove, (150, 250), 1050);
 
         assert!(!effect.suppress, "mouse move is never suppressed");
         assert_eq!(effect.overlay_commands.len(), 1);
@@ -1237,7 +1268,8 @@ mod tests {
             origin_y: 200,
             entered_tick: 100,
         };
-        let effect = process_event_pure(&mut state, &config, MouseEvent::MouseMove, (101, 200), 110);
+        let effect =
+            process_event_pure(&mut state, &config, MouseEvent::MouseMove, (101, 200), 110);
         assert!(!effect.suppress);
 
         // Gesturing
@@ -1245,7 +1277,8 @@ mod tests {
             entered_tick: 100,
             recognizer: GestureRecognizer::new(12, 8, 2),
         };
-        let effect = process_event_pure(&mut state, &config, MouseEvent::MouseMove, (150, 250), 110);
+        let effect =
+            process_event_pure(&mut state, &config, MouseEvent::MouseMove, (150, 250), 110);
         assert!(!effect.suppress);
     }
 
@@ -1353,7 +1386,8 @@ mod tests {
         };
 
         // Trigger up at far-left point to finalize the gesture
-        let effect = process_event_pure(&mut state, &config, MouseEvent::TriggerUp, (100, 300), 1200);
+        let effect =
+            process_event_pure(&mut state, &config, MouseEvent::TriggerUp, (100, 300), 1200);
 
         assert!(effect.suppress);
         assert!(matches!(state, GestureState::Idle));
