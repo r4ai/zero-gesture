@@ -265,8 +265,10 @@ mod tests {
 
     #[test]
     fn should_restart_workers_when_config_changes() {
-        let mut next = config::AppConfig::default();
-        next.trail_thickness = 5.0;
+        let next = config::AppConfig {
+            trail_thickness: 5.0,
+            ..config::AppConfig::default()
+        };
 
         assert!(should_restart_workers(&config::AppConfig::default(), &next));
     }
@@ -283,8 +285,10 @@ mod tests {
     fn replace_live_config_updates_shared_state() {
         let shared = SharedConfig::new(config::AppConfig::default());
 
-        let mut next = config::AppConfig::default();
-        next.gesture_trigger_button = "middle".to_string();
+        let next = config::AppConfig {
+            gesture_trigger_button: "middle".to_string(),
+            ..config::AppConfig::default()
+        };
 
         let restart_required = replace_live_config(&shared, next.clone()).unwrap();
         assert!(restart_required);
