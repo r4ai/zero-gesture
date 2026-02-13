@@ -124,7 +124,12 @@ impl GestureRecognizer {
         // magnitude. Tiny near-diagonal movement is treated as ambiguous jitter.
         let new_dir = match Self::classify_direction(dx, dy, self.axis_ambiguity_deadzone_px) {
             Some(dir) => dir,
-            None => return,
+            None => {
+                // Even when direction classification is ignored, advance the
+                // cursor baseline so tiny jitter does not inflate later deltas.
+                self.last_point = Some((x, y));
+                return;
+            }
         };
 
         let distance = Self::distance_in_primary_axis(new_dir, dx, dy);
@@ -649,5 +654,17 @@ mod tests {
         assert_eq!(rec.current_dir, None);
         assert_eq!(rec.pending_dir, None);
         assert_eq!(rec.pending_accum, 0);
+    }
+
+    #[test]
+    fn test_ambiguous_move_does_not_count_toward_next_segment_distance() {
+        let mut rec = GestureRecognizer::new(10, 8, 2);
+        rec.add_point(0, 0);
+        rec.add_point(1, 1); // ambiguous diagonal (ignored)
+        rec.add_point(1, 10); // from updated baseline: Down 9px
+        assert_eq!(rec.recognize(), None);
+
+        rec.add_point(1, 11); // Down accum reaches 10px
+        assert_eq!(rec.recognize(), Some(GestureKind::Down));
     }
 }
