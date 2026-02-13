@@ -106,6 +106,7 @@ impl WorkerThreads {
 
 pub struct ThreadRuntime {
     workers: Mutex<WorkerThreads>,
+    config_update_lock: Mutex<()>,
     is_shutdown: AtomicBool,
 }
 
@@ -115,6 +116,7 @@ impl ThreadRuntime {
     pub fn start(shared_config: SharedConfig) -> Self {
         Self {
             workers: Mutex::new(WorkerThreads::spawn(shared_config)),
+            config_update_lock: Mutex::new(()),
             is_shutdown: AtomicBool::new(false),
         }
     }
@@ -188,15 +190,35 @@ fn should_restart_workers(current: &config::AppConfig, next: &config::AppConfig)
 fn replace_live_config(
     shared_config: &SharedConfig,
     next: config::AppConfig,
-) -> Result<bool, String> {
+) -> Result<(bool, config::AppConfig), String> {
     let mut current: RwLockWriteGuard<'_, config::AppConfig> = shared_config
         .0
         .write()
         .map_err(|_| "shared config lock poisoned".to_string())?;
 
-    let restart_required = should_restart_workers(&current, &next);
+    let previous = current.clone();
+    let restart_required = should_restart_workers(&previous, &next);
     *current = next;
-    Ok(restart_required)
+    Ok((restart_required, previous))
+}
+
+/// Restores a previous config after an update failure.
+fn rollback_config_update(
+    shared_config: &SharedConfig,
+    runtime: &ThreadRuntime,
+    previous_config: config::AppConfig,
+    restart_required: bool,
+) {
+    if let Err(err) = replace_live_config(shared_config, previous_config) {
+        warn!("failed to roll back in-memory config after update failure: {err}");
+        return;
+    }
+
+    if restart_required && !runtime.should_allow_exit() {
+        if let Err(err) = runtime.restart_workers(shared_config.clone()) {
+            warn!("failed to roll back worker threads after update failure: {err}");
+        }
+    }
 }
 
 /// Tauri command that opens (or focuses) the settings window.
@@ -215,11 +237,40 @@ fn update_config(
     shared_config: tauri::State<'_, SharedConfig>,
     runtime: tauri::State<'_, ThreadRuntime>,
 ) -> Result<(), String> {
-    config::save(&new_config).map_err(|e| format!("failed to save config: {e}"))?;
+    let _update_guard = runtime
+        .config_update_lock
+        .lock()
+        .map_err(|_| "config update lock poisoned".to_string())?;
 
-    let restart_required = replace_live_config(shared_config.inner(), new_config)?;
+    if runtime.should_allow_exit() {
+        return Err("thread runtime is already shut down".to_string());
+    }
+
+    let (restart_required, previous_config) =
+        replace_live_config(shared_config.inner(), new_config.clone())?;
     if restart_required {
-        runtime.restart_workers(shared_config.inner().clone())?;
+        if let Err(err) = runtime.restart_workers(shared_config.inner().clone()) {
+            rollback_config_update(
+                shared_config.inner(),
+                runtime.inner(),
+                previous_config,
+                restart_required,
+            );
+            return Err(format!("failed to restart workers: {err}"));
+        }
+    }
+
+    if let Err(err) = config::save(&new_config) {
+        rollback_config_update(
+            shared_config.inner(),
+            runtime.inner(),
+            previous_config,
+            restart_required,
+        );
+        return Err(format!("failed to save config: {err}"));
+    }
+
+    if restart_required {
         info!("config updated and worker threads restarted");
     } else {
         info!("config update requested but no effective change detected");
@@ -295,8 +346,10 @@ mod tests {
             ..config::AppConfig::default()
         };
 
-        let restart_required = replace_live_config(&shared, next.clone()).unwrap();
+        let (restart_required, previous_config) =
+            replace_live_config(&shared, next.clone()).unwrap();
         assert!(restart_required);
+        assert_eq!(previous_config, config::AppConfig::default());
 
         let current = shared.0.read().unwrap().clone();
         assert_eq!(current, next);
