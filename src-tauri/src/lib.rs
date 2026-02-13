@@ -8,12 +8,13 @@ pub mod overlay;
 mod tray;
 
 use std::sync::{
-    atomic::{AtomicBool, AtomicU32, Ordering},
-    Arc, Mutex, RwLock,
+    atomic::{AtomicU32, Ordering},
+    Arc, Mutex, RwLock, RwLockWriteGuard,
 };
 use std::thread::JoinHandle;
 
 use crossbeam_channel::Sender;
+use log::{info, warn};
 use tauri::Manager;
 
 /// Thread-safe, clonable handle to the application configuration.
@@ -47,22 +48,20 @@ impl SharedConfig {
 /// Owns the background threads (hook and overlay) and provides a way to shut
 /// them down cleanly.
 ///
-/// Created via [`ThreadRuntime::start`] during application setup and stored as
-/// Tauri managed state so that the tray "Quit" handler can trigger a graceful
-/// shutdown.
-pub struct ThreadRuntime {
+/// This is an internal helper owned by [`ThreadRuntime`].
+/// [`ThreadRuntime`] itself is stored as Tauri managed state so that, for
+/// example, the tray "Quit" handler can trigger a graceful shutdown.
+struct WorkerThreads {
     hook_control_tx: Sender<hook::HookControl>,
     hook_thread_tid: Arc<AtomicU32>,
     overlay_tx: Sender<overlay::OverlayCommand>,
-    hook_handle: Mutex<Option<JoinHandle<()>>>,
-    overlay_handle: Mutex<Option<JoinHandle<()>>>,
-    is_shutdown: AtomicBool,
+    hook_handle: Option<JoinHandle<()>>,
+    overlay_handle: Option<JoinHandle<()>>,
 }
 
-impl ThreadRuntime {
-    /// Spawns the hook and overlay threads and returns a runtime that manages
-    /// their lifetimes.
-    pub fn start(shared_config: SharedConfig) -> Self {
+impl WorkerThreads {
+    /// Spawns the hook and overlay threads from the current shared config.
+    fn spawn(shared_config: SharedConfig) -> Self {
         let (overlay_tx, overlay_handle) = overlay::spawn(shared_config.clone());
         let (hook_control_tx, hook_thread_tid, hook_handle) =
             hook::spawn(shared_config, overlay_tx.clone());
@@ -71,32 +70,13 @@ impl ThreadRuntime {
             hook_control_tx,
             hook_thread_tid,
             overlay_tx,
-            hook_handle: Mutex::new(Some(hook_handle)),
-            overlay_handle: Mutex::new(Some(overlay_handle)),
-            is_shutdown: AtomicBool::new(false),
+            hook_handle: Some(hook_handle),
+            overlay_handle: Some(overlay_handle),
         }
     }
 
-    /// Returns `true` if [`ThreadRuntime::shutdown`] has been called,
-    /// meaning the application is ready to exit.
-    pub fn should_allow_exit(&self) -> bool {
-        self.is_shutdown.load(Ordering::SeqCst)
-    }
-
-    /// Sends shutdown signals to both background threads and waits for them
-    /// to terminate.
-    ///
-    /// After this call, [`ThreadRuntime::should_allow_exit`] returns `true`
-    /// and subsequent `RunEvent::ExitRequested` events will no longer be
-    /// prevented.
-    ///
-    /// This method is idempotent — calling it more than once is safe and has
-    /// no effect after the first call.
-    pub fn shutdown(&self) {
-        if self.is_shutdown.swap(true, Ordering::SeqCst) {
-            return;
-        }
-
+    /// Sends shutdown signals to both background threads and waits for them.
+    fn shutdown(&mut self) {
         // Post WM_QUIT to the hook thread's Win32 message loop.
         let tid = self.hook_thread_tid.load(Ordering::Acquire);
         if tid != 0 {
@@ -110,15 +90,127 @@ impl ThreadRuntime {
                 );
             }
         }
-        // Also send through the channel as a fallback.
+
+        // Also send through channels as a fallback.
         let _ = self.hook_control_tx.send(hook::HookControl::Shutdown);
         let _ = self.overlay_tx.send(overlay::OverlayCommand::Shutdown);
 
-        if let Some(handle) = self.hook_handle.lock().ok().and_then(|mut h| h.take()) {
+        if let Some(handle) = self.hook_handle.take() {
             let _ = handle.join();
         }
-        if let Some(handle) = self.overlay_handle.lock().ok().and_then(|mut h| h.take()) {
+        if let Some(handle) = self.overlay_handle.take() {
             let _ = handle.join();
+        }
+    }
+}
+
+pub struct ThreadRuntime {
+    workers: Mutex<Option<WorkerThreads>>,
+    config_update_lock: Mutex<()>,
+}
+
+impl ThreadRuntime {
+    /// Spawns the hook and overlay threads and returns a runtime that manages
+    /// their lifetimes.
+    pub fn start(shared_config: SharedConfig) -> Self {
+        Self {
+            workers: Mutex::new(Some(WorkerThreads::spawn(shared_config))),
+            config_update_lock: Mutex::new(()),
+        }
+    }
+
+    /// Returns `true` if [`ThreadRuntime::shutdown`] has been called,
+    /// meaning the application is ready to exit.
+    pub fn should_allow_exit(&self) -> bool {
+        match self.workers.lock() {
+            Ok(workers) => workers.is_none(),
+            Err(_) => {
+                warn!("thread runtime lock poisoned while checking exit state");
+                true
+            }
+        }
+    }
+
+    /// Sends shutdown signals to both background threads and waits for them
+    /// to terminate.
+    ///
+    /// After this call, [`ThreadRuntime::should_allow_exit`] returns `true`
+    /// and subsequent `RunEvent::ExitRequested` events will no longer be
+    /// prevented.
+    ///
+    /// This method is idempotent — calling it more than once is safe and has
+    /// no effect after the first call.
+    pub fn shutdown(&self) {
+        let _update_guard = match self.config_update_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                warn!("config update lock poisoned during shutdown");
+                return;
+            }
+        };
+
+        match self.workers.lock() {
+            Ok(mut workers) => {
+                if let Some(mut running_workers) = workers.take() {
+                    running_workers.shutdown();
+                }
+            }
+            Err(_) => {
+                warn!("thread runtime lock poisoned during shutdown");
+            }
+        }
+    }
+
+    /// Restarts hook/overlay worker threads so they snapshot the latest config.
+    ///
+    /// Returns an error if the runtime has already started shutting down.
+    fn restart_workers(&self, shared_config: SharedConfig) -> Result<(), String> {
+        let mut workers = self
+            .workers
+            .lock()
+            .map_err(|_| "thread runtime lock poisoned".to_string())?;
+
+        let mut current = workers
+            .take()
+            .ok_or_else(|| "thread runtime is already shut down".to_string())?;
+        current.shutdown();
+        *workers = Some(WorkerThreads::spawn(shared_config));
+
+        Ok(())
+    }
+}
+
+/// Replaces the in-memory config and returns whether workers should restart.
+fn replace_live_config(
+    shared_config: &SharedConfig,
+    next: config::AppConfig,
+) -> Result<(bool, config::AppConfig), String> {
+    let mut current: RwLockWriteGuard<'_, config::AppConfig> = shared_config
+        .0
+        .write()
+        .map_err(|_| "shared config lock poisoned".to_string())?;
+
+    let previous = current.clone();
+    let restart_required = previous != next;
+    *current = next;
+    Ok((restart_required, previous))
+}
+
+/// Restores a previous config after an update failure.
+fn rollback_config_update(
+    shared_config: &SharedConfig,
+    runtime: &ThreadRuntime,
+    previous_config: config::AppConfig,
+    restart_required: bool,
+) {
+    if let Err(err) = replace_live_config(shared_config, previous_config) {
+        warn!("failed to roll back in-memory config after update failure: {err}");
+        return;
+    }
+
+    if restart_required && !runtime.should_allow_exit() {
+        if let Err(err) = runtime.restart_workers(shared_config.clone()) {
+            warn!("failed to roll back worker threads after update failure: {err}");
         }
     }
 }
@@ -127,6 +219,58 @@ impl ThreadRuntime {
 #[tauri::command]
 fn show_settings_window(app: tauri::AppHandle) -> Result<(), String> {
     tray::show_settings_window(&app).map_err(|e| e.to_string())
+}
+
+/// Tauri command that persists and applies a new configuration.
+///
+/// Any effective config change restarts hook/overlay threads so that fresh
+/// snapshots are taken.
+#[tauri::command]
+fn update_config(
+    new_config: config::AppConfig,
+    shared_config: tauri::State<'_, SharedConfig>,
+    runtime: tauri::State<'_, ThreadRuntime>,
+) -> Result<(), String> {
+    let _update_guard = runtime
+        .config_update_lock
+        .lock()
+        .map_err(|_| "config update lock poisoned".to_string())?;
+
+    if runtime.should_allow_exit() {
+        return Err("thread runtime is already shut down".to_string());
+    }
+
+    let (restart_required, previous_config) =
+        replace_live_config(shared_config.inner(), new_config.clone())?;
+    if restart_required {
+        if let Err(err) = runtime.restart_workers(shared_config.inner().clone()) {
+            rollback_config_update(
+                shared_config.inner(),
+                runtime.inner(),
+                previous_config,
+                restart_required,
+            );
+            return Err(format!("failed to restart workers: {err}"));
+        }
+    }
+
+    if let Err(err) = config::save(&new_config) {
+        rollback_config_update(
+            shared_config.inner(),
+            runtime.inner(),
+            previous_config,
+            restart_required,
+        );
+        return Err(format!("failed to save config: {err}"));
+    }
+
+    if restart_required {
+        info!("config updated and worker threads restarted");
+    } else {
+        info!("config update requested but no effective change detected");
+    }
+
+    Ok(())
 }
 
 /// Application entry point — builds and runs the Tauri application.
@@ -148,7 +292,10 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![show_settings_window])
+        .invoke_handler(tauri::generate_handler![
+            show_settings_window,
+            update_config
+        ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
@@ -160,4 +307,27 @@ pub fn run() {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn replace_live_config_updates_shared_state() {
+        let shared = SharedConfig::new(config::AppConfig::default());
+
+        let next = config::AppConfig {
+            gesture_trigger_button: "middle".to_string(),
+            ..config::AppConfig::default()
+        };
+
+        let (restart_required, previous_config) =
+            replace_live_config(&shared, next.clone()).unwrap();
+        assert!(restart_required);
+        assert_eq!(previous_config, config::AppConfig::default());
+
+        let current = shared.0.read().unwrap().clone();
+        assert_eq!(current, next);
+    }
 }
