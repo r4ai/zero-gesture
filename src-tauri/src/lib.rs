@@ -59,7 +59,7 @@ impl ThreadRuntime {
     /// Spawns the hook and overlay threads and returns a runtime that manages
     /// their lifetimes.
     pub fn start(shared_config: SharedConfig) -> Self {
-        let (overlay_tx, overlay_handle) = overlay::spawn();
+        let (overlay_tx, overlay_handle) = overlay::spawn(shared_config.clone());
         let (hook_control_tx, hook_thread_tid, hook_handle) =
             hook::spawn(shared_config, overlay_tx.clone());
 
