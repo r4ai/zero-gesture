@@ -697,12 +697,9 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
             }
             if msg == trigger_up {
                 debug!("Gesturing → Idle (end gesture)");
-                // Extract gesture result before transitioning state
-                let gesture = if let GestureState::Gesturing { recognizer, .. } = &hs.state {
-                    recognizer.recognize()
-                } else {
-                    None
-                };
+                // Feed the final cursor position before recognizing.
+                recognizer.add_point(info.pt.x, info.pt.y);
+                let gesture = recognizer.recognize();
                 if let Some(gesture) = gesture {
                     info!("Gesture recognized: {:?}", gesture);
                 }
