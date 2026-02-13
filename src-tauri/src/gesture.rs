@@ -8,6 +8,8 @@ use std::cmp::Ordering;
 use log::debug;
 use serde::{Deserialize, Serialize};
 
+use crate::config::AppConfig;
+
 /// A single direction of mouse movement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
@@ -77,8 +79,6 @@ pub struct GestureRecognizer {
 }
 
 impl GestureRecognizer {
-    /// Default minimum distance (in pixels) before a segment is confirmed.
-    const DEFAULT_MIN_SEGMENT_PX: i32 = 24;
     /// Default hysteresis threshold for direction changes.
     const DEFAULT_DIRECTION_SWITCH_CONFIRM_PX: i32 = 8;
     /// Default deadzone for ambiguous tiny diagonal movement.
@@ -298,7 +298,7 @@ impl GestureRecognizer {
 
 impl Default for GestureRecognizer {
     fn default() -> Self {
-        Self::new(Self::DEFAULT_MIN_SEGMENT_PX)
+        Self::new(AppConfig::DEFAULT_MIN_SEGMENT_PX)
     }
 }
 
