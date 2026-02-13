@@ -1,11 +1,16 @@
 //! System tray integration.
 //!
-//! Creates the tray icon with a context menu ("Open Settings" / "Quit") and
-//! handles tray events such as left-click (open settings) and menu actions.
+//! Creates the tray icon with a context menu ("Toggle Gestures" / "Open
+//! Settings" / "Quit") and handles tray events such as left-click (open
+//! settings) and menu actions.
 
+use log::warn;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{App, AppHandle, Manager, Runtime, WebviewUrl};
+
+/// Menu item ID for the gesture enable/disable toggle.
+const MENU_TOGGLE_ENABLED: &str = "toggle-enabled";
 
 /// Menu item ID for the "Open Settings" action.
 const MENU_OPEN_SETTINGS: &str = "open-settings";
@@ -13,10 +18,21 @@ const MENU_OPEN_SETTINGS: &str = "open-settings";
 /// Menu item ID for the "Quit" action.
 const MENU_QUIT: &str = "quit";
 
+/// Returns the label for the toggle menu item based on the current `enabled`
+/// state.
+fn toggle_label(enabled: bool) -> &'static str {
+    if enabled {
+        "Disable Gestures"
+    } else {
+        "Enable Gestures"
+    }
+}
+
 /// Builds and registers the system tray icon and its context menu.
 ///
-/// The tray provides two menu items:
+/// The tray provides three menu items:
 ///
+/// * **Toggle Gestures** — enables or disables gesture recognition.
 /// * **Open Settings** — opens (or focuses) the settings webview window.
 /// * **Quit** — performs a graceful shutdown of background threads and exits
 ///   the application.
@@ -27,15 +43,31 @@ const MENU_QUIT: &str = "quit";
 ///
 /// Returns [`tauri::Error`] if menu or tray construction fails.
 pub fn setup<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
+    let enabled = {
+        let shared = app.state::<crate::SharedConfig>();
+        shared.0.read().map(|c| c.enabled).unwrap_or(true)
+    };
+
+    let toggle_item = MenuItem::with_id(
+        app,
+        MENU_TOGGLE_ENABLED,
+        toggle_label(enabled),
+        true,
+        None::<&str>,
+    )?;
     let open_settings_item =
         MenuItem::with_id(app, MENU_OPEN_SETTINGS, "Open Settings", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, MENU_QUIT, "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open_settings_item, &quit_item])?;
+    let menu = Menu::with_items(app, &[&toggle_item, &open_settings_item, &quit_item])?;
 
+    let toggle_item_clone = toggle_item.clone();
     let mut tray = TrayIconBuilder::with_id("main-tray")
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id().as_ref() {
+        .on_menu_event(move |app, event| match event.id().as_ref() {
+            MENU_TOGGLE_ENABLED => {
+                handle_toggle(app, &toggle_item_clone);
+            }
             MENU_OPEN_SETTINGS => {
                 let _ = show_settings_window(app);
             }
@@ -63,6 +95,38 @@ pub fn setup<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
 
     tray.build(app)?;
     Ok(())
+}
+
+/// Handles the "Toggle Gestures" menu action.
+fn handle_toggle<R: Runtime>(app: &AppHandle<R>, toggle_item: &MenuItem<R>) {
+    let shared_config = app.state::<crate::SharedConfig>();
+    let runtime = app.state::<crate::ThreadRuntime>();
+
+    // Read the current enabled state and build a toggled config.
+    let new_config = {
+        let current = match shared_config.0.read() {
+            Ok(c) => c,
+            Err(_) => {
+                warn!("shared config lock poisoned in toggle handler");
+                return;
+            }
+        };
+        let mut next = current.clone();
+        next.enabled = !next.enabled;
+        next
+    };
+
+    let new_enabled = new_config.enabled;
+
+    if let Err(err) =
+        crate::apply_config_update(new_config, shared_config.inner(), runtime.inner())
+    {
+        warn!("failed to toggle gestures: {err}");
+        return;
+    }
+
+    // Update the menu item text to reflect the new state.
+    let _ = toggle_item.set_text(toggle_label(new_enabled));
 }
 
 /// Opens the settings webview window, or brings it to the foreground if it

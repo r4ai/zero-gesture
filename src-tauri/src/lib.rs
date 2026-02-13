@@ -104,17 +104,36 @@ impl WorkerThreads {
     }
 }
 
+/// Internal state of the [`ThreadRuntime`].
+enum RuntimeState {
+    /// Worker threads are running.
+    Running(WorkerThreads),
+    /// Gesture recognition is disabled; workers are not running.
+    Disabled,
+    /// The runtime has been shut down for application exit.
+    ShutDown,
+}
+
 pub struct ThreadRuntime {
-    workers: Mutex<Option<WorkerThreads>>,
+    state: Mutex<RuntimeState>,
     config_update_lock: Mutex<()>,
 }
 
 impl ThreadRuntime {
     /// Spawns the hook and overlay threads and returns a runtime that manages
     /// their lifetimes.
+    ///
+    /// If `config.enabled` is `false`, the runtime starts in the [`Disabled`]
+    /// state and no worker threads are created.
     pub fn start(shared_config: SharedConfig) -> Self {
+        let enabled = shared_config.0.read().map(|c| c.enabled).unwrap_or(true);
+        let initial_state = if enabled {
+            RuntimeState::Running(WorkerThreads::spawn(shared_config))
+        } else {
+            RuntimeState::Disabled
+        };
         Self {
-            workers: Mutex::new(Some(WorkerThreads::spawn(shared_config))),
+            state: Mutex::new(initial_state),
             config_update_lock: Mutex::new(()),
         }
     }
@@ -122,8 +141,8 @@ impl ThreadRuntime {
     /// Returns `true` if [`ThreadRuntime::shutdown`] has been called,
     /// meaning the application is ready to exit.
     pub fn should_allow_exit(&self) -> bool {
-        match self.workers.lock() {
-            Ok(workers) => workers.is_none(),
+        match self.state.lock() {
+            Ok(state) => matches!(*state, RuntimeState::ShutDown),
             Err(_) => {
                 warn!("thread runtime lock poisoned while checking exit state");
                 true
@@ -149,10 +168,11 @@ impl ThreadRuntime {
             }
         };
 
-        match self.workers.lock() {
-            Ok(mut workers) => {
-                if let Some(mut running_workers) = workers.take() {
-                    running_workers.shutdown();
+        match self.state.lock() {
+            Ok(mut state) => {
+                let prev = std::mem::replace(&mut *state, RuntimeState::ShutDown);
+                if let RuntimeState::Running(mut workers) = prev {
+                    workers.shutdown();
                 }
             }
             Err(_) => {
@@ -161,20 +181,35 @@ impl ThreadRuntime {
         }
     }
 
-    /// Restarts hook/overlay worker threads so they snapshot the latest config.
+    /// Ensures the worker state matches the current `enabled` setting.
     ///
-    /// Returns an error if the runtime has already started shutting down.
-    fn restart_workers(&self, shared_config: SharedConfig) -> Result<(), String> {
-        let mut workers = self
-            .workers
+    /// * `enabled=true` → (re)starts workers regardless of current state.
+    /// * `enabled=false` → stops workers if running and transitions to
+    ///   `Disabled`.
+    ///
+    /// Returns an error if the runtime has already been shut down.
+    fn apply_worker_state(&self, shared_config: SharedConfig, enabled: bool) -> Result<(), String> {
+        let mut state = self
+            .state
             .lock()
             .map_err(|_| "thread runtime lock poisoned".to_string())?;
 
-        let mut current = workers
-            .take()
-            .ok_or_else(|| "thread runtime is already shut down".to_string())?;
-        current.shutdown();
-        *workers = Some(WorkerThreads::spawn(shared_config));
+        if matches!(*state, RuntimeState::ShutDown) {
+            return Err("thread runtime is already shut down".to_string());
+        }
+
+        if enabled {
+            let prev = std::mem::replace(&mut *state, RuntimeState::Disabled);
+            if let RuntimeState::Running(mut workers) = prev {
+                workers.shutdown();
+            }
+            *state = RuntimeState::Running(WorkerThreads::spawn(shared_config));
+        } else {
+            let prev = std::mem::replace(&mut *state, RuntimeState::Disabled);
+            if let RuntimeState::Running(mut workers) = prev {
+                workers.shutdown();
+            }
+        }
 
         Ok(())
     }
@@ -203,13 +238,14 @@ fn rollback_config_update(
     previous_config: config::AppConfig,
     restart_required: bool,
 ) {
+    let enabled = previous_config.enabled;
     if let Err(err) = replace_live_config(shared_config, previous_config) {
         warn!("failed to roll back in-memory config after update failure: {err}");
         return;
     }
 
     if restart_required && !runtime.should_allow_exit() {
-        if let Err(err) = runtime.restart_workers(shared_config.clone()) {
+        if let Err(err) = runtime.apply_worker_state(shared_config.clone(), enabled) {
             warn!("failed to roll back worker threads after update failure: {err}");
         }
     }
@@ -221,15 +257,15 @@ fn show_settings_window(app: tauri::AppHandle) -> Result<(), String> {
     tray::show_settings_window(&app).map_err(|e| e.to_string())
 }
 
-/// Tauri command that persists and applies a new configuration.
+/// Persists and applies a new configuration.
 ///
-/// Any effective config change restarts hook/overlay threads so that fresh
-/// snapshots are taken.
-#[tauri::command]
-fn update_config(
+/// Any effective config change restarts or stops worker threads depending on
+/// the `enabled` field. This function is called by both the `update_config`
+/// Tauri command and the tray toggle handler.
+pub fn apply_config_update(
     new_config: config::AppConfig,
-    shared_config: tauri::State<'_, SharedConfig>,
-    runtime: tauri::State<'_, ThreadRuntime>,
+    shared_config: &SharedConfig,
+    runtime: &ThreadRuntime,
 ) -> Result<(), String> {
     let _update_guard = runtime
         .config_update_lock
@@ -241,36 +277,36 @@ fn update_config(
     }
 
     let (restart_required, previous_config) =
-        replace_live_config(shared_config.inner(), new_config.clone())?;
+        replace_live_config(shared_config, new_config.clone())?;
     if restart_required {
-        if let Err(err) = runtime.restart_workers(shared_config.inner().clone()) {
-            rollback_config_update(
-                shared_config.inner(),
-                runtime.inner(),
-                previous_config,
-                restart_required,
-            );
-            return Err(format!("failed to restart workers: {err}"));
+        if let Err(err) = runtime.apply_worker_state(shared_config.clone(), new_config.enabled) {
+            rollback_config_update(shared_config, runtime, previous_config, restart_required);
+            return Err(format!("failed to apply worker state: {err}"));
         }
     }
 
     if let Err(err) = config::save(&new_config) {
-        rollback_config_update(
-            shared_config.inner(),
-            runtime.inner(),
-            previous_config,
-            restart_required,
-        );
+        rollback_config_update(shared_config, runtime, previous_config, restart_required);
         return Err(format!("failed to save config: {err}"));
     }
 
     if restart_required {
-        info!("config updated and worker threads restarted");
+        info!("config updated and worker state applied");
     } else {
         info!("config update requested but no effective change detected");
     }
 
     Ok(())
+}
+
+/// Tauri command that persists and applies a new configuration.
+#[tauri::command]
+fn update_config(
+    new_config: config::AppConfig,
+    shared_config: tauri::State<'_, SharedConfig>,
+    runtime: tauri::State<'_, ThreadRuntime>,
+) -> Result<(), String> {
+    apply_config_update(new_config, shared_config.inner(), runtime.inner())
 }
 
 /// Application entry point — builds and runs the Tauri application.
