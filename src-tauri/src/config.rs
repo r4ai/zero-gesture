@@ -24,6 +24,8 @@ const CONFIG_FILE_NAME: &str = "zero-gesture.config.json";
 /// assert_eq!(config.gesture_threshold, 10);
 /// assert_eq!(config.safety_timeout_ms, 2000);
 /// assert_eq!(config.min_segment_px, 24);
+/// assert_eq!(config.direction_switch_confirm_px, 8);
+/// assert_eq!(config.axis_ambiguity_deadzone_px, 2);
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -47,6 +49,13 @@ pub struct AppConfig {
     /// direction segment.
     pub min_segment_px: i32,
 
+    /// Minimum movement distance (in pixels) required to switch to a new
+    /// direction candidate.
+    pub direction_switch_confirm_px: i32,
+
+    /// Deadzone (in pixels) used to ignore tiny ambiguous diagonal movement.
+    pub axis_ambiguity_deadzone_px: i32,
+
     /// Gesture-to-action bindings.
     ///
     /// Keys are `GestureKind` variant names (e.g. `"Left"`, `"DownRight"`),
@@ -63,6 +72,12 @@ impl AppConfig {
 
     /// Default minimum segment distance for gesture direction confirmation.
     pub const DEFAULT_MIN_SEGMENT_PX: i32 = 24;
+
+    /// Default hysteresis distance for direction switching.
+    pub const DEFAULT_DIRECTION_SWITCH_CONFIRM_PX: i32 = 8;
+
+    /// Default deadzone for tiny ambiguous diagonal movement.
+    pub const DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX: i32 = 2;
 
     /// Default gesture-to-action bindings.
     fn default_bindings() -> HashMap<String, Action> {
@@ -116,6 +131,8 @@ impl Default for AppConfig {
             gesture_threshold: Self::DEFAULT_GESTURE_THRESHOLD,
             safety_timeout_ms: Self::DEFAULT_SAFETY_TIMEOUT_MS,
             min_segment_px: Self::DEFAULT_MIN_SEGMENT_PX,
+            direction_switch_confirm_px: Self::DEFAULT_DIRECTION_SWITCH_CONFIRM_PX,
+            axis_ambiguity_deadzone_px: Self::DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX,
             bindings: Self::default_bindings(),
         }
     }
@@ -179,6 +196,14 @@ mod tests {
         assert_eq!(cfg.gesture_threshold, AppConfig::DEFAULT_GESTURE_THRESHOLD);
         assert_eq!(cfg.safety_timeout_ms, AppConfig::DEFAULT_SAFETY_TIMEOUT_MS);
         assert_eq!(cfg.min_segment_px, AppConfig::DEFAULT_MIN_SEGMENT_PX);
+        assert_eq!(
+            cfg.direction_switch_confirm_px,
+            AppConfig::DEFAULT_DIRECTION_SWITCH_CONFIRM_PX
+        );
+        assert_eq!(
+            cfg.axis_ambiguity_deadzone_px,
+            AppConfig::DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX
+        );
         assert_eq!(cfg.bindings.len(), 6);
         assert!(cfg.bindings.contains_key("Left"));
         assert!(cfg.bindings.contains_key("Right"));
@@ -203,6 +228,14 @@ mod tests {
         assert_eq!(cfg.gesture_threshold, AppConfig::DEFAULT_GESTURE_THRESHOLD);
         assert_eq!(cfg.safety_timeout_ms, AppConfig::DEFAULT_SAFETY_TIMEOUT_MS);
         assert_eq!(cfg.min_segment_px, AppConfig::DEFAULT_MIN_SEGMENT_PX);
+        assert_eq!(
+            cfg.direction_switch_confirm_px,
+            AppConfig::DEFAULT_DIRECTION_SWITCH_CONFIRM_PX
+        );
+        assert_eq!(
+            cfg.axis_ambiguity_deadzone_px,
+            AppConfig::DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX
+        );
         assert_eq!(cfg.bindings.len(), 6);
         assert!(cfg.bindings.contains_key("Left"));
         assert!(cfg.bindings.contains_key("Right"));

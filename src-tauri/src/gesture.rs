@@ -79,13 +79,12 @@ pub struct GestureRecognizer {
 }
 
 impl GestureRecognizer {
-    /// Default hysteresis threshold for direction changes.
-    const DEFAULT_DIRECTION_SWITCH_CONFIRM_PX: i32 = 8;
-    /// Default deadzone for ambiguous tiny diagonal movement.
-    const DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX: i32 = 2;
-
-    /// Creates a new gesture recognizer with the given minimum segment distance.
-    pub fn new(min_segment_px: i32) -> Self {
+    /// Creates a new gesture recognizer with explicit thresholds.
+    pub fn new(
+        min_segment_px: i32,
+        direction_switch_confirm_px: i32,
+        axis_ambiguity_deadzone_px: i32,
+    ) -> Self {
         Self {
             segments: Vec::new(),
             last_point: None,
@@ -94,8 +93,8 @@ impl GestureRecognizer {
             pending_accum: 0,
             segment_accum: 0,
             min_segment_px,
-            direction_switch_confirm_px: Self::DEFAULT_DIRECTION_SWITCH_CONFIRM_PX,
-            axis_ambiguity_deadzone_px: Self::DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX,
+            direction_switch_confirm_px,
+            axis_ambiguity_deadzone_px,
         }
     }
 
@@ -298,7 +297,11 @@ impl GestureRecognizer {
 
 impl Default for GestureRecognizer {
     fn default() -> Self {
-        Self::new(AppConfig::DEFAULT_MIN_SEGMENT_PX)
+        Self::new(
+            AppConfig::DEFAULT_MIN_SEGMENT_PX,
+            AppConfig::DEFAULT_DIRECTION_SWITCH_CONFIRM_PX,
+            AppConfig::DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX,
+        )
     }
 }
 
