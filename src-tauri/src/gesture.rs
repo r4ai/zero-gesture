@@ -72,6 +72,8 @@ pub struct GestureRecognizer {
     min_segment_px: i32,
     /// Minimum distance (in pixels) required to accept a direction change.
     direction_switch_confirm_px: i32,
+    /// Deadzone used to ignore tiny diagonal moves with no clear dominant axis.
+    axis_ambiguity_deadzone_px: i32,
 }
 
 impl GestureRecognizer {
@@ -79,6 +81,8 @@ impl GestureRecognizer {
     const DEFAULT_MIN_SEGMENT_PX: i32 = 30;
     /// Default hysteresis threshold for direction changes.
     const DEFAULT_DIRECTION_SWITCH_CONFIRM_PX: i32 = 8;
+    /// Default deadzone for ambiguous tiny diagonal movement.
+    const DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX: i32 = 2;
 
     /// Creates a new gesture recognizer with the given minimum segment distance.
     pub fn new(min_segment_px: i32) -> Self {
@@ -91,6 +95,7 @@ impl GestureRecognizer {
             segment_accum: 0,
             min_segment_px,
             direction_switch_confirm_px: Self::DEFAULT_DIRECTION_SWITCH_CONFIRM_PX,
+            axis_ambiguity_deadzone_px: Self::DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX,
         }
     }
 
@@ -116,34 +121,11 @@ impl GestureRecognizer {
             return;
         }
 
-        // Determine the primary direction based on which delta is larger in magnitude.
-        let new_dir = match dx.abs().cmp(&dy.abs()) {
-            Ordering::Greater => {
-                if dx > 0 {
-                    Direction::Right
-                } else {
-                    Direction::Left
-                }
-            }
-            Ordering::Less => {
-                if dy > 0 {
-                    Direction::Down
-                } else {
-                    Direction::Up
-                }
-            }
-            Ordering::Equal => {
-                // If both are equal, prefer horizontal over vertical.
-                if dx > 0 {
-                    Direction::Right
-                } else if dx < 0 {
-                    Direction::Left
-                } else if dy > 0 {
-                    Direction::Down
-                } else {
-                    Direction::Up
-                }
-            }
+        // Determine the primary direction based on which delta is larger in
+        // magnitude. Tiny near-diagonal movement is treated as ambiguous jitter.
+        let new_dir = match Self::classify_direction(dx, dy, self.axis_ambiguity_deadzone_px) {
+            Some(dir) => dir,
+            None => return,
         };
 
         let distance = Self::distance_in_primary_axis(new_dir, dx, dy);
@@ -177,6 +159,48 @@ impl GestureRecognizer {
         }
 
         self.last_point = Some((x, y));
+    }
+
+    fn classify_direction(dx: i32, dy: i32, ambiguity_deadzone_px: i32) -> Option<Direction> {
+        let abs_dx = dx.abs();
+        let abs_dy = dy.abs();
+
+        if abs_dx > 0
+            && abs_dy > 0
+            && abs_dx.min(abs_dy) <= ambiguity_deadzone_px
+            && (abs_dx - abs_dy).abs() <= ambiguity_deadzone_px
+        {
+            return None;
+        }
+
+        Some(match abs_dx.cmp(&abs_dy) {
+            Ordering::Greater => {
+                if dx > 0 {
+                    Direction::Right
+                } else {
+                    Direction::Left
+                }
+            }
+            Ordering::Less => {
+                if dy > 0 {
+                    Direction::Down
+                } else {
+                    Direction::Up
+                }
+            }
+            Ordering::Equal => {
+                // If both are equal, prefer horizontal over vertical.
+                if dx > 0 {
+                    Direction::Right
+                } else if dx < 0 {
+                    Direction::Left
+                } else if dy > 0 {
+                    Direction::Down
+                } else {
+                    Direction::Up
+                }
+            }
+        })
     }
 
     fn distance_in_primary_axis(dir: Direction, dx: i32, dy: i32) -> i32 {
@@ -611,5 +635,16 @@ mod tests {
             rec.add_point(150 - i * 10, 100);
         }
         assert_eq!(rec.recognize(), Some(GestureKind::RightLeft));
+    }
+
+    #[test]
+    fn test_micro_diagonal_move_is_treated_as_ambiguous() {
+        let mut rec = GestureRecognizer::default();
+        rec.add_point(100, 100);
+        rec.add_point(101, 101);
+
+        assert_eq!(rec.current_dir, None);
+        assert_eq!(rec.pending_dir, None);
+        assert_eq!(rec.pending_accum, 0);
     }
 }
