@@ -193,6 +193,10 @@ struct OverlayState {
     old_mem_bmp: HBITMAP,
     /// Cached solid-black brush for clearing the back buffer.
     black_brush: HBRUSH,
+    /// Back-buffer width in pixels.
+    back_buffer_width: i32,
+    /// Back-buffer height in pixels.
+    back_buffer_height: i32,
     /// Virtual screen origin X — subtracted from screen coordinates to get
     /// client coordinates.
     origin_x: i32,
@@ -491,6 +495,8 @@ fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<OverlayCommand>) {
                 mem_bmp,
                 old_mem_bmp,
                 black_brush,
+                back_buffer_width: vw,
+                back_buffer_height: vh,
                 origin_x: vx,
                 origin_y: vy,
                 config,
@@ -563,8 +569,8 @@ fn handle_start() {
             let full_rc = RECT {
                 left: 0,
                 top: 0,
-                right: GetSystemMetrics(SM_CXVIRTUALSCREEN),
-                bottom: GetSystemMetrics(SM_CYVIRTUALSCREEN),
+                right: state.back_buffer_width,
+                bottom: state.back_buffer_height,
             };
             FillRect(state.mem_dc, &full_rc, state.black_brush);
         }
@@ -659,8 +665,8 @@ fn handle_end() {
             let full_rc = RECT {
                 left: 0,
                 top: 0,
-                right: GetSystemMetrics(SM_CXVIRTUALSCREEN),
-                bottom: GetSystemMetrics(SM_CYVIRTUALSCREEN),
+                right: state.back_buffer_width,
+                bottom: state.back_buffer_height,
             };
             FillRect(state.mem_dc, &full_rc, state.black_brush);
         }
