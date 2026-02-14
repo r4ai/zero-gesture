@@ -117,16 +117,14 @@ const RootLayout = () => (
     <SidebarProvider defaultOpen={true}>
       <div className="flex h-screen w-full overflow-hidden">
         <SettingsSidebar />
-        <div className="flex flex-1 flex-col">
+        <div className="relative flex flex-1 flex-col">
           <main className="flex-1 overflow-auto p-6">
             <Outlet />
           </main>
-          <footer className="border-t p-4">
-            <div className="flex justify-end gap-2">
-              <Button variant="outline">Cancel</Button>
-              <Button>Save & Apply</Button>
-            </div>
-          </footer>
+          <Button variant="outline" className="fixed right-[156px] bottom-6">
+            Cancel
+          </Button>
+          <Button className="fixed right-6 bottom-6">Save & Apply</Button>
         </div>
       </div>
       <TanStackRouterDevtools />
