@@ -319,6 +319,7 @@ mod tests {
                     "f{i} should be recognised"
                 );
             }
+            assert!(parse_key("f0").is_none());
             assert!(parse_key("f25").is_none());
         }
 
