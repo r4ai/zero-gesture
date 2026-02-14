@@ -14,6 +14,7 @@ import { Separator } from "@/components/ui/separator"
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
   SidebarMenu,
@@ -54,7 +55,7 @@ const sections = [
 
 const SettingsSidebar = () => {
   return (
-    <Sidebar variant="inset" collapsible="none" className="w-64 border-r">
+    <Sidebar variant="inset" collapsible="icon" className="w-64 border-r">
       <SidebarContent>
         <div className="p-4">
           <div className="relative">
@@ -86,6 +87,9 @@ const SettingsSidebar = () => {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
+      <SidebarFooter className="p-4">
+        <SidebarTrigger />
+      </SidebarFooter>
     </Sidebar>
   )
 }
@@ -96,10 +100,6 @@ const RootLayout = () => (
       <div className="flex h-screen w-full overflow-hidden">
         <SettingsSidebar />
         <div className="flex flex-1 flex-col">
-          <header className="flex h-14 items-center border-b px-4 lg:h-[60px]">
-            <SidebarTrigger className="mr-2" />
-            <h1 className="font-semibold text-lg">Zero Gesture Settings</h1>
-          </header>
           <main className="flex-1 overflow-auto p-6">
             <Outlet />
           </main>
