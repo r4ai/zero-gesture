@@ -712,9 +712,13 @@ pub fn spawn(
         let cfg = shared_config.0.read().unwrap();
 
         // Compile app matchers.
-        let apps: Vec<CompiledApp> = cfg
-            .apps
-            .iter()
+        // Sort by app_id for deterministic matching order, since HashMap
+        // iteration is non-deterministic and match_app returns first match.
+        let mut sorted_apps: Vec<_> = cfg.apps.iter().collect();
+        sorted_apps.sort_by_key(|(app_id, _)| app_id.clone());
+
+        let apps: Vec<CompiledApp> = sorted_apps
+            .into_iter()
             .filter_map(|(app_id, app_def)| {
                 let matchers: Vec<CompiledMatcher> = app_def
                     .matchers
