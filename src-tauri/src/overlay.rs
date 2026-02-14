@@ -881,6 +881,9 @@ fn handle_label(text_ptr: WPARAM) {
     } else {
         Some(unsafe { *Box::from_raw(text_ptr as *mut String) })
     };
+    let wide_text = text
+        .as_ref()
+        .map(|t| t.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>());
 
     // Store text and read label_hwnd + last_track_pt + label_font + label_padding.
     let (label_hwnd, label_font, track_pt, label_padding) = OVERLAY_STATE.with(|cell| {
@@ -902,25 +905,16 @@ fn handle_label(text_ptr: WPARAM) {
         return;
     }
 
-    // Read back whether we have text.
-    let has_text = OVERLAY_STATE.with(|cell| {
-        let borrow = cell.borrow();
-        borrow
-            .as_ref()
-            .and_then(|s| s.label_text.as_ref().map(|t| t.clone()))
-    });
-
-    match has_text {
+    match wide_text {
         None => {
             unsafe { ShowWindow(label_hwnd, SW_HIDE) };
         }
-        Some(text) => {
+        Some(wide) => {
             unsafe {
                 // Measure text size.
                 let dc = GetDC(label_hwnd);
                 let old_font = SelectObject(dc, label_font as *mut _);
 
-                let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
                 let mut rc = RECT {
                     left: 0,
                     top: 0,
