@@ -46,11 +46,11 @@ use windows_sys::Win32::{
         BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW, CreatePen,
         CreateRoundRectRgn, CreateSolidBrush, DeleteDC, DeleteObject, DrawTextW, EndPaint,
         FillRect, GetDC, GetMonitorInfoW, InvalidateRect, MonitorFromPoint, Polyline, ReleaseDC,
-        SelectObject, SetBkMode, SetTextColor, SetWindowRgn, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_QUALITY, DEFAULT_CHARSET, DEFAULT_PITCH, DT_CALCRECT, DT_CENTER, DT_NOPREFIX,
+        SelectObject, SetBkMode, SetTextColor, SetWindowRgn, CLEARTYPE_QUALITY,
+        CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, DEFAULT_PITCH, DT_CALCRECT, DT_CENTER, DT_NOPREFIX,
         DT_SINGLELINE, DT_VCENTER, FF_DONTCARE, FW_NORMAL, HBITMAP, HBRUSH, HDC, HFONT, HPEN,
-        MONITORINFO, MONITOR_DEFAULTTONEAREST, OUT_DEFAULT_PRECIS, PAINTSTRUCT, PS_SOLID,
-        SRCCOPY, TRANSPARENT,
+        MONITORINFO, MONITOR_DEFAULTTONEAREST, OUT_DEFAULT_PRECIS, PAINTSTRUCT, PS_SOLID, SRCCOPY,
+        TRANSPARENT,
     },
     System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentThreadId},
     UI::WindowsAndMessaging::{
@@ -410,11 +410,9 @@ fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<OverlayCommand>) {
                                 false,
                             )
                         }
-                        OverlayCommand::Shutdown => (
-                            PostThreadMessageW(tid, WM_OVERLAY_SHUTDOWN, 0, 0),
-                            0,
-                            true,
-                        ),
+                        OverlayCommand::Shutdown => {
+                            (PostThreadMessageW(tid, WM_OVERLAY_SHUTDOWN, 0, 0), 0, true)
+                        }
                     };
                     if posted == 0 {
                         if label_payload != 0 {
@@ -883,9 +881,11 @@ fn handle_label(text_ptr: WPARAM) {
     } else {
         Some(unsafe { *Box::from_raw(text_ptr as *mut String) })
     };
-    let wide_text = text
-        .as_ref()
-        .map(|t| t.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>());
+    let wide_text = text.as_ref().map(|t| {
+        t.encode_utf16()
+            .chain(std::iter::once(0))
+            .collect::<Vec<u16>>()
+    });
 
     // Store text and read label_hwnd + last_track_pt + label_font + label_padding.
     let (label_hwnd, label_font, track_pt, label_padding) = OVERLAY_STATE.with(|cell| {
