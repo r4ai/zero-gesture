@@ -44,6 +44,7 @@ const WM_OVERLAY_TRACK: u32 = WM_APP + 2;
 const WM_OVERLAY_END: u32 = WM_APP + 3;
 const WM_OVERLAY_SHUTDOWN: u32 = WM_APP + 4;
 const WM_OVERLAY_LABEL: u32 = WM_APP + 5;
+
 /// Tiny inset applied to overlay bounds to avoid "exact fullscreen window"
 /// classification by parts of the Windows shell.
 ///
