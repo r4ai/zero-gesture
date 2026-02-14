@@ -8,8 +8,16 @@ import {
   Settings,
   Wrench,
 } from "lucide-react"
+import { ThemeProvider, useTheme } from "@/components/theme-provider"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import {
   Sidebar,
@@ -56,6 +64,7 @@ const sections = [
 
 const SettingsSidebarContent = () => {
   const { state } = useSidebar()
+  const { theme, setTheme } = useTheme()
   const isCollapsed = state === "collapsed"
 
   return (
@@ -98,7 +107,28 @@ const SettingsSidebarContent = () => {
         </SidebarGroup>
       </SidebarContent>
       <SidebarFooter className="p-2">
-        <SidebarTrigger />
+        <div className="flex items-center justify-between gap-2">
+          {!isCollapsed && (
+            <Select
+              value={theme}
+              onValueChange={(value) =>
+                setTheme(value as "light" | "dark" | "system")
+              }
+            >
+              <SelectTrigger className="h-9 w-auto">
+                <SelectValue placeholder="Theme" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="light">Light</SelectItem>
+                <SelectItem value="dark">Dark</SelectItem>
+                <SelectItem value="system">System</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
+          <div className="ml-auto">
+            <SidebarTrigger className="size-8" />
+          </div>
+        </div>
       </SidebarFooter>
     </>
   )
@@ -113,23 +143,25 @@ const SettingsSidebar = () => {
 }
 
 const RootLayout = () => (
-  <TooltipProvider>
-    <SidebarProvider defaultOpen={true}>
-      <div className="flex h-screen w-full overflow-hidden">
-        <SettingsSidebar />
-        <div className="relative flex flex-1 flex-col">
-          <main className="flex-1 overflow-auto p-6">
-            <Outlet />
-          </main>
-          <Button variant="outline" className="fixed right-[156px] bottom-6">
-            Cancel
-          </Button>
-          <Button className="fixed right-6 bottom-6">Save & Apply</Button>
+  <ThemeProvider defaultTheme="system" storageKey="zero-gesture-theme">
+    <TooltipProvider>
+      <SidebarProvider defaultOpen={true}>
+        <div className="flex h-screen w-full overflow-hidden">
+          <SettingsSidebar />
+          <div className="relative flex flex-1 flex-col">
+            <main className="flex-1 overflow-auto p-6">
+              <Outlet />
+            </main>
+            <Button variant="outline" className="fixed right-[156px] bottom-6">
+              Cancel
+            </Button>
+            <Button className="fixed right-6 bottom-6">Save & Apply</Button>
+          </div>
         </div>
-      </div>
-      <TanStackRouterDevtools position="top-right" />
-    </SidebarProvider>
-  </TooltipProvider>
+        <TanStackRouterDevtools position="top-right" />
+      </SidebarProvider>
+    </TooltipProvider>
+  </ThemeProvider>
 )
 
 export const Route = createRootRoute({
