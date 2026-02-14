@@ -1217,6 +1217,7 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
         let threshold = hs.config.gesture_threshold as i64;
         if dist2 >= threshold * threshold {
             let window_info = crate::window_info::get_foreground_window_info();
+            debug!("foreground window info: {:?}", window_info);
             match_app(&hs.config.apps, &window_info).map(|s| s.to_owned())
         } else {
             None
