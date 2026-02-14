@@ -45,11 +45,10 @@ use windows_sys::Win32::{
     Graphics::Gdi::{
         BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW, CreatePen,
         CreateRoundRectRgn, CreateSolidBrush, DeleteDC, DeleteObject, DrawTextW, EndPaint,
-        FillRect, GetDC,
-        GetMonitorInfoW, InvalidateRect, MonitorFromPoint, Polyline, ReleaseDC, SelectObject,
-        SetBkMode, SetTextColor, SetWindowRgn, DT_CALCRECT, DT_CENTER, DT_NOPREFIX, DT_SINGLELINE,
-        DT_VCENTER, HBITMAP, HBRUSH, HFONT, HDC, HPEN, MONITORINFO, MONITOR_DEFAULTTONEAREST,
-        PAINTSTRUCT, PS_SOLID, SRCCOPY, TRANSPARENT,
+        FillRect, GetDC, GetMonitorInfoW, InvalidateRect, MonitorFromPoint, Polyline, ReleaseDC,
+        SelectObject, SetBkMode, SetTextColor, SetWindowRgn, DT_CALCRECT, DT_CENTER, DT_NOPREFIX,
+        DT_SINGLELINE, DT_VCENTER, HBITMAP, HBRUSH, HDC, HFONT, HPEN, MONITORINFO,
+        MONITOR_DEFAULTTONEAREST, PAINTSTRUCT, PS_SOLID, SRCCOPY, TRANSPARENT,
     },
     System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentThreadId},
     UI::WindowsAndMessaging::{
@@ -331,10 +330,30 @@ const CLASS_NAME: &[u16] = &[
 /// Window class name for the label overlay (UTF-16, null-terminated).
 #[cfg(windows)]
 const LABEL_CLASS_NAME: &[u16] = &[
-    b'Z' as u16, b'e' as u16, b'r' as u16, b'o' as u16, b'G' as u16, b'e' as u16, b's' as u16,
-    b't' as u16, b'u' as u16, b'r' as u16, b'e' as u16, b'L' as u16, b'a' as u16, b'b' as u16,
-    b'e' as u16, b'l' as u16, b'O' as u16, b'v' as u16, b'e' as u16, b'r' as u16, b'l' as u16,
-    b'a' as u16, b'y' as u16, 0,
+    b'Z' as u16,
+    b'e' as u16,
+    b'r' as u16,
+    b'o' as u16,
+    b'G' as u16,
+    b'e' as u16,
+    b's' as u16,
+    b't' as u16,
+    b'u' as u16,
+    b'r' as u16,
+    b'e' as u16,
+    b'L' as u16,
+    b'a' as u16,
+    b'b' as u16,
+    b'e' as u16,
+    b'l' as u16,
+    b'O' as u16,
+    b'v' as u16,
+    b'e' as u16,
+    b'r' as u16,
+    b'l' as u16,
+    b'a' as u16,
+    b'y' as u16,
+    0,
 ];
 
 /// Main loop of the overlay thread (Windows implementation).
@@ -559,8 +578,7 @@ fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<OverlayCommand>) {
             // Continue without label support — trail overlay still works.
         }
 
-        let label_ex_style =
-            WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
+        let label_ex_style = WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
 
         let label_hwnd = if label_atom != 0 {
             CreateWindowExW(
@@ -591,18 +609,18 @@ fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<OverlayCommand>) {
             .collect();
         let label_font = CreateFontW(
             config.label_font_size, // height
-            0,                 // width (auto)
-            0,                 // escapement
-            0,                 // orientation
-            400,               // weight (FW_NORMAL)
-            0,                 // italic
-            0,                 // underline
-            0,                 // strikeout
-            1,                 // charset (DEFAULT_CHARSET)
-            0,                 // out precision
-            0,                 // clip precision
-            5,                 // quality (CLEARTYPE_QUALITY)
-            0,                 // pitch and family
+            0,                      // width (auto)
+            0,                      // escapement
+            0,                      // orientation
+            400,                    // weight (FW_NORMAL)
+            0,                      // italic
+            0,                      // underline
+            0,                      // strikeout
+            1,                      // charset (DEFAULT_CHARSET)
+            0,                      // out precision
+            0,                      // clip precision
+            5,                      // quality (CLEARTYPE_QUALITY)
+            0,                      // pitch and family
             font_name.as_ptr(),
         );
 
@@ -856,7 +874,12 @@ fn handle_label(text_ptr: WPARAM) {
             None => return (std::ptr::null_mut(), std::ptr::null_mut(), None, 0),
         };
         state.label_text = text;
-        (state.label_hwnd, state.label_font, state.last_track_pt, state.label_padding)
+        (
+            state.label_hwnd,
+            state.label_font,
+            state.last_track_pt,
+            state.label_padding,
+        )
     });
 
     if label_hwnd.is_null() {
@@ -866,7 +889,9 @@ fn handle_label(text_ptr: WPARAM) {
     // Read back whether we have text.
     let has_text = OVERLAY_STATE.with(|cell| {
         let borrow = cell.borrow();
-        borrow.as_ref().and_then(|s| s.label_text.as_ref().map(|t| t.clone()))
+        borrow
+            .as_ref()
+            .and_then(|s| s.label_text.as_ref().map(|t| t.clone()))
     });
 
     match has_text {
@@ -926,7 +951,8 @@ fn handle_label(text_ptr: WPARAM) {
                 );
                 // Clip the popup to a rounded rectangle so the label background
                 // itself becomes rounded (not only the text layout).
-                let rgn = CreateRoundRectRgn(0, 0, win_w + 1, win_h + 1, corner_radius, corner_radius);
+                let rgn =
+                    CreateRoundRectRgn(0, 0, win_w + 1, win_h + 1, corner_radius, corner_radius);
                 if !rgn.is_null() && SetWindowRgn(label_hwnd, rgn, 1) == 0 {
                     DeleteObject(rgn as *mut _);
                 }

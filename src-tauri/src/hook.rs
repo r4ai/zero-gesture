@@ -614,18 +614,13 @@ pub fn spawn(
             })
             .collect();
 
-        let bindings: HashMap<GestureKind, Action> = parsed
-            .iter()
-            .map(|(k, b)| (*k, b.action.clone()))
-            .collect();
+        let bindings: HashMap<GestureKind, Action> =
+            parsed.iter().map(|(k, b)| (*k, b.action.clone())).collect();
 
         let labels: HashMap<GestureKind, String> = parsed
             .iter()
             .map(|(k, b)| {
-                let label = b
-                    .label
-                    .clone()
-                    .unwrap_or_else(|| generate_label(&b.action));
+                let label = b.label.clone().unwrap_or_else(|| generate_label(&b.action));
                 (*k, label)
             })
             .collect();
