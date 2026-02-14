@@ -385,27 +385,42 @@ fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<OverlayCommand>) {
             .name("overlay-bridge".to_string())
             .spawn(move || {
                 while let Ok(cmd) = overlay_rx.recv() {
-                    let posted = match cmd {
+                    let (posted, label_payload, should_break) = match cmd {
                         OverlayCommand::StartGesture => {
-                            PostThreadMessageW(tid, WM_OVERLAY_START, 0, 0)
+                            (PostThreadMessageW(tid, WM_OVERLAY_START, 0, 0), 0, false)
                         }
-                        OverlayCommand::TrackPoint { x, y } => {
-                            PostThreadMessageW(tid, WM_OVERLAY_TRACK, x as WPARAM, y as LPARAM)
+                        OverlayCommand::TrackPoint { x, y } => (
+                            PostThreadMessageW(tid, WM_OVERLAY_TRACK, x as WPARAM, y as LPARAM),
+                            0,
+                            false,
+                        ),
+                        OverlayCommand::EndGesture => {
+                            (PostThreadMessageW(tid, WM_OVERLAY_END, 0, 0), 0, false)
                         }
-                        OverlayCommand::EndGesture => PostThreadMessageW(tid, WM_OVERLAY_END, 0, 0),
                         OverlayCommand::UpdateLabel(text) => {
                             let w_param = match text {
                                 Some(s) => Box::into_raw(Box::new(s)) as WPARAM,
                                 None => 0,
                             };
-                            PostThreadMessageW(tid, WM_OVERLAY_LABEL, w_param, 0)
+                            (
+                                PostThreadMessageW(tid, WM_OVERLAY_LABEL, w_param, 0),
+                                w_param,
+                                false,
+                            )
                         }
-                        OverlayCommand::Shutdown => {
-                            PostThreadMessageW(tid, WM_OVERLAY_SHUTDOWN, 0, 0);
-                            break;
-                        }
+                        OverlayCommand::Shutdown => (
+                            PostThreadMessageW(tid, WM_OVERLAY_SHUTDOWN, 0, 0),
+                            0,
+                            true,
+                        ),
                     };
                     if posted == 0 {
+                        if label_payload != 0 {
+                            drop(Box::from_raw(label_payload as *mut String));
+                        }
+                        break;
+                    }
+                    if should_break {
                         break;
                     }
                 }
