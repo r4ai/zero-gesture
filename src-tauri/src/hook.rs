@@ -507,6 +507,9 @@ struct EventEffect {
     request_replay: Option<(i32, i32)>,
     /// If set, the given action should be executed.
     request_execute: Option<Action>,
+    /// If set, the window at these screen coordinates should be activated
+    /// (brought to the foreground).
+    activate_window_at: Option<(i32, i32)>,
 }
 
 /// Info needed to replay a suppressed click via [`SendInput`].
@@ -877,6 +880,7 @@ fn process_event_pure(
         overlay_commands: OverlayCommands::new(),
         request_replay: None,
         request_execute: None,
+        activate_window_at: None,
     };
 
     match state {
@@ -902,6 +906,7 @@ fn process_event_pure(
                 let threshold = i64::from(config.gesture_threshold);
                 if dist_squared > threshold * threshold {
                     debug!("ButtonDown → Gesturing");
+                    effect.activate_window_at = Some((ox, oy));
                     effect.overlay_commands.push(OverlayCommand::StartGesture);
                     effect
                         .overlay_commands
@@ -1023,6 +1028,10 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
     let pt = (info.pt.x, info.pt.y);
 
     let effect = process_event_pure(&mut hs.state, &hs.config, event, pt, tick);
+
+    if let Some((x, y)) = effect.activate_window_at {
+        activate_window_at_point(x, y);
+    }
 
     for cmd in effect.overlay_commands {
         let _ = hs.overlay_tx.send(cmd);
@@ -1240,6 +1249,41 @@ fn make_mouse_input(x: i32, y: i32, flags: u32) -> INPUT {
     }
 }
 
+/// Activate (bring to foreground) the top-level window at the given screen
+/// coordinates.
+///
+/// Uses [`WindowFromPoint`] to find the window under `(x, y)`, then
+/// [`GetAncestor`] with `GA_ROOT` to resolve it to a top-level window,
+/// and finally [`SetForegroundWindow`] to make it the active window.
+///
+/// This is called at the start of a gesture so that subsequent keyboard
+/// actions dispatched by the executor target the correct window.
+///
+/// [`WindowFromPoint`]: windows_sys::Win32::UI::WindowsAndMessaging::WindowFromPoint
+/// [`GetAncestor`]: windows_sys::Win32::UI::WindowsAndMessaging::GetAncestor
+/// [`SetForegroundWindow`]: windows_sys::Win32::UI::WindowsAndMessaging::SetForegroundWindow
+#[cfg(windows)]
+fn activate_window_at_point(x: i32, y: i32) {
+    use windows_sys::Win32::Foundation::POINT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetAncestor, SetForegroundWindow, WindowFromPoint, GA_ROOT,
+    };
+
+    unsafe {
+        let hwnd = WindowFromPoint(POINT { x, y });
+        if hwnd.is_null() {
+            debug!("activate_window_at_point: no window at ({x}, {y})");
+            return;
+        }
+
+        let root = GetAncestor(hwnd, GA_ROOT);
+        let target = if root.is_null() { hwnd } else { root };
+
+        debug!("activate_window_at_point: activating window {target:?} at ({x}, {y})");
+        SetForegroundWindow(target);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -1279,6 +1323,7 @@ mod tests {
         assert!(effect.overlay_commands.is_empty());
         assert!(effect.request_replay.is_none());
         assert!(effect.request_execute.is_none());
+        assert!(effect.activate_window_at.is_none());
         assert!(
             matches!(
                 state,
@@ -1346,6 +1391,11 @@ mod tests {
             effect.overlay_commands[3],
             OverlayCommand::UpdateLabel(_)
         ));
+        assert_eq!(
+            effect.activate_window_at,
+            Some((100, 200)),
+            "should activate window at origin when gesture starts"
+        );
         assert!(matches!(state, GestureState::Gesturing { .. }));
     }
 
