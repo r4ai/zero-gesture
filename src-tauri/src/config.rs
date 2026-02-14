@@ -235,21 +235,12 @@ impl Default for AppConfig {
 /// println!("trigger button: {}", config.gesture_trigger_button);
 /// ```
 pub fn load_or_default(config_dir: &Path) -> AppConfig {
-    if let Some(config) = load_config_from_path(&config_path(config_dir)) {
-        return config;
-    }
-
-    load_config_from_path(&legacy_config_path()).unwrap_or_default()
-}
-
-fn load_config_from_path(path: &Path) -> Option<AppConfig> {
-    let raw = match fs::read_to_string(path) {
+    let raw = match fs::read_to_string(config_path(config_dir)) {
         Ok(raw) => raw,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => return None,
-        Err(_) => return Some(AppConfig::default()),
+        Err(_) => return AppConfig::default(),
     };
 
-    Some(serde_json::from_str(&raw).unwrap_or_default())
+    serde_json::from_str(&raw).unwrap_or_default()
 }
 
 /// Serializes `config` as pretty-printed JSON and writes it to the
@@ -278,12 +269,6 @@ pub fn save(config: &AppConfig, config_dir: &Path) -> io::Result<()> {
 /// Returns the path to the configuration file.
 fn config_path(config_dir: &Path) -> PathBuf {
     config_dir.join(CONFIG_FILE_NAME)
-}
-
-/// Returns the legacy path to the configuration file in the current working
-/// directory.
-fn legacy_config_path() -> PathBuf {
-    PathBuf::from(CONFIG_FILE_NAME)
 }
 
 #[cfg(test)]
