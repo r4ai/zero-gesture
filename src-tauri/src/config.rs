@@ -56,6 +56,7 @@ const CONFIG_FILE_NAME: &str = "zero-gesture.config.json";
 /// assert_eq!(config.axis_ambiguity_deadzone_px, 2);
 /// assert_eq!(config.label_font_family, "Yu Gothic UI Semibold");
 /// assert_eq!(config.label_font_size, 36.0);
+/// assert_eq!(config.label_font_weight, 400);
 /// assert_eq!(config.label_padding, 24.0);
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -98,6 +99,9 @@ pub struct AppConfig {
     /// Font size in pixels for the gesture label overlay.
     pub label_font_size: f32,
 
+    /// Font weight for the gesture label overlay (Win32 range: 0..=1000).
+    pub label_font_weight: i32,
+
     /// Padding in pixels around the gesture label text.
     pub label_padding: f32,
 
@@ -129,6 +133,9 @@ impl AppConfig {
 
     /// Default font size (in pixels) for the gesture label overlay.
     pub const DEFAULT_LABEL_FONT_SIZE: f32 = 36.0;
+
+    /// Default font weight for the gesture label overlay.
+    pub const DEFAULT_LABEL_FONT_WEIGHT: i32 = 400;
 
     /// Default padding (in pixels) around the gesture label text.
     pub const DEFAULT_LABEL_PADDING: f32 = 24.0;
@@ -208,6 +215,7 @@ impl Default for AppConfig {
             axis_ambiguity_deadzone_px: Self::DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX,
             label_font_family: Self::DEFAULT_LABEL_FONT_FAMILY.to_string(),
             label_font_size: Self::DEFAULT_LABEL_FONT_SIZE,
+            label_font_weight: Self::DEFAULT_LABEL_FONT_WEIGHT,
             label_padding: Self::DEFAULT_LABEL_PADDING,
             bindings: Self::default_bindings(),
         }
@@ -282,6 +290,7 @@ mod tests {
         );
         assert_eq!(cfg.label_font_family, AppConfig::DEFAULT_LABEL_FONT_FAMILY);
         assert_eq!(cfg.label_font_size, AppConfig::DEFAULT_LABEL_FONT_SIZE);
+        assert_eq!(cfg.label_font_weight, AppConfig::DEFAULT_LABEL_FONT_WEIGHT);
         assert_eq!(cfg.label_padding, AppConfig::DEFAULT_LABEL_PADDING);
         assert_eq!(cfg.bindings.len(), 6);
         assert!(cfg.bindings.contains_key("Left"));
@@ -317,6 +326,7 @@ mod tests {
         );
         assert_eq!(cfg.label_font_family, AppConfig::DEFAULT_LABEL_FONT_FAMILY);
         assert_eq!(cfg.label_font_size, AppConfig::DEFAULT_LABEL_FONT_SIZE);
+        assert_eq!(cfg.label_font_weight, AppConfig::DEFAULT_LABEL_FONT_WEIGHT);
         assert_eq!(cfg.label_padding, AppConfig::DEFAULT_LABEL_PADDING);
         assert_eq!(cfg.bindings.len(), 6);
         assert!(cfg.bindings.contains_key("Left"));
@@ -349,6 +359,14 @@ mod tests {
         assert_eq!(cfg.bindings["Left"].label, None);
         // With label
         assert_eq!(cfg.bindings["Right"].label, Some("進む".to_string()));
+    }
+
+    #[test]
+    fn deserialize_json_with_label_font_weight() {
+        let raw = r##"{ "label_font_weight": 700 }"##;
+        let cfg: AppConfig =
+            serde_json::from_str(raw).expect("JSON with label_font_weight must parse");
+        assert_eq!(cfg.label_font_weight, 700);
     }
 
     #[test]

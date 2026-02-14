@@ -48,9 +48,8 @@ use windows_sys::Win32::{
         FillRect, GetDC, GetMonitorInfoW, InvalidateRect, MonitorFromPoint, Polyline, ReleaseDC,
         SelectObject, SetBkMode, SetTextColor, SetWindowRgn, CLEARTYPE_QUALITY,
         CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, DEFAULT_PITCH, DT_CALCRECT, DT_CENTER, DT_NOPREFIX,
-        DT_SINGLELINE, DT_VCENTER, FF_DONTCARE, FW_NORMAL, HBITMAP, HBRUSH, HDC, HFONT, HPEN,
-        MONITORINFO, MONITOR_DEFAULTTONEAREST, OUT_DEFAULT_PRECIS, PAINTSTRUCT, PS_SOLID, SRCCOPY,
-        TRANSPARENT,
+        DT_SINGLELINE, DT_VCENTER, FF_DONTCARE, HBITMAP, HBRUSH, HDC, HFONT, HPEN, MONITORINFO,
+        MONITOR_DEFAULTTONEAREST, OUT_DEFAULT_PRECIS, PAINTSTRUCT, PS_SOLID, SRCCOPY, TRANSPARENT,
     },
     System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentThreadId},
     UI::WindowsAndMessaging::{
@@ -182,6 +181,8 @@ struct OverlayConfig {
     label_font_family: String,
     /// Font size in pixels for the gesture label.
     label_font_size: i32,
+    /// Font weight for the gesture label (Win32 range: 0..=1000).
+    label_font_weight: i32,
     /// Padding in pixels around the gesture label text.
     label_padding: i32,
 }
@@ -280,6 +281,7 @@ pub fn spawn(shared_config: SharedConfig) -> (Sender<OverlayCommand>, JoinHandle
             pen_width: cfg.trail_thickness.round() as i32,
             label_font_family: cfg.label_font_family.clone(),
             label_font_size: cfg.label_font_size.round() as i32,
+            label_font_weight: cfg.label_font_weight,
             label_padding: cfg.label_padding.round() as i32,
         }
     };
@@ -623,12 +625,13 @@ fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<OverlayCommand>) {
         let font_name: Vec<u16> = format!("{}\0", config.label_font_family)
             .encode_utf16()
             .collect();
+        let font_weight = config.label_font_weight.clamp(0, 1000);
         let label_font = CreateFontW(
             config.label_font_size, // height
             0,                      // width (auto)
             0,                      // escapement
             0,                      // orientation
-            FW_NORMAL as i32,       // weight
+            font_weight,            // weight
             0,                      // italic
             0,                      // underline
             0,                      // strikeout
