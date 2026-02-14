@@ -7,6 +7,7 @@ mod log_config;
 pub mod overlay;
 mod tray;
 
+use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicU32, Ordering},
     Arc, Mutex, RwLock, RwLockWriteGuard,
@@ -42,6 +43,16 @@ impl SharedConfig {
     /// Creates a new [`SharedConfig`] from the given [`config::AppConfig`].
     pub fn new(config: config::AppConfig) -> Self {
         Self(Arc::new(RwLock::new(config)))
+    }
+}
+
+/// Absolute directory where the app stores configuration files.
+#[derive(Clone)]
+pub struct ConfigDir(pub PathBuf);
+
+impl ConfigDir {
+    fn as_path(&self) -> &Path {
+        self.0.as_path()
     }
 }
 
@@ -292,6 +303,7 @@ pub fn apply_config_update(
     new_config: config::AppConfig,
     shared_config: &SharedConfig,
     runtime: &ThreadRuntime,
+    config_dir: &ConfigDir,
 ) -> Result<(), String> {
     let _update_guard = runtime
         .config_update_lock
@@ -311,7 +323,7 @@ pub fn apply_config_update(
         }
     }
 
-    if let Err(err) = config::save(&new_config) {
+    if let Err(err) = config::save(&new_config, config_dir.as_path()) {
         rollback_config_update(shared_config, runtime, previous_config, restart_required);
         return Err(format!("failed to save config: {err}"));
     }
@@ -331,8 +343,14 @@ fn update_config(
     new_config: config::AppConfig,
     shared_config: tauri::State<'_, SharedConfig>,
     runtime: tauri::State<'_, ThreadRuntime>,
+    config_dir: tauri::State<'_, ConfigDir>,
 ) -> Result<(), String> {
-    apply_config_update(new_config, shared_config.inner(), runtime.inner())
+    apply_config_update(
+        new_config,
+        shared_config.inner(),
+        runtime.inner(),
+        config_dir.inner(),
+    )
 }
 
 /// Application entry point — builds and runs the Tauri application.
@@ -341,15 +359,19 @@ fn update_config(
 /// creates the system tray, and enters the event loop.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let shared_config = SharedConfig::new(config::load_or_default());
     let log_level = log_config::resolve_log_level();
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_log::Builder::new().level(log_level).build())
         .plugin(tauri_plugin_opener::init())
-        .manage(shared_config.clone())
         .setup(move |app| {
-            app.manage(ThreadRuntime::start(shared_config.clone()));
+            let config_dir_path = app.path().app_config_dir()?;
+            let shared_config =
+                SharedConfig::new(config::load_or_default(config_dir_path.as_path()));
+
+            app.manage(shared_config.clone());
+            app.manage(ConfigDir(config_dir_path));
+            app.manage(ThreadRuntime::start(shared_config));
             tray::setup(app)?;
 
             Ok(())

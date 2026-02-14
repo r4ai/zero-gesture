@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -34,7 +34,7 @@ pub struct GestureBinding {
     pub label: Option<String>,
 }
 
-/// Configuration file name placed in the working directory.
+/// Configuration file name.
 const CONFIG_FILE_NAME: &str = "zero-gesture.config.json";
 
 /// Application-wide configuration persisted as JSON.
@@ -229,13 +229,13 @@ impl Default for AppConfig {
 ///
 /// ```no_run
 /// use zero_gesture_lib::config::load_or_default;
+/// use std::path::Path;
 ///
-/// let config = load_or_default();
+/// let config = load_or_default(Path::new("./config"));
 /// println!("trigger button: {}", config.gesture_trigger_button);
 /// ```
-pub fn load_or_default() -> AppConfig {
-    let path = config_path();
-    let raw = match fs::read_to_string(&path) {
+pub fn load_or_default(config_dir: &Path) -> AppConfig {
+    let raw = match fs::read_to_string(config_path(config_dir)) {
         Ok(raw) => raw,
         Err(_) => return AppConfig::default(),
     };
@@ -254,25 +254,26 @@ pub fn load_or_default() -> AppConfig {
 ///
 /// ```no_run
 /// use zero_gesture_lib::config::{save, AppConfig};
+/// use std::path::Path;
 ///
 /// let config = AppConfig::default();
-/// save(&config).expect("failed to save config");
+/// save(&config, Path::new("./config")).expect("failed to save config");
 /// ```
-#[allow(dead_code)]
-pub fn save(config: &AppConfig) -> io::Result<()> {
+pub fn save(config: &AppConfig, config_dir: &Path) -> io::Result<()> {
     let body = serde_json::to_string_pretty(config)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
-    fs::write(config_path(), body)
+    fs::create_dir_all(config_dir)?;
+    fs::write(config_path(config_dir), body)
 }
 
 /// Returns the path to the configuration file.
-fn config_path() -> PathBuf {
-    PathBuf::from(CONFIG_FILE_NAME)
+fn config_path(config_dir: &Path) -> PathBuf {
+    config_dir.join(CONFIG_FILE_NAME)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::AppConfig;
+    use super::{load_or_default, save, AppConfig};
 
     #[test]
     fn default_contains_hook_related_values() {
@@ -394,5 +395,21 @@ mod tests {
         assert!(cfg.bindings.contains_key("Down"));
         assert!(cfg.bindings.contains_key("DownUp"));
         assert!(cfg.bindings.contains_key("UpDown"));
+    }
+
+    #[test]
+    fn save_creates_directory_and_roundtrips_from_config_dir() {
+        let temp_dir =
+            tempfile::tempdir().expect("must be able to create temp dir for config test");
+        let temp_path = temp_dir.path();
+
+        let expected = AppConfig {
+            gesture_trigger_button: "middle".to_string(),
+            ..AppConfig::default()
+        };
+
+        save(&expected, temp_path).expect("save must succeed");
+        let loaded = load_or_default(temp_path);
+        assert_eq!(loaded, expected);
     }
 }
