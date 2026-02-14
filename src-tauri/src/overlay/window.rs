@@ -24,11 +24,11 @@ use windows_sys::Win32::{
     UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
         GetSystemMetrics, PostQuitMessage, PostThreadMessageW, RegisterClassExW,
-        SetLayeredWindowAttributes, SetWindowPos, ShowWindow, UnregisterClassW, HWND_TOP,
-        LWA_ALPHA, LWA_COLORKEY, MSG, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
-        SM_YVIRTUALSCREEN, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SW_HIDE, WM_APP,
-        WM_DESTROY, WM_ERASEBKGND, WM_PAINT, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
-        WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_POPUP,
+        SetLayeredWindowAttributes, SetWindowPos, ShowWindow, UnregisterClassW, HWND_NOTOPMOST,
+        HWND_TOPMOST, LWA_ALPHA, LWA_COLORKEY, MSG, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
+        SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+        SWP_SHOWWINDOW, SW_HIDE, WM_APP, WM_DESTROY, WM_ERASEBKGND, WM_PAINT, WNDCLASSEXW,
+        WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_POPUP,
     },
 };
 
@@ -471,12 +471,13 @@ fn handle_start() {
             if !label_hwnd.is_null() {
                 ShowWindow(label_hwnd, SW_HIDE);
             }
-            // Use SetWindowPos with HWND_TOP (not HWND_TOPMOST) so we can bring
-            // the overlay in front of regular windows without pinning it above
-            // all system UI. SWP_SHOWWINDOW avoids a separate ShowWindow call.
+            // Keep overlay visible above arbitrary app windows while gesturing.
+            // We make it transiently top-most only for the gesture lifetime and
+            // drop that state on end; this preserves visibility without keeping
+            // a permanent top-most fullscreen window around.
             SetWindowPos(
                 hwnd,
-                HWND_TOP,
+                HWND_TOPMOST,
                 0,
                 0,
                 0,
@@ -546,10 +547,28 @@ fn handle_end() {
     if let Some(hwnd) = hwnd {
         unsafe {
             if !label_hwnd.is_null() {
+                SetWindowPos(
+                    label_hwnd,
+                    HWND_NOTOPMOST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                );
                 ShowWindow(label_hwnd, SW_HIDE);
             }
             InvalidateRect(hwnd, std::ptr::null(), 1);
             windows_sys::Win32::Graphics::Gdi::UpdateWindow(hwnd);
+            SetWindowPos(
+                hwnd,
+                HWND_NOTOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
             ShowWindow(hwnd, SW_HIDE);
         }
     }
@@ -635,7 +654,7 @@ fn handle_label(text_ptr: WPARAM) {
 
             SetWindowPos(
                 label_hwnd,
-                HWND_TOP,
+                HWND_TOPMOST,
                 win_x,
                 win_y,
                 win_w,
