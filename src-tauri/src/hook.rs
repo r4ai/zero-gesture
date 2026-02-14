@@ -715,7 +715,7 @@ pub fn spawn(
         // Sort by app_id for deterministic matching order, since HashMap
         // iteration is non-deterministic and match_app returns first match.
         let mut sorted_apps: Vec<_> = cfg.apps.iter().collect();
-        sorted_apps.sort_by_key(|(app_id, _)| app_id.clone());
+        sorted_apps.sort_by_key(|(app_id, _)| (*app_id).clone());
 
         let apps: Vec<CompiledApp> = sorted_apps
             .into_iter()
@@ -776,6 +776,20 @@ pub fn spawn(
 
             total_bindings += bindings.len();
             binding_sets.insert(app_id.clone(), AppBindingSet { bindings, labels });
+        }
+
+        // Ensure a "default" binding set is always present, since resolution
+        // logic falls back to it. If the user did not define one, insert an
+        // empty set and warn so gestures do not silently stop working.
+        if !binding_sets.contains_key("default") {
+            warn!("No \"default\" bindings defined in configuration; inserting empty default set");
+            binding_sets.insert(
+                "default".to_string(),
+                AppBindingSet {
+                    bindings: HashMap::new(),
+                    labels: HashMap::new(),
+                },
+            );
         }
 
         if total_bindings > 0 {
