@@ -46,9 +46,11 @@ use windows_sys::Win32::{
         BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW, CreatePen,
         CreateRoundRectRgn, CreateSolidBrush, DeleteDC, DeleteObject, DrawTextW, EndPaint,
         FillRect, GetDC, GetMonitorInfoW, InvalidateRect, MonitorFromPoint, Polyline, ReleaseDC,
-        SelectObject, SetBkMode, SetTextColor, SetWindowRgn, DT_CALCRECT, DT_CENTER, DT_NOPREFIX,
-        DT_SINGLELINE, DT_VCENTER, HBITMAP, HBRUSH, HDC, HFONT, HPEN, MONITORINFO,
-        MONITOR_DEFAULTTONEAREST, PAINTSTRUCT, PS_SOLID, SRCCOPY, TRANSPARENT,
+        SelectObject, SetBkMode, SetTextColor, SetWindowRgn, CLIP_DEFAULT_PRECIS,
+        CLEARTYPE_QUALITY, DEFAULT_CHARSET, DEFAULT_PITCH, DT_CALCRECT, DT_CENTER, DT_NOPREFIX,
+        DT_SINGLELINE, DT_VCENTER, FF_DONTCARE, FW_NORMAL, HBITMAP, HBRUSH, HDC, HFONT, HPEN,
+        MONITORINFO, MONITOR_DEFAULTTONEAREST, OUT_DEFAULT_PRECIS, PAINTSTRUCT, PS_SOLID,
+        SRCCOPY, TRANSPARENT,
     },
     System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentThreadId},
     UI::WindowsAndMessaging::{
@@ -628,15 +630,15 @@ fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<OverlayCommand>) {
             0,                      // width (auto)
             0,                      // escapement
             0,                      // orientation
-            400,                    // weight (FW_NORMAL)
+            FW_NORMAL as i32,       // weight
             0,                      // italic
             0,                      // underline
             0,                      // strikeout
-            1,                      // charset (DEFAULT_CHARSET)
-            0,                      // out precision
-            0,                      // clip precision
-            5,                      // quality (CLEARTYPE_QUALITY)
-            0,                      // pitch and family
+            DEFAULT_CHARSET as u32, // charset
+            OUT_DEFAULT_PRECIS as u32,
+            CLIP_DEFAULT_PRECIS as u32,
+            CLEARTYPE_QUALITY as u32,
+            (DEFAULT_PITCH | FF_DONTCARE) as u32,
             font_name.as_ptr(),
         );
 
