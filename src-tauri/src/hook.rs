@@ -265,11 +265,11 @@ impl CompiledMatcher {
         };
         match &self.logic {
             CompiledMatchLogic::ExactCaseInsensitive(pattern) => {
-                target_value.to_ascii_lowercase() == *pattern
+                target_value.to_lowercase() == *pattern
             }
             CompiledMatchLogic::ExactCaseSensitive(pattern) => target_value == pattern,
             CompiledMatchLogic::Contains(pattern) => {
-                target_value.to_ascii_lowercase().contains(pattern.as_str())
+                target_value.to_lowercase().contains(pattern.as_str())
             }
             CompiledMatchLogic::Regex(re) => re.is_match(target_value),
         }
@@ -1072,11 +1072,7 @@ fn process_event_pure(
         } => {
             let (ox, oy) = (*origin_x, *origin_y);
             if event == MouseEvent::MouseMove {
-                let dx = pt.0 - ox;
-                let dy = pt.1 - oy;
-                let dist_squared = i64::from(dx) * i64::from(dx) + i64::from(dy) * i64::from(dy);
-                let threshold = i64::from(config.gesture_threshold);
-                if dist_squared > threshold * threshold {
+                if exceeds_gesture_threshold((ox, oy), pt, config.gesture_threshold) {
                     debug!("ButtonDown → Gesturing (app={:?})", matched_app);
                     effect.activate_window_at = Some((ox, oy));
                     effect.overlay_commands.push(OverlayCommand::StartGesture);
@@ -1212,11 +1208,7 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
         MouseEvent::MouseMove,
     ) = (&hs.state, event)
     {
-        let dx = pt.0 - origin_x;
-        let dy = pt.1 - origin_y;
-        let dist2 = (dx as i64) * (dx as i64) + (dy as i64) * (dy as i64);
-        let threshold = hs.config.gesture_threshold as i64;
-        if dist2 > threshold * threshold {
+        if exceeds_gesture_threshold((*origin_x, *origin_y), pt, hs.config.gesture_threshold) {
             let activated_target = activate_window_at_point(*origin_x, *origin_y);
             activated_before_processing = activated_target.is_some();
             let window_info = if let Some(hwnd) = activated_target {
@@ -1395,14 +1387,14 @@ fn compile_matcher(m: &crate::config::AppMatcher) -> Option<CompiledMatcher> {
     let logic = match (&m.target, &m.method) {
         // Exact on process_name/title → case-insensitive
         (MatchTarget::ProcessName | MatchTarget::Title, MatchMethod::Exact) => {
-            CompiledMatchLogic::ExactCaseInsensitive(m.value.to_ascii_lowercase())
+            CompiledMatchLogic::ExactCaseInsensitive(m.value.to_lowercase())
         }
         // Exact on window_class → case-sensitive
         (MatchTarget::WindowClass, MatchMethod::Exact) => {
             CompiledMatchLogic::ExactCaseSensitive(m.value.clone())
         }
         // Contains → always case-insensitive
-        (_, MatchMethod::Contains) => CompiledMatchLogic::Contains(m.value.to_ascii_lowercase()),
+        (_, MatchMethod::Contains) => CompiledMatchLogic::Contains(m.value.to_lowercase()),
         // Regex
         (_, MatchMethod::Regex) => match regex::Regex::new(&m.value) {
             Ok(re) => CompiledMatchLogic::Regex(re),
@@ -1424,6 +1416,15 @@ fn compile_matcher(m: &crate::config::AppMatcher) -> Option<CompiledMatcher> {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Returns `true` when the cursor distance from `origin` exceeds the
+/// configured gesture threshold.
+fn exceeds_gesture_threshold(origin: (i32, i32), pt: (i32, i32), threshold: i32) -> bool {
+    let dx = i64::from(pt.0 - origin.0);
+    let dy = i64::from(pt.1 - origin.1);
+    let threshold = i64::from(threshold);
+    dx * dx + dy * dy > threshold * threshold
+}
 
 /// Convert screen coordinates to the normalised absolute coordinate space
 /// used by [`SendInput`] with `MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK`.
@@ -2003,6 +2004,24 @@ mod tests {
             title: Some("Firefox".to_string()),
         };
         assert_eq!(match_app(&apps, &info), None);
+    }
+
+    #[test]
+    fn match_app_title_contains_non_ascii_case_insensitive() {
+        let apps = vec![CompiledApp {
+            id: "browser".to_string(),
+            matchers: vec![CompiledMatcher {
+                target: MatchTarget::Title,
+                logic: CompiledMatchLogic::Contains("i\u{307}stanbul".to_string()),
+            }],
+        }];
+
+        let info = ForegroundWindowInfo {
+            process_name: None,
+            window_class: None,
+            title: Some("İSTANBUL".to_string()),
+        };
+        assert_eq!(match_app(&apps, &info), Some("browser"));
     }
 
     #[test]

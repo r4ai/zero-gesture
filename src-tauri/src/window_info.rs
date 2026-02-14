@@ -33,7 +33,7 @@ pub fn get_foreground_window_info() -> ForegroundWindowInfo {
 /// All failures produce `None` for the corresponding field (no panics).
 #[cfg(windows)]
 pub fn get_window_info_by_hwnd(hwnd: windows_sys::Win32::Foundation::HWND) -> ForegroundWindowInfo {
-    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, SetLastError};
     use windows_sys::Win32::System::Threading::{
         OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
     };
@@ -60,7 +60,7 @@ pub fn get_window_info_by_hwnd(hwnd: windows_sys::Win32::Foundation::HWND) -> Fo
                     if ok != 0 && len > 0 {
                         let path = String::from_utf16_lossy(&buf[..len as usize]);
                         // Extract just the filename and lowercase it
-                        path.rsplit('\\').next().map(|s| s.to_ascii_lowercase())
+                        path.rsplit('\\').next().map(|s| s.to_lowercase())
                     } else {
                         None
                     }
@@ -85,15 +85,22 @@ pub fn get_window_info_by_hwnd(hwnd: windows_sys::Win32::Foundation::HWND) -> Fo
 
         // Get window title
         let title = {
+            // Distinguish "empty title" from Win32 API failure.
+            SetLastError(0);
             let text_len = GetWindowTextLengthW(hwnd);
             if text_len > 0 {
                 let mut buf = vec![0u16; (text_len + 1) as usize];
+                SetLastError(0);
                 let len = GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32);
                 if len > 0 {
                     Some(String::from_utf16_lossy(&buf[..len as usize]))
+                } else if GetLastError() == 0 {
+                    Some(String::new())
                 } else {
                     None
                 }
+            } else if GetLastError() == 0 {
+                Some(String::new())
             } else {
                 None
             }
