@@ -21,10 +21,10 @@ use crate::executor::Action;
 ///
 /// let binding = GestureBinding {
 ///     action: Action::Keyboard { keys: vec!["alt".into(), "left".into()] },
-///     label: Some("戻る".into()),
+///     label: Some("Back".into()),
 /// };
 /// let json = serde_json::to_string(&binding).unwrap();
-/// assert!(json.contains("\"label\":\"戻る\""));
+/// assert!(json.contains("\"label\":\"Back\""));
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GestureBinding {
@@ -54,8 +54,9 @@ const CONFIG_FILE_NAME: &str = "zero-gesture.config.json";
 /// assert_eq!(config.min_segment_px, 12);
 /// assert_eq!(config.direction_switch_confirm_px, 8);
 /// assert_eq!(config.axis_ambiguity_deadzone_px, 2);
-/// assert_eq!(config.label_font_family, "Yu Gothic UI Semibold");
+/// assert_eq!(config.label_font_family, "Segoe UI");
 /// assert_eq!(config.label_font_size, 36.0);
+
 /// assert_eq!(config.label_font_weight, 400);
 /// assert_eq!(config.label_padding, 24.0);
 /// ```
@@ -129,7 +130,7 @@ impl AppConfig {
     pub const DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX: i32 = 2;
 
     /// Default font family for the gesture label overlay.
-    pub const DEFAULT_LABEL_FONT_FAMILY: &str = "Yu Gothic UI Semibold";
+    pub const DEFAULT_LABEL_FONT_FAMILY: &str = "Segoe UI";
 
     /// Default font size (in pixels) for the gesture label overlay.
     pub const DEFAULT_LABEL_FONT_SIZE: f32 = 36.0;
@@ -149,7 +150,7 @@ impl AppConfig {
                     action: Action::Keyboard {
                         keys: vec!["alt".to_string(), "left".to_string()],
                     },
-                    label: Some("戻る".to_string()),
+                    label: Some("Back".to_string()),
                 },
             ),
             (
@@ -158,7 +159,7 @@ impl AppConfig {
                     action: Action::Keyboard {
                         keys: vec!["alt".to_string(), "right".to_string()],
                     },
-                    label: Some("進む".to_string()),
+                    label: Some("Forward".to_string()),
                 },
             ),
             (
@@ -167,7 +168,7 @@ impl AppConfig {
                     action: Action::Keyboard {
                         keys: vec!["pageup".to_string()],
                     },
-                    label: Some("上スクロール".to_string()),
+                    label: Some("Scroll Up".to_string()),
                 },
             ),
             (
@@ -176,7 +177,7 @@ impl AppConfig {
                     action: Action::Keyboard {
                         keys: vec!["pagedown".to_string()],
                     },
-                    label: Some("下スクロール".to_string()),
+                    label: Some("Scroll Down".to_string()),
                 },
             ),
             (
@@ -185,7 +186,7 @@ impl AppConfig {
                     action: Action::Keyboard {
                         keys: vec!["ctrl".to_string(), "home".to_string()],
                     },
-                    label: Some("ページ先頭".to_string()),
+                    label: Some("Top of Page".to_string()),
                 },
             ),
             (
@@ -194,7 +195,7 @@ impl AppConfig {
                     action: Action::Keyboard {
                         keys: vec!["ctrl".to_string(), "end".to_string()],
                     },
-                    label: Some("ページ末尾".to_string()),
+                    label: Some("Bottom of Page".to_string()),
                 },
             ),
             (
@@ -203,7 +204,7 @@ impl AppConfig {
                     action: Action::Keyboard {
                         keys: vec!["ctrl".to_string(), "tab".to_string()],
                     },
-                    label: Some("右のタブへ移動".to_string()),
+                    label: Some("Next Tab".to_string()),
                 },
             ),
             (
@@ -212,7 +213,7 @@ impl AppConfig {
                     action: Action::Keyboard {
                         keys: vec!["ctrl".to_string(), "shift".to_string(), "tab".to_string()],
                     },
-                    label: Some("左のタブへ移動".to_string()),
+                    label: Some("Previous Tab".to_string()),
                 },
             ),
             (
@@ -221,7 +222,7 @@ impl AppConfig {
                     action: Action::Keyboard {
                         keys: vec!["ctrl".to_string(), "r".to_string()],
                     },
-                    label: Some("再読み込み".to_string()),
+                    label: Some("Reload".to_string()),
                 },
             ),
             (
@@ -230,7 +231,7 @@ impl AppConfig {
                     action: Action::Keyboard {
                         keys: vec!["ctrl".to_string(), "w".to_string()],
                     },
-                    label: Some("タブを閉じる".to_string()),
+                    label: Some("Close Tab".to_string()),
                 },
             ),
         ])
@@ -390,7 +391,7 @@ mod tests {
             "trail_thickness": 3.0,
             "bindings": {
                 "Left": { "type": "keyboard", "keys": ["alt", "left"] },
-                "Right": { "type": "keyboard", "keys": ["alt", "right"], "label": "進む" },
+                "Right": { "type": "keyboard", "keys": ["alt", "right"], "label": "Forward" },
                 "Down": { "type": "keyboard", "keys": ["ctrl", "w"] }
             }
         }"##;
@@ -403,7 +404,7 @@ mod tests {
         // Without label
         assert_eq!(cfg.bindings["Left"].label, None);
         // With label
-        assert_eq!(cfg.bindings["Right"].label, Some("進む".to_string()));
+        assert_eq!(cfg.bindings["Right"].label, Some("Forward".to_string()));
     }
 
     #[test]
