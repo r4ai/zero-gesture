@@ -1187,16 +1187,29 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
     let tick = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount() };
     let pt = (info.pt.x, info.pt.y);
 
-    // Detect the foreground window when transitioning from ButtonDown to
-    // Gesturing (i.e. on the first MouseMove that exceeds the threshold).
-    // This ensures window detection happens at most once per gesture.
-    let matched_app =
-        if matches!(hs.state, GestureState::ButtonDown { .. }) && event == MouseEvent::MouseMove {
+    // Detect the foreground window only when the move exceeds the gesture
+    // threshold (i.e. right before ButtonDown → Gesturing transition).
+    // This avoids calling Win32 APIs on every sub-threshold mouse move.
+    let matched_app = if let (
+        GestureState::ButtonDown {
+            origin_x, origin_y, ..
+        },
+        MouseEvent::MouseMove,
+    ) = (&hs.state, event)
+    {
+        let dx = pt.0 - origin_x;
+        let dy = pt.1 - origin_y;
+        let dist2 = (dx as i64) * (dx as i64) + (dy as i64) * (dy as i64);
+        let threshold = hs.config.gesture_threshold as i64;
+        if dist2 >= threshold * threshold {
             let window_info = crate::window_info::get_foreground_window_info();
             match_app(&hs.config.apps, &window_info).map(|s| s.to_owned())
         } else {
             None
-        };
+        }
+    } else {
+        None
+    };
 
     let effect = process_event_pure(&mut hs.state, &hs.config, event, pt, tick, matched_app);
 
