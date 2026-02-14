@@ -27,7 +27,7 @@ pub enum Action {
 /// - Modifier keys: `ctrl`, `alt`, `shift`, `win`
 /// - Navigation: `left`, `right`, `up`, `down`, `tab`, `enter`, `escape`,
 ///   `backspace`, `delete`, `home`, `end`, `pageup`, `pagedown`
-/// - Function keys: `f1` – `f12`
+/// - Function keys: `f1` – `f24`
 /// - Single characters: `a`–`z`, `0`–`9`
 ///
 /// Returns `None` for unrecognised names.
@@ -36,7 +36,21 @@ pub fn parse_key(name: &str) -> Option<u16> {
     {
         use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
 
-        match name.to_ascii_lowercase().as_str() {
+        let lower = name.to_ascii_lowercase();
+        let lower = lower.as_str();
+
+        if let Some(function_number) = lower.strip_prefix('f') {
+            if !function_number.is_empty() && function_number.bytes().all(|ch| ch.is_ascii_digit())
+            {
+                let function_number = function_number.parse::<u16>().ok()?;
+                if (1..=24).contains(&function_number) {
+                    return Some(VK_F1 + (function_number - 1));
+                }
+                return None;
+            }
+        }
+
+        match lower {
             // Modifiers
             "ctrl" | "control" => Some(VK_CONTROL),
             "alt" | "menu" => Some(VK_MENU),
@@ -58,20 +72,6 @@ pub fn parse_key(name: &str) -> Option<u16> {
             "pageup" | "pgup" => Some(VK_PRIOR),
             "pagedown" | "pgdn" => Some(VK_NEXT),
             "space" => Some(VK_SPACE),
-
-            // Function keys
-            "f1" => Some(VK_F1),
-            "f2" => Some(VK_F2),
-            "f3" => Some(VK_F3),
-            "f4" => Some(VK_F4),
-            "f5" => Some(VK_F5),
-            "f6" => Some(VK_F6),
-            "f7" => Some(VK_F7),
-            "f8" => Some(VK_F8),
-            "f9" => Some(VK_F9),
-            "f10" => Some(VK_F10),
-            "f11" => Some(VK_F11),
-            "f12" => Some(VK_F12),
 
             // Single character keys (a-z → VK 0x41..0x5A, 0-9 → VK 0x30..0x39)
             s if s.len() == 1 => {
@@ -290,6 +290,7 @@ mod tests {
     #[cfg(windows)]
     mod windows_tests {
         use super::*;
+        use windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_F1;
 
         #[test]
         fn parse_key_modifiers() {
@@ -312,10 +313,25 @@ mod tests {
 
         #[test]
         fn parse_key_function_keys() {
-            for i in 1..=12 {
+            for i in 1..=24 {
                 assert!(
                     parse_key(&format!("f{i}")).is_some(),
                     "f{i} should be recognised"
+                );
+            }
+            assert!(parse_key("f0").is_none());
+            assert!(parse_key("f25").is_none());
+        }
+
+        #[test]
+        fn parse_key_function_keys_use_contiguous_vk_codes() {
+            for i in 1..=24_u16 {
+                let key = format!("f{i}");
+                assert_eq!(
+                    parse_key(&key),
+                    Some(VK_F1 + (i - 1)),
+                    "{key} should map to VK_F1 + {}",
+                    i - 1
                 );
             }
         }
