@@ -151,7 +151,8 @@ thread_local! {
 /// 1. Gets the current thread ID for message posting.
 /// 2. Spawns a bridge thread that reads [`OverlayCommand`] from the crossbeam
 ///    channel and posts corresponding `WM_APP+N` messages.
-/// 3. Registers a window class and creates a full-screen layered window.
+/// 3. Registers a window class and creates a near-fullscreen layered window
+///    (with a tiny inset to avoid exact-fullscreen shell classification).
 /// 4. Creates a renderer and stores state in thread-local [`OVERLAY_STATE`].
 /// 5. Runs the Win32 message loop until `WM_QUIT`.
 /// 6. Cleans up: renderer resources, destroys window, unregisters class,
@@ -244,10 +245,12 @@ pub(super) fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<Overlay
         let vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
         let vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
 
-        // Intentionally avoid WS_EX_TOPMOST here.
+        // Intentionally avoid persistent WS_EX_TOPMOST style here.
         //
-        // The overlay is only a visual aid; it must not "own" global top-most
-        // order because that can disturb taskbar z-order and shell heuristics.
+        // The overlay is only a visual aid; a permanently top-most, borderless
+        // fullscreen-ish window can disturb taskbar z-order and shell heuristics.
+        // We instead raise it transiently with SetWindowPos(HWND_TOPMOST, ...)
+        // only while a gesture is active, and drop it on gesture end.
         // We still keep:
         // - WS_EX_NOACTIVATE: never steal keyboard focus.
         // - WS_EX_TRANSPARENT: pass mouse through.
@@ -333,8 +336,8 @@ pub(super) fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<Overlay
             // Continue without label support — trail overlay still works.
         }
 
-        // Same policy as the trail window: non-activating overlay UI that does
-        // not enforce global top-most ownership.
+        // Same policy as the trail window: no persistent top-most style.
+        // Label visibility is raised/lowered transiently during gesture display.
         let label_ex_style =
             WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
 

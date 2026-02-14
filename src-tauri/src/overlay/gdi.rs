@@ -27,7 +27,7 @@ pub(super) struct GdiRenderer {
 }
 
 impl GdiRenderer {
-    /// Create a new GDI renderer with a full-screen back buffer.
+    /// Create a new GDI renderer with a window-sized back buffer.
     ///
     /// `hwnd` is the overlay window; `vw`/`vh` are the virtual-screen
     /// dimensions in pixels.
