@@ -32,7 +32,9 @@ pub fn get_foreground_window_info() -> ForegroundWindowInfo {
 ///
 /// All failures produce `None` for the corresponding field (no panics).
 #[cfg(windows)]
-pub fn get_window_info_by_hwnd(hwnd: windows_sys::Win32::Foundation::HWND) -> ForegroundWindowInfo {
+pub(crate) fn get_window_info_by_hwnd(
+    hwnd: windows_sys::Win32::Foundation::HWND,
+) -> ForegroundWindowInfo {
     use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, SetLastError};
     use windows_sys::Win32::System::Threading::{
         OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
