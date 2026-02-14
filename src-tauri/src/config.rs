@@ -197,6 +197,42 @@ impl AppConfig {
                     label: Some("ページ末尾".to_string()),
                 },
             ),
+            (
+                "UpRight".to_string(),
+                GestureBinding {
+                    action: Action::Keyboard {
+                        keys: vec!["ctrl".to_string(), "tab".to_string()],
+                    },
+                    label: Some("右のタブへ移動".to_string()),
+                },
+            ),
+            (
+                "UpLeft".to_string(),
+                GestureBinding {
+                    action: Action::Keyboard {
+                        keys: vec!["ctrl".to_string(), "shift".to_string(), "tab".to_string()],
+                    },
+                    label: Some("左のタブへ移動".to_string()),
+                },
+            ),
+            (
+                "RightDown".to_string(),
+                GestureBinding {
+                    action: Action::Keyboard {
+                        keys: vec!["ctrl".to_string(), "r".to_string()],
+                    },
+                    label: Some("再読み込み".to_string()),
+                },
+            ),
+            (
+                "DownRight".to_string(),
+                GestureBinding {
+                    action: Action::Keyboard {
+                        keys: vec!["ctrl".to_string(), "w".to_string()],
+                    },
+                    label: Some("タブを閉じる".to_string()),
+                },
+            ),
         ])
     }
 }
@@ -293,13 +329,17 @@ mod tests {
         assert_eq!(cfg.label_font_size, AppConfig::DEFAULT_LABEL_FONT_SIZE);
         assert_eq!(cfg.label_font_weight, AppConfig::DEFAULT_LABEL_FONT_WEIGHT);
         assert_eq!(cfg.label_padding, AppConfig::DEFAULT_LABEL_PADDING);
-        assert_eq!(cfg.bindings.len(), 6);
+        assert_eq!(cfg.bindings.len(), 10);
         assert!(cfg.bindings.contains_key("Left"));
         assert!(cfg.bindings.contains_key("Right"));
         assert!(cfg.bindings.contains_key("Up"));
         assert!(cfg.bindings.contains_key("Down"));
         assert!(cfg.bindings.contains_key("DownUp"));
         assert!(cfg.bindings.contains_key("UpDown"));
+        assert!(cfg.bindings.contains_key("UpRight"));
+        assert!(cfg.bindings.contains_key("UpLeft"));
+        assert!(cfg.bindings.contains_key("RightDown"));
+        assert!(cfg.bindings.contains_key("DownRight"));
     }
 
     #[test]
@@ -329,13 +369,17 @@ mod tests {
         assert_eq!(cfg.label_font_size, AppConfig::DEFAULT_LABEL_FONT_SIZE);
         assert_eq!(cfg.label_font_weight, AppConfig::DEFAULT_LABEL_FONT_WEIGHT);
         assert_eq!(cfg.label_padding, AppConfig::DEFAULT_LABEL_PADDING);
-        assert_eq!(cfg.bindings.len(), 6);
+        assert_eq!(cfg.bindings.len(), 10);
         assert!(cfg.bindings.contains_key("Left"));
         assert!(cfg.bindings.contains_key("Right"));
         assert!(cfg.bindings.contains_key("Up"));
         assert!(cfg.bindings.contains_key("Down"));
         assert!(cfg.bindings.contains_key("DownUp"));
         assert!(cfg.bindings.contains_key("UpDown"));
+        assert!(cfg.bindings.contains_key("UpRight"));
+        assert!(cfg.bindings.contains_key("UpLeft"));
+        assert!(cfg.bindings.contains_key("RightDown"));
+        assert!(cfg.bindings.contains_key("DownRight"));
     }
 
     #[test]
@@ -388,13 +432,17 @@ mod tests {
     fn deserialize_legacy_json_gets_default_bindings() {
         let raw = r##"{ "gesture_trigger_button": "right" }"##;
         let cfg: AppConfig = serde_json::from_str(raw).expect("legacy JSON must parse");
-        assert_eq!(cfg.bindings.len(), 6);
+        assert_eq!(cfg.bindings.len(), 10);
         assert!(cfg.bindings.contains_key("Left"));
         assert!(cfg.bindings.contains_key("Right"));
         assert!(cfg.bindings.contains_key("Up"));
         assert!(cfg.bindings.contains_key("Down"));
         assert!(cfg.bindings.contains_key("DownUp"));
         assert!(cfg.bindings.contains_key("UpDown"));
+        assert!(cfg.bindings.contains_key("UpRight"));
+        assert!(cfg.bindings.contains_key("UpLeft"));
+        assert!(cfg.bindings.contains_key("RightDown"));
+        assert!(cfg.bindings.contains_key("DownRight"));
     }
 
     #[test]
