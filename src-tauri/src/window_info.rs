@@ -20,17 +20,28 @@ pub struct ForegroundWindowInfo {
 /// `None` for the corresponding field (no panics).
 #[cfg(windows)]
 pub fn get_foreground_window_info() -> ForegroundWindowInfo {
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        get_window_info_by_hwnd(hwnd)
+    }
+}
+
+/// Retrieves information about the specified window handle.
+///
+/// All failures produce `None` for the corresponding field (no panics).
+#[cfg(windows)]
+pub fn get_window_info_by_hwnd(hwnd: windows_sys::Win32::Foundation::HWND) -> ForegroundWindowInfo {
     use windows_sys::Win32::Foundation::CloseHandle;
     use windows_sys::Win32::System::Threading::{
         OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetClassNameW, GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW,
-        GetWindowThreadProcessId,
+        GetClassNameW, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
     };
 
     unsafe {
-        let hwnd = GetForegroundWindow();
         if hwnd.is_null() {
             return ForegroundWindowInfo::default();
         }

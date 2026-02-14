@@ -1201,9 +1201,10 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
     let tick = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount() };
     let pt = (info.pt.x, info.pt.y);
 
-    // Detect the foreground window only when the move exceeds the gesture
-    // threshold (i.e. right before ButtonDown → Gesturing transition).
-    // This avoids calling Win32 APIs on every sub-threshold mouse move.
+    // On ButtonDown -> Gesturing transition, activate the window at the
+    // gesture origin first, then read window info from the activated target
+    // handle (falling back to foreground lookup only if no target exists).
+    let mut activated_before_processing = false;
     let matched_app = if let (
         GestureState::ButtonDown {
             origin_x, origin_y, ..
@@ -1215,9 +1216,15 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
         let dy = pt.1 - origin_y;
         let dist2 = (dx as i64) * (dx as i64) + (dy as i64) * (dy as i64);
         let threshold = hs.config.gesture_threshold as i64;
-        if dist2 >= threshold * threshold {
-            let window_info = crate::window_info::get_foreground_window_info();
-            debug!("foreground window info: {:?}", window_info);
+        if dist2 > threshold * threshold {
+            let activated_target = activate_window_at_point(*origin_x, *origin_y);
+            activated_before_processing = activated_target.is_some();
+            let window_info = if let Some(hwnd) = activated_target {
+                crate::window_info::get_window_info_by_hwnd(hwnd)
+            } else {
+                crate::window_info::get_foreground_window_info()
+            };
+            debug!("window info: {:?}", window_info);
             match_app(&hs.config.apps, &window_info).map(|s| s.to_owned())
         } else {
             None
@@ -1229,7 +1236,9 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
     let effect = process_event_pure(&mut hs.state, &hs.config, event, pt, tick, matched_app);
 
     if let Some((x, y)) = effect.activate_window_at {
-        activate_window_at_point(x, y);
+        if !activated_before_processing {
+            let _ = activate_window_at_point(x, y);
+        }
     }
 
     for cmd in effect.overlay_commands {
@@ -1495,7 +1504,7 @@ fn make_mouse_input(x: i32, y: i32, flags: u32) -> INPUT {
 /// [`GetAncestor`]: windows_sys::Win32::UI::WindowsAndMessaging::GetAncestor
 /// [`SetForegroundWindow`]: windows_sys::Win32::UI::WindowsAndMessaging::SetForegroundWindow
 #[cfg(windows)]
-fn activate_window_at_point(x: i32, y: i32) {
+fn activate_window_at_point(x: i32, y: i32) -> Option<windows_sys::Win32::Foundation::HWND> {
     use windows_sys::Win32::Foundation::POINT;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         GetAncestor, SetForegroundWindow, WindowFromPoint, GA_ROOT,
@@ -1505,14 +1514,15 @@ fn activate_window_at_point(x: i32, y: i32) {
         let hwnd = WindowFromPoint(POINT { x, y });
         if hwnd.is_null() {
             debug!("activate_window_at_point: no window at ({x}, {y})");
-            return;
+            return None;
         }
 
         let root = GetAncestor(hwnd, GA_ROOT);
         let target = if root.is_null() { hwnd } else { root };
 
         debug!("activate_window_at_point: activating window {target:?} at ({x}, {y})");
-        SetForegroundWindow(target);
+        let _ = SetForegroundWindow(target);
+        Some(target)
     }
 }
 
