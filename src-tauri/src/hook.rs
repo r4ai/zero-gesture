@@ -90,8 +90,8 @@ use std::thread::{self, JoinHandle};
 use crossbeam_channel::{Receiver, Sender};
 use log::{debug, error, info, trace, warn};
 
-use crate::config::AppConfig;
-use crate::executor::{self, Action};
+use crate::config::{AppConfig, GestureBinding};
+use crate::executor::{self, generate_label, Action};
 use crate::gesture::{GestureKind, GestureRecognizer};
 use crate::overlay::OverlayCommand;
 use crate::SharedConfig;
@@ -322,6 +322,11 @@ struct HookConfig {
     /// startup so that the hot-path hook callback only needs a `HashMap`
     /// lookup.
     bindings: HashMap<GestureKind, Action>,
+    /// Pre-resolved label text for each gesture binding.
+    ///
+    /// If the binding has an explicit `label`, that is used; otherwise
+    /// [`generate_label`] produces a label from the action's key names.
+    labels: HashMap<GestureKind, String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -367,6 +372,8 @@ enum GestureState {
         entered_tick: u32,
         /// Recognizer for converting mouse movement into gesture patterns.
         recognizer: GestureRecognizer,
+        /// Last gesture recognized during this gesture session (for change detection).
+        last_recognized: Option<GestureKind>,
     },
 }
 
@@ -494,8 +501,8 @@ impl<const N: usize> Drop for OverlayCommandsIntoIter<N> {
 struct EventEffect {
     /// Whether the event should be suppressed (swallowed by the hook).
     suppress: bool,
-    /// Overlay commands to send (stack-allocated, max 3).
-    overlay_commands: OverlayCommands<3>,
+    /// Overlay commands to send (stack-allocated, max 4).
+    overlay_commands: OverlayCommands<4>,
     /// If set, a click should be replayed at these screen coordinates.
     request_replay: Option<(i32, i32)>,
     /// If set, the given action should be executed.
@@ -595,15 +602,31 @@ pub fn spawn(
         let cfg = shared_config.0.read().unwrap();
 
         // Parse string keys into GestureKind at startup (not in the hot path).
-        let bindings: HashMap<GestureKind, Action> = cfg
+        let parsed: Vec<(GestureKind, &GestureBinding)> = cfg
             .bindings
             .iter()
-            .filter_map(|(name, action)| {
+            .filter_map(|(name, binding)| {
                 let kind = parse_gesture_kind(name);
                 if kind.is_none() {
                     warn!("Unknown gesture name in bindings: {:?}", name);
                 }
-                kind.map(|k| (k, action.clone()))
+                kind.map(|k| (k, binding))
+            })
+            .collect();
+
+        let bindings: HashMap<GestureKind, Action> = parsed
+            .iter()
+            .map(|(k, b)| (*k, b.action.clone()))
+            .collect();
+
+        let labels: HashMap<GestureKind, String> = parsed
+            .iter()
+            .map(|(k, b)| {
+                let label = b
+                    .label
+                    .clone()
+                    .unwrap_or_else(|| generate_label(&b.action));
+                (*k, label)
             })
             .collect();
 
@@ -623,6 +646,7 @@ pub fn spawn(
                 cfg.axis_ambiguity_deadzone_px,
             ),
             bindings,
+            labels,
         }
     };
 
@@ -897,9 +921,18 @@ fn process_event_pure(
                     );
                     recognizer.add_point(ox, oy);
                     recognizer.add_point(pt.0, pt.1);
+                    let initial_gesture = recognizer.recognize();
+                    let label = initial_gesture
+                        .as_ref()
+                        .and_then(|k| config.labels.get(k))
+                        .cloned();
+                    effect
+                        .overlay_commands
+                        .push(OverlayCommand::UpdateLabel(label));
                     *state = GestureState::Gesturing {
                         entered_tick: tick,
                         recognizer,
+                        last_recognized: initial_gesture,
                     };
                 }
                 // never suppress mouse move
@@ -910,13 +943,28 @@ fn process_event_pure(
                 *state = GestureState::Idle;
             }
         }
-        GestureState::Gesturing { recognizer, .. } => {
+        GestureState::Gesturing {
+            recognizer,
+            last_recognized,
+            ..
+        } => {
             if event == MouseEvent::MouseMove {
                 trace!("Gesturing → Gesturing at ({}, {})", pt.0, pt.1);
                 recognizer.add_point(pt.0, pt.1);
                 effect
                     .overlay_commands
                     .push(OverlayCommand::TrackPoint { x: pt.0, y: pt.1 });
+                let current_gesture = recognizer.recognize();
+                if current_gesture != *last_recognized {
+                    let label = current_gesture
+                        .as_ref()
+                        .and_then(|k| config.labels.get(k))
+                        .cloned();
+                    effect
+                        .overlay_commands
+                        .push(OverlayCommand::UpdateLabel(label));
+                    *last_recognized = current_gesture;
+                }
                 // never suppress mouse move
             } else if event == MouseEvent::TriggerUp {
                 debug!("Gesturing → Idle (end gesture)");
@@ -1215,6 +1263,7 @@ mod tests {
             direction_switch_confirm_px: 8,
             axis_ambiguity_deadzone_px: 2,
             bindings: HashMap::new(),
+            labels: HashMap::new(),
         }
     }
 
@@ -1284,8 +1333,8 @@ mod tests {
 
         assert!(!effect.suppress, "mouse move is never suppressed");
         assert!(effect.request_replay.is_none());
-        // Should have StartGesture + 2 TrackPoints
-        assert_eq!(effect.overlay_commands.len(), 3);
+        // Should have StartGesture + 2 TrackPoints + UpdateLabel
+        assert_eq!(effect.overlay_commands.len(), 4);
         assert!(matches!(
             effect.overlay_commands[0],
             OverlayCommand::StartGesture
@@ -1297,6 +1346,10 @@ mod tests {
         assert!(matches!(
             effect.overlay_commands[2],
             OverlayCommand::TrackPoint { x: 120, y: 200 }
+        ));
+        assert!(matches!(
+            effect.overlay_commands[3],
+            OverlayCommand::UpdateLabel(_)
         ));
         assert!(matches!(state, GestureState::Gesturing { .. }));
     }
@@ -1323,6 +1376,7 @@ mod tests {
         let mut state = GestureState::Gesturing {
             entered_tick: 1000,
             recognizer: GestureRecognizer::new(12, 8, 2),
+            last_recognized: None,
         };
         let config = test_config();
 
@@ -1345,6 +1399,7 @@ mod tests {
         let mut state = GestureState::Gesturing {
             entered_tick: 1000,
             recognizer: GestureRecognizer::new(12, 8, 2),
+            last_recognized: None,
         };
         let config = test_config();
 
@@ -1383,6 +1438,7 @@ mod tests {
         let mut state = GestureState::Gesturing {
             entered_tick: 100,
             recognizer: GestureRecognizer::new(12, 8, 2),
+            last_recognized: None,
         };
         let effect =
             process_event_pure(&mut state, &config, MouseEvent::MouseMove, (150, 250), 110);
@@ -1445,6 +1501,7 @@ mod tests {
         let state = GestureState::Gesturing {
             entered_tick: 1000,
             recognizer: GestureRecognizer::new(12, 8, 2),
+            last_recognized: None,
         };
         assert!(check_safety_timeout(&state, 4000, 2000));
     }
@@ -1470,6 +1527,9 @@ mod tests {
         };
         bindings.insert(GestureKind::Left, action.clone());
 
+        let mut labels = HashMap::new();
+        labels.insert(GestureKind::Left, "戻る".to_string());
+
         let config = HookConfig {
             trigger: TriggerButton::Right,
             gesture_threshold: 10,
@@ -1478,6 +1538,7 @@ mod tests {
             direction_switch_confirm_px: 8,
             axis_ambiguity_deadzone_px: 2,
             bindings,
+            labels,
         };
 
         // Build a recognizer and feed it a clear leftward gesture
@@ -1490,6 +1551,7 @@ mod tests {
         let mut state = GestureState::Gesturing {
             entered_tick: 1000,
             recognizer,
+            last_recognized: Some(GestureKind::Left),
         };
 
         // Trigger up at far-left point to finalize the gesture

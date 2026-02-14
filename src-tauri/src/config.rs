@@ -7,6 +7,33 @@ use serde::{Deserialize, Serialize};
 
 use crate::executor::Action;
 
+/// A gesture-to-action binding with an optional human-readable label.
+///
+/// When serialized, the `action` fields are flattened into the same JSON object
+/// so that existing configs (`{ "type": "keyboard", "keys": [...] }`) remain
+/// compatible. An optional `label` field can be added for display purposes.
+///
+/// # Examples
+///
+/// ```
+/// use zero_gesture_lib::config::GestureBinding;
+/// use zero_gesture_lib::executor::Action;
+///
+/// let binding = GestureBinding {
+///     action: Action::Keyboard { keys: vec!["alt".into(), "left".into()] },
+///     label: Some("戻る".into()),
+/// };
+/// let json = serde_json::to_string(&binding).unwrap();
+/// assert!(json.contains("\"label\":\"戻る\""));
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GestureBinding {
+    #[serde(flatten)]
+    pub action: Action,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
 /// Configuration file name placed in the working directory.
 const CONFIG_FILE_NAME: &str = "zero-gesture.config.json";
 
@@ -66,7 +93,7 @@ pub struct AppConfig {
     ///
     /// Keys are `GestureKind` variant names (e.g. `"Left"`, `"DownRight"`),
     /// values are the action to execute when that gesture is recognised.
-    pub bindings: HashMap<String, Action>,
+    pub bindings: HashMap<String, GestureBinding>,
 }
 
 impl AppConfig {
@@ -86,42 +113,60 @@ impl AppConfig {
     pub const DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX: i32 = 2;
 
     /// Default gesture-to-action bindings.
-    fn default_bindings() -> HashMap<String, Action> {
+    fn default_bindings() -> HashMap<String, GestureBinding> {
         HashMap::from([
             (
                 "Left".to_string(),
-                Action::Keyboard {
-                    keys: vec!["alt".to_string(), "left".to_string()],
+                GestureBinding {
+                    action: Action::Keyboard {
+                        keys: vec!["alt".to_string(), "left".to_string()],
+                    },
+                    label: Some("戻る".to_string()),
                 },
             ),
             (
                 "Right".to_string(),
-                Action::Keyboard {
-                    keys: vec!["alt".to_string(), "right".to_string()],
+                GestureBinding {
+                    action: Action::Keyboard {
+                        keys: vec!["alt".to_string(), "right".to_string()],
+                    },
+                    label: Some("進む".to_string()),
                 },
             ),
             (
                 "Up".to_string(),
-                Action::Keyboard {
-                    keys: vec!["pageup".to_string()],
+                GestureBinding {
+                    action: Action::Keyboard {
+                        keys: vec!["pageup".to_string()],
+                    },
+                    label: Some("上スクロール".to_string()),
                 },
             ),
             (
                 "Down".to_string(),
-                Action::Keyboard {
-                    keys: vec!["pagedown".to_string()],
+                GestureBinding {
+                    action: Action::Keyboard {
+                        keys: vec!["pagedown".to_string()],
+                    },
+                    label: Some("下スクロール".to_string()),
                 },
             ),
             (
                 "DownUp".to_string(),
-                Action::Keyboard {
-                    keys: vec!["ctrl".to_string(), "home".to_string()],
+                GestureBinding {
+                    action: Action::Keyboard {
+                        keys: vec!["ctrl".to_string(), "home".to_string()],
+                    },
+                    label: Some("ページ先頭".to_string()),
                 },
             ),
             (
                 "UpDown".to_string(),
-                Action::Keyboard {
-                    keys: vec!["ctrl".to_string(), "end".to_string()],
+                GestureBinding {
+                    action: Action::Keyboard {
+                        keys: vec!["ctrl".to_string(), "end".to_string()],
+                    },
+                    label: Some("ページ末尾".to_string()),
                 },
             ),
         ])
@@ -260,7 +305,7 @@ mod tests {
             "trail_thickness": 3.0,
             "bindings": {
                 "Left": { "type": "keyboard", "keys": ["alt", "left"] },
-                "Right": { "type": "keyboard", "keys": ["alt", "right"] },
+                "Right": { "type": "keyboard", "keys": ["alt", "right"], "label": "進む" },
                 "Down": { "type": "keyboard", "keys": ["ctrl", "w"] }
             }
         }"##;
@@ -270,6 +315,10 @@ mod tests {
         assert!(cfg.bindings.contains_key("Left"));
         assert!(cfg.bindings.contains_key("Right"));
         assert!(cfg.bindings.contains_key("Down"));
+        // Without label
+        assert_eq!(cfg.bindings["Left"].label, None);
+        // With label
+        assert_eq!(cfg.bindings["Right"].label, Some("進む".to_string()));
     }
 
     #[test]
