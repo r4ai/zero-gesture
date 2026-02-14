@@ -4,3 +4,7 @@ pre-commit:
       glob: "*.{js,ts,cjs,mjs,d.cts,d.mts,jsx,tsx,json,jsonc}"
       run: pnpx @biomejs/biome check --write --no-errors-on-unmatched --files-ignore-unknown=true --colors=off {staged_files}
       stage_fixed: true
+    rust-format:
+      glob: "*.rs"
+      run: cargo fmt --manifest-path src-tauri/Cargo.toml --all
+      stage_fixed: true
