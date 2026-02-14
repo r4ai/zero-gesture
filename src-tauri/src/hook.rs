@@ -614,9 +614,6 @@ struct EventEffect {
     request_replay: Option<(i32, i32)>,
     /// If set, the given action should be executed.
     request_execute: Option<Action>,
-    /// If set, the window at these screen coordinates should be activated
-    /// (brought to the foreground).
-    activate_window_at: Option<(i32, i32)>,
 }
 
 /// Info needed to replay a suppressed click via [`SendInput`].
@@ -1052,7 +1049,6 @@ fn process_event_pure(
         overlay_commands: OverlayCommands::new(),
         request_replay: None,
         request_execute: None,
-        activate_window_at: None,
     };
 
     match state {
@@ -1074,7 +1070,6 @@ fn process_event_pure(
             if event == MouseEvent::MouseMove {
                 if exceeds_gesture_threshold((ox, oy), pt, config.gesture_threshold) {
                     debug!("ButtonDown → Gesturing (app={:?})", matched_app);
-                    effect.activate_window_at = Some((ox, oy));
                     effect.overlay_commands.push(OverlayCommand::StartGesture);
                     effect
                         .overlay_commands
@@ -1200,7 +1195,6 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
     // On ButtonDown -> Gesturing transition, activate the window at the
     // gesture origin first, then read window info from the activated target
     // handle (falling back to foreground lookup only if no target exists).
-    let mut activated_before_processing = false;
     let matched_app = if let (
         GestureState::ButtonDown {
             origin_x, origin_y, ..
@@ -1210,7 +1204,6 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
     {
         if exceeds_gesture_threshold((*origin_x, *origin_y), pt, hs.config.gesture_threshold) {
             let activated_target = activate_window_at_point(*origin_x, *origin_y);
-            activated_before_processing = activated_target.is_some();
             let window_info = if let Some(hwnd) = activated_target {
                 crate::window_info::get_window_info_by_hwnd(hwnd)
             } else {
@@ -1226,12 +1219,6 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
     };
 
     let effect = process_event_pure(&mut hs.state, &hs.config, event, pt, tick, matched_app);
-
-    if let Some((x, y)) = effect.activate_window_at {
-        if !activated_before_processing {
-            let _ = activate_window_at_point(x, y);
-        }
-    }
 
     for cmd in effect.overlay_commands {
         let _ = hs.overlay_tx.send(cmd);
@@ -1567,7 +1554,6 @@ mod tests {
         assert!(effect.overlay_commands.is_empty());
         assert!(effect.request_replay.is_none());
         assert!(effect.request_execute.is_none());
-        assert!(effect.activate_window_at.is_none());
         assert!(
             matches!(
                 state,
@@ -1647,11 +1633,6 @@ mod tests {
             effect.overlay_commands[3],
             OverlayCommand::UpdateLabel(_)
         ));
-        assert_eq!(
-            effect.activate_window_at,
-            Some((100, 200)),
-            "should activate window at origin when gesture starts"
-        );
         assert!(matches!(state, GestureState::Gesturing { .. }));
     }
 
