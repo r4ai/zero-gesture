@@ -1573,7 +1573,7 @@ mod tests {
         bindings.insert(GestureKind::Left, action.clone());
 
         let mut labels = HashMap::new();
-        labels.insert(GestureKind::Left, "戻る".to_string());
+        labels.insert(GestureKind::Left, "Back".to_string());
 
         let config = HookConfig {
             trigger: TriggerButton::Right,
