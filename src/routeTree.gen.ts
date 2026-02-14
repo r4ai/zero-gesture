@@ -9,68 +9,133 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as AboutRouteImport } from './routes/about'
-import { Route as IndexRouteImport } from './routes/index'
+import { Route as StyleIndexRouteImport } from './routes/style/index'
+import { Route as GeneralIndexRouteImport } from './routes/general/index'
+import { Route as BindingsIndexRouteImport } from './routes/bindings/index'
+import { Route as ApplicationsIndexRouteImport } from './routes/applications/index'
+import { Route as AdvancedIndexRouteImport } from './routes/advanced/index'
 
-const AboutRoute = AboutRouteImport.update({
-  id: '/about',
-  path: '/about',
+const StyleIndexRoute = StyleIndexRouteImport.update({
+  id: '/style/',
+  path: '/style/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const GeneralIndexRoute = GeneralIndexRouteImport.update({
+  id: '/general/',
+  path: '/general/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BindingsIndexRoute = BindingsIndexRouteImport.update({
+  id: '/bindings/',
+  path: '/bindings/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApplicationsIndexRoute = ApplicationsIndexRouteImport.update({
+  id: '/applications/',
+  path: '/applications/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdvancedIndexRoute = AdvancedIndexRouteImport.update({
+  id: '/advanced/',
+  path: '/advanced/',
   getParentRoute: () => rootRouteImport,
 } as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
-  '/about': typeof AboutRoute
+  '/advanced/': typeof AdvancedIndexRoute
+  '/applications/': typeof ApplicationsIndexRoute
+  '/bindings/': typeof BindingsIndexRoute
+  '/general/': typeof GeneralIndexRoute
+  '/style/': typeof StyleIndexRoute
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
-  '/about': typeof AboutRoute
+  '/advanced': typeof AdvancedIndexRoute
+  '/applications': typeof ApplicationsIndexRoute
+  '/bindings': typeof BindingsIndexRoute
+  '/general': typeof GeneralIndexRoute
+  '/style': typeof StyleIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
-  '/about': typeof AboutRoute
+  '/advanced/': typeof AdvancedIndexRoute
+  '/applications/': typeof ApplicationsIndexRoute
+  '/bindings/': typeof BindingsIndexRoute
+  '/general/': typeof GeneralIndexRoute
+  '/style/': typeof StyleIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/about'
+  fullPaths:
+    | '/advanced/'
+    | '/applications/'
+    | '/bindings/'
+    | '/general/'
+    | '/style/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/about'
-  id: '__root__' | '/' | '/about'
+  to: '/advanced' | '/applications' | '/bindings' | '/general' | '/style'
+  id:
+    | '__root__'
+    | '/advanced/'
+    | '/applications/'
+    | '/bindings/'
+    | '/general/'
+    | '/style/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
-  AboutRoute: typeof AboutRoute
+  AdvancedIndexRoute: typeof AdvancedIndexRoute
+  ApplicationsIndexRoute: typeof ApplicationsIndexRoute
+  BindingsIndexRoute: typeof BindingsIndexRoute
+  GeneralIndexRoute: typeof GeneralIndexRoute
+  StyleIndexRoute: typeof StyleIndexRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/about': {
-      id: '/about'
-      path: '/about'
-      fullPath: '/about'
-      preLoaderRoute: typeof AboutRouteImport
+    '/style/': {
+      id: '/style/'
+      path: '/style'
+      fullPath: '/style/'
+      preLoaderRoute: typeof StyleIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/general/': {
+      id: '/general/'
+      path: '/general'
+      fullPath: '/general/'
+      preLoaderRoute: typeof GeneralIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/bindings/': {
+      id: '/bindings/'
+      path: '/bindings'
+      fullPath: '/bindings/'
+      preLoaderRoute: typeof BindingsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/applications/': {
+      id: '/applications/'
+      path: '/applications'
+      fullPath: '/applications/'
+      preLoaderRoute: typeof ApplicationsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/advanced/': {
+      id: '/advanced/'
+      path: '/advanced'
+      fullPath: '/advanced/'
+      preLoaderRoute: typeof AdvancedIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
-  AboutRoute: AboutRoute,
+  AdvancedIndexRoute: AdvancedIndexRoute,
+  ApplicationsIndexRoute: ApplicationsIndexRoute,
+  BindingsIndexRoute: BindingsIndexRoute,
+  GeneralIndexRoute: GeneralIndexRoute,
+  StyleIndexRoute: StyleIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
