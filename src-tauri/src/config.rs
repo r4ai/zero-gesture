@@ -399,7 +399,8 @@ mod tests {
 
     #[test]
     fn save_creates_directory_and_roundtrips_from_config_dir() {
-        let temp_dir = tempfile::tempdir().expect("must be able to create temp dir for config test");
+        let temp_dir =
+            tempfile::tempdir().expect("must be able to create temp dir for config test");
         let temp_path = temp_dir.path();
 
         let expected = AppConfig {
