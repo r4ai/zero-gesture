@@ -44,21 +44,22 @@ use windows_sys::Win32::{
     Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
     Graphics::Gdi::{
         BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW, CreatePen,
-        CreateSolidBrush, DeleteDC, DeleteObject, DrawTextW, EndPaint, FillRect, GetDC,
+        CreateRoundRectRgn, CreateSolidBrush, DeleteDC, DeleteObject, DrawTextW, EndPaint,
+        FillRect, GetDC,
         GetMonitorInfoW, InvalidateRect, MonitorFromPoint, Polyline, ReleaseDC, SelectObject,
-        SetBkMode, SetTextColor, DT_CALCRECT, DT_CENTER, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER,
-        HBITMAP, HBRUSH, HFONT, HDC, HPEN, MONITORINFO, MONITOR_DEFAULTTONEAREST, PAINTSTRUCT,
-        PS_SOLID, SRCCOPY, TRANSPARENT,
+        SetBkMode, SetTextColor, SetWindowRgn, DT_CALCRECT, DT_CENTER, DT_NOPREFIX, DT_SINGLELINE,
+        DT_VCENTER, HBITMAP, HBRUSH, HFONT, HDC, HPEN, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+        PAINTSTRUCT, PS_SOLID, SRCCOPY, TRANSPARENT,
     },
     System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentThreadId},
     UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
         GetSystemMetrics, PostQuitMessage, PostThreadMessageW, RegisterClassExW,
         SetLayeredWindowAttributes, SetWindowPos, ShowWindow, UnregisterClassW, HWND_TOPMOST,
-        LWA_ALPHA, LWA_COLORKEY, MSG, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
-        SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_NOACTIVATE, SW_HIDE, SW_SHOWNOACTIVATE,
-        WM_APP, WM_DESTROY, WM_ERASEBKGND, WM_PAINT, WNDCLASSEXW, WS_EX_LAYERED,
-        WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+        LWA_ALPHA, LWA_COLORKEY, MSG, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
+        SM_YVIRTUALSCREEN, SWP_NOACTIVATE, SW_HIDE, SW_SHOWNOACTIVATE, WM_APP, WM_DESTROY,
+        WM_ERASEBKGND, WM_PAINT, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+        WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
     },
 };
 
@@ -899,6 +900,7 @@ fn handle_label(text_ptr: WPARAM) {
                 let text_h = rc.bottom - rc.top;
                 let win_w = text_w + label_padding * 2;
                 let win_h = text_h + label_padding * 2;
+                let corner_radius = (label_padding + 6).clamp(8, 24);
 
                 // Determine which monitor to use based on the last trail point.
                 let pt = track_pt.unwrap_or((0, 0));
@@ -922,6 +924,12 @@ fn handle_label(text_ptr: WPARAM) {
                     win_h,
                     SWP_NOACTIVATE,
                 );
+                // Clip the popup to a rounded rectangle so the label background
+                // itself becomes rounded (not only the text layout).
+                let rgn = CreateRoundRectRgn(0, 0, win_w + 1, win_h + 1, corner_radius, corner_radius);
+                if !rgn.is_null() && SetWindowRgn(label_hwnd, rgn, 1) == 0 {
+                    DeleteObject(rgn as *mut _);
+                }
                 ShowWindow(label_hwnd, SW_SHOWNOACTIVATE);
                 InvalidateRect(label_hwnd, std::ptr::null(), 1);
             }

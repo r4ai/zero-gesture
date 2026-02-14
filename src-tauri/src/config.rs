@@ -54,9 +54,9 @@ const CONFIG_FILE_NAME: &str = "zero-gesture.config.json";
 /// assert_eq!(config.min_segment_px, 12);
 /// assert_eq!(config.direction_switch_confirm_px, 8);
 /// assert_eq!(config.axis_ambiguity_deadzone_px, 2);
-/// assert_eq!(config.label_font_family, "Segoe UI");
-/// assert_eq!(config.label_font_size, 20.0);
-/// assert_eq!(config.label_padding, 12.0);
+/// assert_eq!(config.label_font_family, "Yu Gothic UI Semibold");
+/// assert_eq!(config.label_font_size, 36.0);
+/// assert_eq!(config.label_padding, 24.0);
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
@@ -125,13 +125,13 @@ impl AppConfig {
     pub const DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX: i32 = 2;
 
     /// Default font family for the gesture label overlay.
-    pub const DEFAULT_LABEL_FONT_FAMILY: &str = "Segoe UI";
+    pub const DEFAULT_LABEL_FONT_FAMILY: &str = "Yu Gothic UI Semibold";
 
     /// Default font size (in pixels) for the gesture label overlay.
-    pub const DEFAULT_LABEL_FONT_SIZE: f32 = 20.0;
+    pub const DEFAULT_LABEL_FONT_SIZE: f32 = 36.0;
 
     /// Default padding (in pixels) around the gesture label text.
-    pub const DEFAULT_LABEL_PADDING: f32 = 12.0;
+    pub const DEFAULT_LABEL_PADDING: f32 = 24.0;
 
     /// Default gesture-to-action bindings.
     fn default_bindings() -> HashMap<String, GestureBinding> {
