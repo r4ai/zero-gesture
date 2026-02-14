@@ -273,9 +273,6 @@ fn config_path(config_dir: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
     use super::{load_or_default, save, AppConfig};
 
     #[test]
@@ -402,22 +399,16 @@ mod tests {
 
     #[test]
     fn save_creates_directory_and_roundtrips_from_config_dir() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock must be after UNIX_EPOCH")
-            .as_nanos();
-        let temp_dir = std::env::temp_dir().join(format!("zero-gesture-config-test-{unique}"));
-        let _ = fs::remove_dir_all(&temp_dir);
+        let temp_dir = tempfile::tempdir().expect("must be able to create temp dir for config test");
+        let temp_path = temp_dir.path();
 
         let expected = AppConfig {
             gesture_trigger_button: "middle".to_string(),
             ..AppConfig::default()
         };
 
-        save(&expected, &temp_dir).expect("save must succeed");
-        let loaded = load_or_default(&temp_dir);
+        save(&expected, temp_path).expect("save must succeed");
+        let loaded = load_or_default(temp_path);
         assert_eq!(loaded, expected);
-
-        fs::remove_dir_all(&temp_dir).expect("temp dir cleanup must succeed");
     }
 }
