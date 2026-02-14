@@ -290,6 +290,7 @@ mod tests {
     #[cfg(windows)]
     mod windows_tests {
         use super::*;
+        use windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_F1;
 
         #[test]
         fn parse_key_modifiers() {
@@ -319,6 +320,19 @@ mod tests {
                 );
             }
             assert!(parse_key("f25").is_none());
+        }
+
+        #[test]
+        fn parse_key_function_keys_use_contiguous_vk_codes() {
+            for i in 1..=24_u16 {
+                let key = format!("f{i}");
+                assert_eq!(
+                    parse_key(&key),
+                    Some(VK_F1 + (i - 1)),
+                    "{key} should map to VK_F1 + {}",
+                    i - 1
+                );
+            }
         }
 
         #[test]
