@@ -61,7 +61,7 @@ const SettingsSidebarContent = () => {
   return (
     <>
       <SidebarContent>
-        <div className="p-4">
+        <div className="p-2">
           {isCollapsed ? (
             <div className="flex h-9 items-center justify-center">
               <Search className="h-4 w-4 text-muted-foreground" />
@@ -74,7 +74,7 @@ const SettingsSidebarContent = () => {
           )}
         </div>
         <Separator />
-        <SidebarGroup>
+        <SidebarGroup className="p-2">
           <SidebarGroupContent>
             <SidebarMenu>
               {sections.map((section) => (
@@ -82,9 +82,9 @@ const SettingsSidebarContent = () => {
                   <SidebarMenuButton asChild tooltip={section.title}>
                     <Link
                       to={section.url}
-                      className="[&.active]:bg-accent [&.active]:text-accent-foreground"
+                      className="[&.active]:bg-accent [&.active]:font-bold [&.active]:text-accent-foreground"
                       activeProps={{
-                        className: "bg-accent text-accent-foreground",
+                        className: "bg-accent font-bold text-accent-foreground",
                       }}
                     >
                       <section.icon className="h-4 w-4" />
@@ -97,7 +97,7 @@ const SettingsSidebarContent = () => {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="p-4">
+      <SidebarFooter className="p-2">
         <SidebarTrigger />
       </SidebarFooter>
     </>
@@ -127,7 +127,7 @@ const RootLayout = () => (
           <Button className="fixed right-6 bottom-6">Save & Apply</Button>
         </div>
       </div>
-      <TanStackRouterDevtools />
+      <TanStackRouterDevtools position="top-right" />
     </SidebarProvider>
   </TooltipProvider>
 )
