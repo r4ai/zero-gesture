@@ -7,6 +7,33 @@ use serde::{Deserialize, Serialize};
 
 use crate::executor::Action;
 
+/// A gesture-to-action binding with an optional human-readable label.
+///
+/// When serialized, the `action` fields are flattened into the same JSON object
+/// so that existing configs (`{ "type": "keyboard", "keys": [...] }`) remain
+/// compatible. An optional `label` field can be added for display purposes.
+///
+/// # Examples
+///
+/// ```
+/// use zero_gesture_lib::config::GestureBinding;
+/// use zero_gesture_lib::executor::Action;
+///
+/// let binding = GestureBinding {
+///     action: Action::Keyboard { keys: vec!["alt".into(), "left".into()] },
+///     label: Some("戻る".into()),
+/// };
+/// let json = serde_json::to_string(&binding).unwrap();
+/// assert!(json.contains("\"label\":\"戻る\""));
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GestureBinding {
+    #[serde(flatten)]
+    pub action: Action,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
 /// Configuration file name placed in the working directory.
 const CONFIG_FILE_NAME: &str = "zero-gesture.config.json";
 
@@ -27,6 +54,10 @@ const CONFIG_FILE_NAME: &str = "zero-gesture.config.json";
 /// assert_eq!(config.min_segment_px, 12);
 /// assert_eq!(config.direction_switch_confirm_px, 8);
 /// assert_eq!(config.axis_ambiguity_deadzone_px, 2);
+/// assert_eq!(config.label_font_family, "Yu Gothic UI Semibold");
+/// assert_eq!(config.label_font_size, 36.0);
+/// assert_eq!(config.label_font_weight, 400);
+/// assert_eq!(config.label_padding, 24.0);
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
@@ -62,11 +93,23 @@ pub struct AppConfig {
     /// Deadzone (in pixels) used to ignore tiny ambiguous diagonal movement.
     pub axis_ambiguity_deadzone_px: i32,
 
+    /// Font family name for the gesture label overlay (e.g. `"Segoe UI"`).
+    pub label_font_family: String,
+
+    /// Font size in pixels for the gesture label overlay.
+    pub label_font_size: f32,
+
+    /// Font weight for the gesture label overlay (Win32 range: 0..=1000).
+    pub label_font_weight: i32,
+
+    /// Padding in pixels around the gesture label text.
+    pub label_padding: f32,
+
     /// Gesture-to-action bindings.
     ///
     /// Keys are `GestureKind` variant names (e.g. `"Left"`, `"DownRight"`),
     /// values are the action to execute when that gesture is recognised.
-    pub bindings: HashMap<String, Action>,
+    pub bindings: HashMap<String, GestureBinding>,
 }
 
 impl AppConfig {
@@ -85,43 +128,73 @@ impl AppConfig {
     /// Default deadzone for tiny ambiguous diagonal movement.
     pub const DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX: i32 = 2;
 
+    /// Default font family for the gesture label overlay.
+    pub const DEFAULT_LABEL_FONT_FAMILY: &str = "Yu Gothic UI Semibold";
+
+    /// Default font size (in pixels) for the gesture label overlay.
+    pub const DEFAULT_LABEL_FONT_SIZE: f32 = 36.0;
+
+    /// Default font weight for the gesture label overlay.
+    pub const DEFAULT_LABEL_FONT_WEIGHT: i32 = 400;
+
+    /// Default padding (in pixels) around the gesture label text.
+    pub const DEFAULT_LABEL_PADDING: f32 = 24.0;
+
     /// Default gesture-to-action bindings.
-    fn default_bindings() -> HashMap<String, Action> {
+    fn default_bindings() -> HashMap<String, GestureBinding> {
         HashMap::from([
             (
                 "Left".to_string(),
-                Action::Keyboard {
-                    keys: vec!["alt".to_string(), "left".to_string()],
+                GestureBinding {
+                    action: Action::Keyboard {
+                        keys: vec!["alt".to_string(), "left".to_string()],
+                    },
+                    label: Some("戻る".to_string()),
                 },
             ),
             (
                 "Right".to_string(),
-                Action::Keyboard {
-                    keys: vec!["alt".to_string(), "right".to_string()],
+                GestureBinding {
+                    action: Action::Keyboard {
+                        keys: vec!["alt".to_string(), "right".to_string()],
+                    },
+                    label: Some("進む".to_string()),
                 },
             ),
             (
                 "Up".to_string(),
-                Action::Keyboard {
-                    keys: vec!["pageup".to_string()],
+                GestureBinding {
+                    action: Action::Keyboard {
+                        keys: vec!["pageup".to_string()],
+                    },
+                    label: Some("上スクロール".to_string()),
                 },
             ),
             (
                 "Down".to_string(),
-                Action::Keyboard {
-                    keys: vec!["pagedown".to_string()],
+                GestureBinding {
+                    action: Action::Keyboard {
+                        keys: vec!["pagedown".to_string()],
+                    },
+                    label: Some("下スクロール".to_string()),
                 },
             ),
             (
                 "DownUp".to_string(),
-                Action::Keyboard {
-                    keys: vec!["ctrl".to_string(), "home".to_string()],
+                GestureBinding {
+                    action: Action::Keyboard {
+                        keys: vec!["ctrl".to_string(), "home".to_string()],
+                    },
+                    label: Some("ページ先頭".to_string()),
                 },
             ),
             (
                 "UpDown".to_string(),
-                Action::Keyboard {
-                    keys: vec!["ctrl".to_string(), "end".to_string()],
+                GestureBinding {
+                    action: Action::Keyboard {
+                        keys: vec!["ctrl".to_string(), "end".to_string()],
+                    },
+                    label: Some("ページ末尾".to_string()),
                 },
             ),
         ])
@@ -140,6 +213,10 @@ impl Default for AppConfig {
             min_segment_px: Self::DEFAULT_MIN_SEGMENT_PX,
             direction_switch_confirm_px: Self::DEFAULT_DIRECTION_SWITCH_CONFIRM_PX,
             axis_ambiguity_deadzone_px: Self::DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX,
+            label_font_family: Self::DEFAULT_LABEL_FONT_FAMILY.to_string(),
+            label_font_size: Self::DEFAULT_LABEL_FONT_SIZE,
+            label_font_weight: Self::DEFAULT_LABEL_FONT_WEIGHT,
+            label_padding: Self::DEFAULT_LABEL_PADDING,
             bindings: Self::default_bindings(),
         }
     }
@@ -211,6 +288,10 @@ mod tests {
             cfg.axis_ambiguity_deadzone_px,
             AppConfig::DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX
         );
+        assert_eq!(cfg.label_font_family, AppConfig::DEFAULT_LABEL_FONT_FAMILY);
+        assert_eq!(cfg.label_font_size, AppConfig::DEFAULT_LABEL_FONT_SIZE);
+        assert_eq!(cfg.label_font_weight, AppConfig::DEFAULT_LABEL_FONT_WEIGHT);
+        assert_eq!(cfg.label_padding, AppConfig::DEFAULT_LABEL_PADDING);
         assert_eq!(cfg.bindings.len(), 6);
         assert!(cfg.bindings.contains_key("Left"));
         assert!(cfg.bindings.contains_key("Right"));
@@ -243,6 +324,10 @@ mod tests {
             cfg.axis_ambiguity_deadzone_px,
             AppConfig::DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX
         );
+        assert_eq!(cfg.label_font_family, AppConfig::DEFAULT_LABEL_FONT_FAMILY);
+        assert_eq!(cfg.label_font_size, AppConfig::DEFAULT_LABEL_FONT_SIZE);
+        assert_eq!(cfg.label_font_weight, AppConfig::DEFAULT_LABEL_FONT_WEIGHT);
+        assert_eq!(cfg.label_padding, AppConfig::DEFAULT_LABEL_PADDING);
         assert_eq!(cfg.bindings.len(), 6);
         assert!(cfg.bindings.contains_key("Left"));
         assert!(cfg.bindings.contains_key("Right"));
@@ -260,7 +345,7 @@ mod tests {
             "trail_thickness": 3.0,
             "bindings": {
                 "Left": { "type": "keyboard", "keys": ["alt", "left"] },
-                "Right": { "type": "keyboard", "keys": ["alt", "right"] },
+                "Right": { "type": "keyboard", "keys": ["alt", "right"], "label": "進む" },
                 "Down": { "type": "keyboard", "keys": ["ctrl", "w"] }
             }
         }"##;
@@ -270,6 +355,18 @@ mod tests {
         assert!(cfg.bindings.contains_key("Left"));
         assert!(cfg.bindings.contains_key("Right"));
         assert!(cfg.bindings.contains_key("Down"));
+        // Without label
+        assert_eq!(cfg.bindings["Left"].label, None);
+        // With label
+        assert_eq!(cfg.bindings["Right"].label, Some("進む".to_string()));
+    }
+
+    #[test]
+    fn deserialize_json_with_label_font_weight() {
+        let raw = r##"{ "label_font_weight": 700 }"##;
+        let cfg: AppConfig =
+            serde_json::from_str(raw).expect("JSON with label_font_weight must parse");
+        assert_eq!(cfg.label_font_weight, 700);
     }
 
     #[test]

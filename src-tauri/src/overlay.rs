@@ -43,19 +43,23 @@ use std::cell::RefCell;
 use windows_sys::Win32::{
     Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
     Graphics::Gdi::{
-        BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreatePen,
-        CreateSolidBrush, DeleteDC, DeleteObject, EndPaint, FillRect, GetDC, InvalidateRect,
-        Polyline, ReleaseDC, SelectObject, HBITMAP, HBRUSH, HDC, HPEN, PAINTSTRUCT, PS_SOLID,
-        SRCCOPY,
+        BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW, CreatePen,
+        CreateRoundRectRgn, CreateSolidBrush, DeleteDC, DeleteObject, DrawTextW, EndPaint,
+        FillRect, GetDC, GetMonitorInfoW, InvalidateRect, MonitorFromPoint, Polyline, ReleaseDC,
+        SelectObject, SetBkMode, SetTextColor, SetWindowRgn, CLEARTYPE_QUALITY,
+        CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, DEFAULT_PITCH, DT_CALCRECT, DT_CENTER, DT_NOPREFIX,
+        DT_SINGLELINE, DT_VCENTER, FF_DONTCARE, HBITMAP, HBRUSH, HDC, HFONT, HPEN, MONITORINFO,
+        MONITOR_DEFAULTTONEAREST, OUT_DEFAULT_PRECIS, PAINTSTRUCT, PS_SOLID, SRCCOPY, TRANSPARENT,
     },
     System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentThreadId},
     UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
         GetSystemMetrics, PostQuitMessage, PostThreadMessageW, RegisterClassExW,
-        SetLayeredWindowAttributes, ShowWindow, UnregisterClassW, LWA_COLORKEY, MSG,
-        SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_HIDE,
-        SW_SHOWNOACTIVATE, WM_APP, WM_DESTROY, WM_ERASEBKGND, WM_PAINT, WNDCLASSEXW, WS_EX_LAYERED,
-        WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+        SetLayeredWindowAttributes, SetWindowPos, ShowWindow, UnregisterClassW, HWND_TOPMOST,
+        LWA_ALPHA, LWA_COLORKEY, MSG, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
+        SM_YVIRTUALSCREEN, SWP_NOACTIVATE, SW_HIDE, SW_SHOWNOACTIVATE, WM_APP, WM_DESTROY,
+        WM_ERASEBKGND, WM_PAINT, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+        WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
     },
 };
 
@@ -74,6 +78,13 @@ const WM_OVERLAY_END: u32 = WM_APP + 3;
 /// Custom message: shut down the overlay thread.
 #[cfg(windows)]
 const WM_OVERLAY_SHUTDOWN: u32 = WM_APP + 4;
+
+/// Custom message: update the gesture label text.
+///
+/// `wParam` carries a raw pointer to a `Box<String>` (via `Box::into_raw`)
+/// when showing a label, or `0` when hiding it.
+#[cfg(windows)]
+const WM_OVERLAY_LABEL: u32 = WM_APP + 5;
 
 /// Commands sent to the overlay thread to control the gesture trail.
 ///
@@ -98,6 +109,10 @@ pub enum OverlayCommand {
     },
     /// End the current gesture — hide the overlay and clear the trail.
     EndGesture,
+    /// Update the gesture label text.
+    ///
+    /// `Some(text)` shows the label with the given text; `None` hides it.
+    UpdateLabel(Option<String>),
     /// Shut down the overlay thread.
     Shutdown,
 }
@@ -162,6 +177,14 @@ struct OverlayConfig {
     color: (u8, u8, u8),
     /// Trail pen width in pixels.
     pen_width: i32,
+    /// Font family for the gesture label.
+    label_font_family: String,
+    /// Font size in pixels for the gesture label.
+    label_font_size: i32,
+    /// Font weight for the gesture label (Win32 range: 0..=1000).
+    label_font_weight: i32,
+    /// Padding in pixels around the gesture label text.
+    label_padding: i32,
 }
 
 // ---------------------------------------------------------------------------
@@ -204,6 +227,16 @@ struct OverlayState {
     origin_y: i32,
     /// Snapshotted configuration (retained for future use, e.g. dynamic pen recreation).
     config: OverlayConfig,
+    /// The label overlay window handle.
+    label_hwnd: HWND,
+    /// Font used for label text drawing.
+    label_font: HFONT,
+    /// Current label text (stored for WM_PAINT).
+    label_text: Option<String>,
+    /// Last known trail point (used to determine which monitor to show the label on).
+    last_track_pt: Option<(i32, i32)>,
+    /// Padding in pixels around the gesture label text.
+    label_padding: i32,
 }
 
 #[cfg(windows)]
@@ -246,6 +279,10 @@ pub fn spawn(shared_config: SharedConfig) -> (Sender<OverlayCommand>, JoinHandle
         OverlayConfig {
             color: parse_hex_color(&cfg.trail_color),
             pen_width: cfg.trail_thickness.round() as i32,
+            label_font_family: cfg.label_font_family.clone(),
+            label_font_size: cfg.label_font_size.round() as i32,
+            label_font_weight: cfg.label_font_weight,
+            label_padding: cfg.label_padding.round() as i32,
         }
     };
 
@@ -294,6 +331,35 @@ const CLASS_NAME: &[u16] = &[
     0,
 ];
 
+/// Window class name for the label overlay (UTF-16, null-terminated).
+#[cfg(windows)]
+const LABEL_CLASS_NAME: &[u16] = &[
+    b'Z' as u16,
+    b'e' as u16,
+    b'r' as u16,
+    b'o' as u16,
+    b'G' as u16,
+    b'e' as u16,
+    b's' as u16,
+    b't' as u16,
+    b'u' as u16,
+    b'r' as u16,
+    b'e' as u16,
+    b'L' as u16,
+    b'a' as u16,
+    b'b' as u16,
+    b'e' as u16,
+    b'l' as u16,
+    b'O' as u16,
+    b'v' as u16,
+    b'e' as u16,
+    b'r' as u16,
+    b'l' as u16,
+    b'a' as u16,
+    b'y' as u16,
+    0,
+];
+
 /// Main loop of the overlay thread (Windows implementation).
 ///
 /// 1. Gets the current thread ID for message posting.
@@ -323,20 +389,40 @@ fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<OverlayCommand>) {
             .name("overlay-bridge".to_string())
             .spawn(move || {
                 while let Ok(cmd) = overlay_rx.recv() {
-                    let posted = match cmd {
+                    let (posted, label_payload, should_break) = match cmd {
                         OverlayCommand::StartGesture => {
-                            PostThreadMessageW(tid, WM_OVERLAY_START, 0, 0)
+                            (PostThreadMessageW(tid, WM_OVERLAY_START, 0, 0), 0, false)
                         }
-                        OverlayCommand::TrackPoint { x, y } => {
-                            PostThreadMessageW(tid, WM_OVERLAY_TRACK, x as WPARAM, y as LPARAM)
+                        OverlayCommand::TrackPoint { x, y } => (
+                            PostThreadMessageW(tid, WM_OVERLAY_TRACK, x as WPARAM, y as LPARAM),
+                            0,
+                            false,
+                        ),
+                        OverlayCommand::EndGesture => {
+                            (PostThreadMessageW(tid, WM_OVERLAY_END, 0, 0), 0, false)
                         }
-                        OverlayCommand::EndGesture => PostThreadMessageW(tid, WM_OVERLAY_END, 0, 0),
+                        OverlayCommand::UpdateLabel(text) => {
+                            let w_param = match text {
+                                Some(s) => Box::into_raw(Box::new(s)) as WPARAM,
+                                None => 0,
+                            };
+                            (
+                                PostThreadMessageW(tid, WM_OVERLAY_LABEL, w_param, 0),
+                                w_param,
+                                false,
+                            )
+                        }
                         OverlayCommand::Shutdown => {
-                            PostThreadMessageW(tid, WM_OVERLAY_SHUTDOWN, 0, 0);
-                            break;
+                            (PostThreadMessageW(tid, WM_OVERLAY_SHUTDOWN, 0, 0), 0, true)
                         }
                     };
                     if posted == 0 {
+                        if label_payload != 0 {
+                            drop(Box::from_raw(label_payload as *mut String));
+                        }
+                        break;
+                    }
+                    if should_break {
                         break;
                     }
                 }
@@ -488,6 +574,75 @@ fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<OverlayCommand>) {
             hwnd, vw, vh, vx, vy, r, g, b, config.pen_width
         );
 
+        // Register label window class.
+        let label_wc = WNDCLASSEXW {
+            cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+            style: 0,
+            lpfnWndProc: Some(label_wnd_proc),
+            cbClsExtra: 0,
+            cbWndExtra: 0,
+            hInstance: hinstance,
+            hIcon: std::ptr::null_mut(),
+            hCursor: std::ptr::null_mut(),
+            hbrBackground: std::ptr::null_mut(),
+            lpszMenuName: std::ptr::null(),
+            lpszClassName: LABEL_CLASS_NAME.as_ptr(),
+            hIconSm: std::ptr::null_mut(),
+        };
+        let label_atom = RegisterClassExW(&label_wc);
+        if label_atom == 0 {
+            error!("RegisterClassExW failed for label overlay window");
+            // Continue without label support — trail overlay still works.
+        }
+
+        let label_ex_style =
+            WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
+
+        let label_hwnd = if label_atom != 0 {
+            CreateWindowExW(
+                label_ex_style,
+                LABEL_CLASS_NAME.as_ptr(),
+                std::ptr::null(),
+                WS_POPUP,
+                0,
+                0,
+                1,
+                1,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                hinstance,
+                std::ptr::null(),
+            )
+        } else {
+            std::ptr::null_mut()
+        };
+
+        if !label_hwnd.is_null() {
+            SetLayeredWindowAttributes(label_hwnd, 0, 200, LWA_ALPHA);
+        }
+
+        // Create font for the label.
+        let font_name: Vec<u16> = format!("{}\0", config.label_font_family)
+            .encode_utf16()
+            .collect();
+        let font_weight = config.label_font_weight.clamp(0, 1000);
+        let label_font = CreateFontW(
+            config.label_font_size, // height
+            0,                      // width (auto)
+            0,                      // escapement
+            0,                      // orientation
+            font_weight,            // weight
+            0,                      // italic
+            0,                      // underline
+            0,                      // strikeout
+            DEFAULT_CHARSET as u32, // charset
+            OUT_DEFAULT_PRECIS as u32,
+            CLIP_DEFAULT_PRECIS as u32,
+            CLEARTYPE_QUALITY as u32,
+            (DEFAULT_PITCH | FF_DONTCARE) as u32,
+            font_name.as_ptr(),
+        );
+
         // Store state in thread-local.
         OVERLAY_STATE.with(|cell| {
             *cell.borrow_mut() = Some(OverlayState {
@@ -502,7 +657,12 @@ fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<OverlayCommand>) {
                 back_buffer_height: vh,
                 origin_x: vx,
                 origin_y: vy,
+                label_padding: config.label_padding,
                 config,
+                label_hwnd,
+                label_font,
+                label_text: None,
+                last_track_pt: None,
             });
         });
 
@@ -518,6 +678,7 @@ fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<OverlayCommand>) {
                 WM_OVERLAY_START => handle_start(),
                 WM_OVERLAY_TRACK => handle_track(msg.wParam as i32, msg.lParam as i32),
                 WM_OVERLAY_END => handle_end(),
+                WM_OVERLAY_LABEL => handle_label(msg.wParam),
                 WM_OVERLAY_SHUTDOWN => {
                     PostQuitMessage(0);
                 }
@@ -537,10 +698,17 @@ fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<OverlayCommand>) {
                 }
                 DeleteObject(state.mem_bmp as *mut _);
                 DeleteDC(state.mem_dc);
+                if !state.label_font.is_null() {
+                    DeleteObject(state.label_font as *mut _);
+                }
+                if !state.label_hwnd.is_null() {
+                    DestroyWindow(state.label_hwnd);
+                }
             }
         });
         DestroyWindow(hwnd);
         UnregisterClassW(CLASS_NAME.as_ptr(), hinstance);
+        UnregisterClassW(LABEL_CLASS_NAME.as_ptr(), hinstance);
         info!("overlay thread stopped (tid={tid})");
 
         let _ = bridge.join();
@@ -558,14 +726,16 @@ fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<OverlayCommand>) {
 /// `overlay_wnd_proc` borrows the same `RefCell` to read the trail.
 #[cfg(windows)]
 fn handle_start() {
-    let hwnd = OVERLAY_STATE.with(|cell| {
+    let (hwnd, label_hwnd) = OVERLAY_STATE.with(|cell| {
         let mut borrow = cell.borrow_mut();
         let state = match borrow.as_mut() {
             Some(s) => s,
-            None => return None,
+            None => return (None, std::ptr::null_mut()),
         };
 
         state.trail.clear();
+        state.label_text = None;
+        state.last_track_pt = None;
 
         // Clear the persistent back buffer so no stale trail is visible.
         unsafe {
@@ -579,11 +749,14 @@ fn handle_start() {
         }
 
         debug!("Overlay: StartGesture — showing window");
-        Some(state.hwnd)
+        (Some(state.hwnd), state.label_hwnd)
     });
 
     if let Some(hwnd) = hwnd {
         unsafe {
+            if !label_hwnd.is_null() {
+                ShowWindow(label_hwnd, SW_HIDE);
+            }
             ShowWindow(hwnd, SW_SHOWNOACTIVATE);
             InvalidateRect(hwnd, std::ptr::null(), 1);
         }
@@ -606,6 +779,7 @@ fn handle_track(x: i32, y: i32) {
         };
 
         trace!("Overlay: TrackPoint ({x}, {y})");
+        state.last_track_pt = Some((x, y));
         // Convert screen coordinates to client coordinates by subtracting
         // the virtual screen origin (window top-left).
         let new_pt = POINT {
@@ -653,14 +827,15 @@ fn handle_track(x: i32, y: i32) {
 /// `RefCell`.
 #[cfg(windows)]
 fn handle_end() {
-    let hwnd = OVERLAY_STATE.with(|cell| {
+    let (hwnd, label_hwnd) = OVERLAY_STATE.with(|cell| {
         let mut borrow = cell.borrow_mut();
         let state = match borrow.as_mut() {
             Some(s) => s,
-            None => return None,
+            None => return (None, std::ptr::null_mut()),
         };
 
         state.trail.clear();
+        state.label_text = None;
 
         // Clear the persistent back buffer so the next BitBlt shows black
         // (= transparent via color key).
@@ -675,12 +850,15 @@ fn handle_end() {
         }
 
         debug!("Overlay: EndGesture — hiding window");
-        Some(state.hwnd)
+        (Some(state.hwnd), state.label_hwnd)
     });
     // Borrow is now released — safe to call Win32 APIs that trigger WndProc.
 
     if let Some(hwnd) = hwnd {
         unsafe {
+            if !label_hwnd.is_null() {
+                ShowWindow(label_hwnd, SW_HIDE);
+            }
             // Force a synchronous repaint (empty trail → all-black → transparent)
             // while the window is still visible, so the surface is clean when
             // the window is shown again for the next gesture.
@@ -688,6 +866,183 @@ fn handle_end() {
             windows_sys::Win32::Graphics::Gdi::UpdateWindow(hwnd);
             ShowWindow(hwnd, SW_HIDE);
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Label handling
+// ---------------------------------------------------------------------------
+
+/// Handle `WM_OVERLAY_LABEL`: show or hide the gesture label.
+///
+/// `text_ptr` is either `0` (hide) or a raw pointer to a `Box<String>`
+/// allocated by the bridge thread.
+#[cfg(windows)]
+fn handle_label(text_ptr: WPARAM) {
+    let text = if text_ptr == 0 {
+        None
+    } else {
+        Some(unsafe { *Box::from_raw(text_ptr as *mut String) })
+    };
+    let wide_text = text.as_ref().map(|t| {
+        t.encode_utf16()
+            .chain(std::iter::once(0))
+            .collect::<Vec<u16>>()
+    });
+
+    // Store text and read label_hwnd + last_track_pt + label_font + label_padding.
+    let (label_hwnd, label_font, track_pt, label_padding) = OVERLAY_STATE.with(|cell| {
+        let mut borrow = cell.borrow_mut();
+        let state = match borrow.as_mut() {
+            Some(s) => s,
+            None => return (std::ptr::null_mut(), std::ptr::null_mut(), None, 0),
+        };
+        state.label_text = text;
+        (
+            state.label_hwnd,
+            state.label_font,
+            state.last_track_pt,
+            state.label_padding,
+        )
+    });
+
+    if label_hwnd.is_null() {
+        return;
+    }
+
+    match wide_text {
+        None => {
+            unsafe { ShowWindow(label_hwnd, SW_HIDE) };
+        }
+        Some(wide) => {
+            unsafe {
+                // Measure text size.
+                let dc = GetDC(label_hwnd);
+                let old_font = SelectObject(dc, label_font as *mut _);
+
+                let mut rc = RECT {
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                };
+                DrawTextW(
+                    dc,
+                    wide.as_ptr(),
+                    (wide.len() - 1) as i32,
+                    &mut rc,
+                    DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX,
+                );
+                SelectObject(dc, old_font);
+                ReleaseDC(label_hwnd, dc);
+
+                let text_w = rc.right - rc.left;
+                let text_h = rc.bottom - rc.top;
+                let win_w = text_w + label_padding * 2;
+                let win_h = text_h + label_padding * 2;
+                let corner_radius = (label_padding + 6).clamp(8, 24);
+
+                // Determine which monitor to use based on the last trail point.
+                let pt = track_pt.unwrap_or((0, 0));
+                let point = POINT { x: pt.0, y: pt.1 };
+                let hmon = MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST);
+                let mut mi: MONITORINFO = std::mem::zeroed();
+                mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+                GetMonitorInfoW(hmon, &mut mi);
+
+                let mon_cx = (mi.rcWork.left + mi.rcWork.right) / 2;
+                let mon_cy = (mi.rcWork.top + mi.rcWork.bottom) / 2;
+                let win_x = mon_cx - win_w / 2;
+                let win_y = mon_cy - win_h / 2;
+
+                SetWindowPos(
+                    label_hwnd,
+                    HWND_TOPMOST,
+                    win_x,
+                    win_y,
+                    win_w,
+                    win_h,
+                    SWP_NOACTIVATE,
+                );
+                // Clip the popup to a rounded rectangle so the label background
+                // itself becomes rounded (not only the text layout).
+                let rgn =
+                    CreateRoundRectRgn(0, 0, win_w + 1, win_h + 1, corner_radius, corner_radius);
+                if !rgn.is_null() && SetWindowRgn(label_hwnd, rgn, 1) == 0 {
+                    DeleteObject(rgn as *mut _);
+                }
+                ShowWindow(label_hwnd, SW_SHOWNOACTIVATE);
+                InvalidateRect(label_hwnd, std::ptr::null(), 1);
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Label WndProc
+// ---------------------------------------------------------------------------
+
+/// Window procedure for the label overlay window.
+///
+/// Draws a black background with white text.
+#[cfg(windows)]
+unsafe extern "system" fn label_wnd_proc(
+    hwnd: HWND,
+    msg: u32,
+    w_param: WPARAM,
+    l_param: LPARAM,
+) -> LRESULT {
+    match msg {
+        WM_ERASEBKGND => 1,
+        WM_PAINT => {
+            let mut ps: PAINTSTRUCT = std::mem::zeroed();
+            let hdc = BeginPaint(hwnd, &mut ps);
+
+            // Fill background with black.
+            let black_brush = CreateSolidBrush(0x00000000);
+            FillRect(hdc, &ps.rcPaint, black_brush);
+            DeleteObject(black_brush as *mut _);
+
+            // Draw text.
+            OVERLAY_STATE.with(|cell| {
+                let borrow = cell.borrow();
+                if let Some(state) = borrow.as_ref() {
+                    if let Some(text) = &state.label_text {
+                        let old_font = SelectObject(hdc, state.label_font as *mut _);
+                        SetBkMode(hdc, TRANSPARENT as i32);
+                        SetTextColor(hdc, 0x00FFFFFF); // white
+
+                        let wide: Vec<u16> =
+                            text.encode_utf16().chain(std::iter::once(0)).collect();
+
+                        // Get client rect for centered drawing.
+                        let mut client_rc = RECT {
+                            left: 0,
+                            top: 0,
+                            right: 0,
+                            bottom: 0,
+                        };
+                        windows_sys::Win32::UI::WindowsAndMessaging::GetClientRect(
+                            hwnd,
+                            &mut client_rc,
+                        );
+                        DrawTextW(
+                            hdc,
+                            wide.as_ptr(),
+                            (wide.len() - 1) as i32,
+                            &mut client_rc,
+                            DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+                        );
+                        SelectObject(hdc, old_font);
+                    }
+                }
+            });
+
+            EndPaint(hwnd, &ps);
+            0
+        }
+        WM_DESTROY => 0,
+        _ => DefWindowProcW(hwnd, msg, w_param, l_param),
     }
 }
 

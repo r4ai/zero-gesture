@@ -94,6 +94,39 @@ pub fn parse_key(name: &str) -> Option<u16> {
     }
 }
 
+/// Generate a human-readable label for an action by capitalizing key names
+/// and joining them with ` + `.
+///
+/// # Examples
+///
+/// ```
+/// use zero_gesture_lib::executor::{Action, generate_label};
+///
+/// let action = Action::Keyboard {
+///     keys: vec!["alt".into(), "left".into()],
+/// };
+/// assert_eq!(generate_label(&action), "Alt + Left");
+/// ```
+pub fn generate_label(action: &Action) -> String {
+    match action {
+        Action::Keyboard { keys } => keys
+            .iter()
+            .map(|k| {
+                let mut chars = k.chars();
+                match chars.next() {
+                    Some(c) => {
+                        let mut s = c.to_uppercase().to_string();
+                        s.push_str(chars.as_str());
+                        s
+                    }
+                    None => String::new(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" + "),
+    }
+}
+
 /// Execute an [`Action`] by synthesising OS input.
 ///
 /// For [`Action::Keyboard`], this presses all keys in order (modifiers first
