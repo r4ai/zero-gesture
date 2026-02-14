@@ -15,7 +15,16 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true
+      "recommended": true,
+      "nursery": {
+        "useSortedClasses": {
+          "fix": "safe",
+          "level": "error",
+          "options": {
+            "functions": ["twMerge", "twJoin", "tv"]
+          }
+        }
+      }
     },
     "domains": {
       "react": "recommended"
@@ -25,6 +34,11 @@
     "formatter": {
       "quoteStyle": "double",
       "semicolons": "asNeeded"
+    }
+  },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
     }
   },
   "assist": {
