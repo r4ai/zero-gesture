@@ -54,6 +54,9 @@ const CONFIG_FILE_NAME: &str = "zero-gesture.config.json";
 /// assert_eq!(config.min_segment_px, 12);
 /// assert_eq!(config.direction_switch_confirm_px, 8);
 /// assert_eq!(config.axis_ambiguity_deadzone_px, 2);
+/// assert_eq!(config.label_font_family, "Segoe UI");
+/// assert_eq!(config.label_font_size, 20.0);
+/// assert_eq!(config.label_padding, 12.0);
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
@@ -89,6 +92,15 @@ pub struct AppConfig {
     /// Deadzone (in pixels) used to ignore tiny ambiguous diagonal movement.
     pub axis_ambiguity_deadzone_px: i32,
 
+    /// Font family name for the gesture label overlay (e.g. `"Segoe UI"`).
+    pub label_font_family: String,
+
+    /// Font size in pixels for the gesture label overlay.
+    pub label_font_size: f32,
+
+    /// Padding in pixels around the gesture label text.
+    pub label_padding: f32,
+
     /// Gesture-to-action bindings.
     ///
     /// Keys are `GestureKind` variant names (e.g. `"Left"`, `"DownRight"`),
@@ -111,6 +123,15 @@ impl AppConfig {
 
     /// Default deadzone for tiny ambiguous diagonal movement.
     pub const DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX: i32 = 2;
+
+    /// Default font family for the gesture label overlay.
+    pub const DEFAULT_LABEL_FONT_FAMILY: &str = "Segoe UI";
+
+    /// Default font size (in pixels) for the gesture label overlay.
+    pub const DEFAULT_LABEL_FONT_SIZE: f32 = 20.0;
+
+    /// Default padding (in pixels) around the gesture label text.
+    pub const DEFAULT_LABEL_PADDING: f32 = 12.0;
 
     /// Default gesture-to-action bindings.
     fn default_bindings() -> HashMap<String, GestureBinding> {
@@ -185,6 +206,9 @@ impl Default for AppConfig {
             min_segment_px: Self::DEFAULT_MIN_SEGMENT_PX,
             direction_switch_confirm_px: Self::DEFAULT_DIRECTION_SWITCH_CONFIRM_PX,
             axis_ambiguity_deadzone_px: Self::DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX,
+            label_font_family: Self::DEFAULT_LABEL_FONT_FAMILY.to_string(),
+            label_font_size: Self::DEFAULT_LABEL_FONT_SIZE,
+            label_padding: Self::DEFAULT_LABEL_PADDING,
             bindings: Self::default_bindings(),
         }
     }
@@ -256,6 +280,9 @@ mod tests {
             cfg.axis_ambiguity_deadzone_px,
             AppConfig::DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX
         );
+        assert_eq!(cfg.label_font_family, AppConfig::DEFAULT_LABEL_FONT_FAMILY);
+        assert_eq!(cfg.label_font_size, AppConfig::DEFAULT_LABEL_FONT_SIZE);
+        assert_eq!(cfg.label_padding, AppConfig::DEFAULT_LABEL_PADDING);
         assert_eq!(cfg.bindings.len(), 6);
         assert!(cfg.bindings.contains_key("Left"));
         assert!(cfg.bindings.contains_key("Right"));
@@ -288,6 +315,9 @@ mod tests {
             cfg.axis_ambiguity_deadzone_px,
             AppConfig::DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX
         );
+        assert_eq!(cfg.label_font_family, AppConfig::DEFAULT_LABEL_FONT_FAMILY);
+        assert_eq!(cfg.label_font_size, AppConfig::DEFAULT_LABEL_FONT_SIZE);
+        assert_eq!(cfg.label_padding, AppConfig::DEFAULT_LABEL_PADDING);
         assert_eq!(cfg.bindings.len(), 6);
         assert!(cfg.bindings.contains_key("Left"));
         assert!(cfg.bindings.contains_key("Right"));

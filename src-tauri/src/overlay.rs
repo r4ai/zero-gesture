@@ -176,6 +176,12 @@ struct OverlayConfig {
     color: (u8, u8, u8),
     /// Trail pen width in pixels.
     pen_width: i32,
+    /// Font family for the gesture label.
+    label_font_family: String,
+    /// Font size in pixels for the gesture label.
+    label_font_size: i32,
+    /// Padding in pixels around the gesture label text.
+    label_padding: i32,
 }
 
 // ---------------------------------------------------------------------------
@@ -226,6 +232,8 @@ struct OverlayState {
     label_text: Option<String>,
     /// Last known trail point (used to determine which monitor to show the label on).
     last_track_pt: Option<(i32, i32)>,
+    /// Padding in pixels around the gesture label text.
+    label_padding: i32,
 }
 
 #[cfg(windows)]
@@ -268,6 +276,9 @@ pub fn spawn(shared_config: SharedConfig) -> (Sender<OverlayCommand>, JoinHandle
         OverlayConfig {
             color: parse_hex_color(&cfg.trail_color),
             pen_width: cfg.trail_thickness.round() as i32,
+            label_font_family: cfg.label_font_family.clone(),
+            label_font_size: cfg.label_font_size.round() as i32,
+            label_padding: cfg.label_padding.round() as i32,
         }
     };
 
@@ -324,10 +335,6 @@ const LABEL_CLASS_NAME: &[u16] = &[
     b'e' as u16, b'l' as u16, b'O' as u16, b'v' as u16, b'e' as u16, b'r' as u16, b'l' as u16,
     b'a' as u16, b'y' as u16, 0,
 ];
-
-/// Horizontal and vertical padding (in pixels) around label text.
-#[cfg(windows)]
-const LABEL_PADDING: i32 = 12;
 
 /// Main loop of the overlay thread (Windows implementation).
 ///
@@ -577,10 +584,12 @@ fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<OverlayCommand>) {
             SetLayeredWindowAttributes(label_hwnd, 0, 200, LWA_ALPHA);
         }
 
-        // Create font for the label (20px, system default).
-        let font_name: Vec<u16> = "Segoe UI\0".encode_utf16().collect();
+        // Create font for the label.
+        let font_name: Vec<u16> = format!("{}\0", config.label_font_family)
+            .encode_utf16()
+            .collect();
         let label_font = CreateFontW(
-            20,                // height
+            config.label_font_size, // height
             0,                 // width (auto)
             0,                 // escapement
             0,                 // orientation
@@ -610,6 +619,7 @@ fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<OverlayCommand>) {
                 back_buffer_height: vh,
                 origin_x: vx,
                 origin_y: vy,
+                label_padding: config.label_padding,
                 config,
                 label_hwnd,
                 label_font,
@@ -837,15 +847,15 @@ fn handle_label(text_ptr: WPARAM) {
         Some(unsafe { *Box::from_raw(text_ptr as *mut String) })
     };
 
-    // Store text and read label_hwnd + last_track_pt + label_font.
-    let (label_hwnd, label_font, track_pt) = OVERLAY_STATE.with(|cell| {
+    // Store text and read label_hwnd + last_track_pt + label_font + label_padding.
+    let (label_hwnd, label_font, track_pt, label_padding) = OVERLAY_STATE.with(|cell| {
         let mut borrow = cell.borrow_mut();
         let state = match borrow.as_mut() {
             Some(s) => s,
-            None => return (std::ptr::null_mut(), std::ptr::null_mut(), None),
+            None => return (std::ptr::null_mut(), std::ptr::null_mut(), None, 0),
         };
         state.label_text = text;
-        (state.label_hwnd, state.label_font, state.last_track_pt)
+        (state.label_hwnd, state.label_font, state.last_track_pt, state.label_padding)
     });
 
     if label_hwnd.is_null() {
@@ -887,8 +897,8 @@ fn handle_label(text_ptr: WPARAM) {
 
                 let text_w = rc.right - rc.left;
                 let text_h = rc.bottom - rc.top;
-                let win_w = text_w + LABEL_PADDING * 2;
-                let win_h = text_h + LABEL_PADDING * 2;
+                let win_w = text_w + label_padding * 2;
+                let win_h = text_h + label_padding * 2;
 
                 // Determine which monitor to use based on the last trail point.
                 let pt = track_pt.unwrap_or((0, 0));
