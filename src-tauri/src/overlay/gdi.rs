@@ -27,11 +27,16 @@ pub(super) struct GdiRenderer {
 }
 
 impl GdiRenderer {
-    /// Create a new GDI renderer with a full-screen back buffer.
+    /// Create a new GDI renderer with a window-sized back buffer.
     ///
-    /// `hwnd` is the overlay window; `vw`/`vh` are the virtual-screen
+    /// `hwnd` is the overlay window; `width_px`/`height_px` are the window
     /// dimensions in pixels.
-    pub fn new(hwnd: HWND, config: &OverlayConfig, vw: i32, vh: i32) -> Result<Self, String> {
+    pub fn new(
+        hwnd: HWND,
+        config: &OverlayConfig,
+        width_px: i32,
+        height_px: i32,
+    ) -> Result<Self, String> {
         unsafe {
             let (r, g, b) = config.color;
             let colorref = (r as u32) | ((g as u32) << 8) | ((b as u32) << 16);
@@ -53,7 +58,7 @@ impl GdiRenderer {
                 return Err("CreateCompatibleDC failed".to_string());
             }
 
-            let mem_bmp = CreateCompatibleBitmap(screen_dc, vw, vh);
+            let mem_bmp = CreateCompatibleBitmap(screen_dc, width_px, height_px);
             if mem_bmp.is_null() {
                 DeleteDC(mem_dc);
                 ReleaseDC(hwnd, screen_dc);
@@ -85,8 +90,8 @@ impl GdiRenderer {
             let full_rc = RECT {
                 left: 0,
                 top: 0,
-                right: vw,
-                bottom: vh,
+                right: width_px,
+                bottom: height_px,
             };
             FillRect(mem_dc, &full_rc, black_brush);
 
@@ -97,8 +102,8 @@ impl GdiRenderer {
                 mem_bmp,
                 old_mem_bmp,
                 black_brush,
-                back_buffer_width: vw,
-                back_buffer_height: vh,
+                back_buffer_width: width_px,
+                back_buffer_height: height_px,
             })
         }
     }

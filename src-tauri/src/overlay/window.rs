@@ -24,11 +24,11 @@ use windows_sys::Win32::{
     UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
         GetSystemMetrics, PostQuitMessage, PostThreadMessageW, RegisterClassExW,
-        SetLayeredWindowAttributes, SetWindowPos, ShowWindow, UnregisterClassW, HWND_TOPMOST,
-        LWA_ALPHA, LWA_COLORKEY, MSG, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
-        SM_YVIRTUALSCREEN, SWP_NOACTIVATE, SW_HIDE, SW_SHOWNOACTIVATE, WM_APP, WM_DESTROY,
-        WM_ERASEBKGND, WM_PAINT, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-        WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+        SetLayeredWindowAttributes, SetWindowPos, ShowWindow, UnregisterClassW, HWND_NOTOPMOST,
+        HWND_TOPMOST, LWA_ALPHA, LWA_COLORKEY, MSG, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
+        SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+        SWP_SHOWWINDOW, SW_HIDE, WM_APP, WM_DESTROY, WM_ERASEBKGND, WM_PAINT, WNDCLASSEXW,
+        WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_POPUP,
     },
 };
 
@@ -44,6 +44,21 @@ const WM_OVERLAY_TRACK: u32 = WM_APP + 2;
 const WM_OVERLAY_END: u32 = WM_APP + 3;
 const WM_OVERLAY_SHUTDOWN: u32 = WM_APP + 4;
 const WM_OVERLAY_LABEL: u32 = WM_APP + 5;
+
+/// Tiny inset applied to overlay bounds to avoid "exact fullscreen window"
+/// classification by parts of the Windows shell.
+///
+/// Why this exists:
+/// - A borderless, monitor-sized popup can be treated similarly to fullscreen UI.
+/// - In that state, taskbar behavior and shell indicators (e.g. transient
+///   "do not disturb / focus assist"-like icon changes) can become unstable.
+/// - We do not need true pixel-perfect edge coverage for a gesture trail.
+///
+/// Trade-off:
+/// - A 1px transparent margin may remain at monitor edges.
+/// - In exchange, shell side effects are reduced and z-order behavior becomes
+///   more predictable.
+const OVERLAY_FULLSCREEN_AVOID_MARGIN_PX: i32 = 1;
 
 // ---------------------------------------------------------------------------
 // Window class names
@@ -136,7 +151,8 @@ thread_local! {
 /// 1. Gets the current thread ID for message posting.
 /// 2. Spawns a bridge thread that reads [`OverlayCommand`] from the crossbeam
 ///    channel and posts corresponding `WM_APP+N` messages.
-/// 3. Registers a window class and creates a full-screen layered window.
+/// 3. Registers a window class and creates a near-fullscreen layered window
+///    (with a tiny inset to avoid exact-fullscreen shell classification).
 /// 4. Creates a renderer and stores state in thread-local [`OVERLAY_STATE`].
 /// 5. Runs the Win32 message loop until `WM_QUIT`.
 /// 6. Cleans up: renderer resources, destroys window, unregisters class,
@@ -229,18 +245,42 @@ pub(super) fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<Overlay
         let vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
         let vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
 
-        let ex_style =
-            WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
+        // Intentionally avoid persistent WS_EX_TOPMOST style here.
+        //
+        // The overlay is only a visual aid; a permanently top-most, borderless
+        // fullscreen-ish window can disturb taskbar z-order and shell heuristics.
+        // We instead raise it transiently with SetWindowPos(HWND_TOPMOST, ...)
+        // only while a gesture is active, and drop it on gesture end.
+        // We still keep:
+        // - WS_EX_NOACTIVATE: never steal keyboard focus.
+        // - WS_EX_TRANSPARENT: pass mouse through.
+        // - WS_EX_TOOLWINDOW: stay out of Alt-Tab/taskbar as a normal app window.
+        let ex_style = WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
+
+        // Apply a small inset so the window is not exactly virtual-screen-sized.
+        // Keep a fallback to full size if dimensions are too small to inset.
+        let (wx, wy, ww, wh) = if vw > OVERLAY_FULLSCREEN_AVOID_MARGIN_PX * 2
+            && vh > OVERLAY_FULLSCREEN_AVOID_MARGIN_PX * 2
+        {
+            (
+                vx + OVERLAY_FULLSCREEN_AVOID_MARGIN_PX,
+                vy + OVERLAY_FULLSCREEN_AVOID_MARGIN_PX,
+                vw - OVERLAY_FULLSCREEN_AVOID_MARGIN_PX * 2,
+                vh - OVERLAY_FULLSCREEN_AVOID_MARGIN_PX * 2,
+            )
+        } else {
+            (vx, vy, vw, vh)
+        };
 
         let hwnd = CreateWindowExW(
             ex_style,
             CLASS_NAME.as_ptr(),
             std::ptr::null(), // no title
             WS_POPUP,
-            vx,
-            vy,
-            vw,
-            vh,
+            wx,
+            wy,
+            ww,
+            wh,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
             hinstance,
@@ -258,7 +298,7 @@ pub(super) fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<Overlay
         SetLayeredWindowAttributes(hwnd, 0x00000000, 0, LWA_COLORKEY);
 
         // Create the trail renderer.
-        let renderer: Box<dyn TrailRenderer> = match GdiRenderer::new(hwnd, &config, vw, vh) {
+        let renderer: Box<dyn TrailRenderer> = match GdiRenderer::new(hwnd, &config, ww, wh) {
             Ok(r) => Box::new(r),
             Err(e) => {
                 error!("failed to create GDI renderer: {e}");
@@ -272,7 +312,7 @@ pub(super) fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<Overlay
         let (r, g, b) = config.color;
         debug!(
             "Overlay window created: hwnd={:?}, size={}x{} at ({},{}), color=#{:02X}{:02X}{:02X}, width={}",
-            hwnd, vw, vh, vx, vy, r, g, b, config.pen_width
+            hwnd, ww, wh, wx, wy, r, g, b, config.pen_width
         );
 
         // Register label window class.
@@ -296,8 +336,10 @@ pub(super) fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<Overlay
             // Continue without label support — trail overlay still works.
         }
 
+        // Same policy as the trail window: no persistent top-most style.
+        // Label visibility is raised/lowered transiently during gesture display.
         let label_ex_style =
-            WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
+            WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
 
         let label_hwnd = if label_atom != 0 {
             CreateWindowExW(
@@ -349,8 +391,8 @@ pub(super) fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<Overlay
             *cell.borrow_mut() = Some(OverlayState {
                 hwnd,
                 trail: Vec::with_capacity(256),
-                origin_x: vx,
-                origin_y: vy,
+                origin_x: wx,
+                origin_y: wy,
                 renderer,
                 label_padding: config.label_padding,
                 config,
@@ -432,7 +474,19 @@ fn handle_start() {
             if !label_hwnd.is_null() {
                 ShowWindow(label_hwnd, SW_HIDE);
             }
-            ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            // Keep overlay visible above arbitrary app windows while gesturing.
+            // We make it transiently top-most only for the gesture lifetime and
+            // drop that state on end; this preserves visibility without keeping
+            // a permanent top-most fullscreen window around.
+            SetWindowPos(
+                hwnd,
+                HWND_TOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+            );
             InvalidateRect(hwnd, std::ptr::null(), 1);
         }
     }
@@ -496,10 +550,28 @@ fn handle_end() {
     if let Some(hwnd) = hwnd {
         unsafe {
             if !label_hwnd.is_null() {
+                SetWindowPos(
+                    label_hwnd,
+                    HWND_NOTOPMOST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                );
                 ShowWindow(label_hwnd, SW_HIDE);
             }
             InvalidateRect(hwnd, std::ptr::null(), 1);
             windows_sys::Win32::Graphics::Gdi::UpdateWindow(hwnd);
+            SetWindowPos(
+                hwnd,
+                HWND_NOTOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
             ShowWindow(hwnd, SW_HIDE);
         }
     }
@@ -590,13 +662,14 @@ fn handle_label(text_ptr: WPARAM) {
                 win_y,
                 win_w,
                 win_h,
-                SWP_NOACTIVATE,
+                SWP_NOACTIVATE | SWP_SHOWWINDOW,
             );
+            // Rounded region is owned by the window after SetWindowRgn succeeds.
+            // Only delete it on failure to avoid double-free.
             let rgn = CreateRoundRectRgn(0, 0, win_w + 1, win_h + 1, corner_radius, corner_radius);
             if !rgn.is_null() && SetWindowRgn(label_hwnd, rgn, 1) == 0 {
                 DeleteObject(rgn as *mut _);
             }
-            ShowWindow(label_hwnd, SW_SHOWNOACTIVATE);
             InvalidateRect(label_hwnd, std::ptr::null(), 1);
         },
     }

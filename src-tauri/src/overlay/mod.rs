@@ -1,7 +1,7 @@
 //! Gesture overlay thread.
 //!
 //! Manages a transparent overlay window that draws the mouse gesture trail
-//! using a pluggable rendering backend on a full-screen layered window.
+//! using a pluggable rendering backend on a near-fullscreen layered window.
 //! Commands are received via a crossbeam channel from the hook thread and
 //! bridged into the Win32 message loop via custom `WM_APP` messages.
 //!
