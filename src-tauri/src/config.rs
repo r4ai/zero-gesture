@@ -93,7 +93,7 @@ pub struct AppConfig {
     /// Deadzone (in pixels) used to ignore tiny ambiguous diagonal movement.
     pub axis_ambiguity_deadzone_px: i32,
 
-    /// Font family name for the gesture label overlay (e.g. `"Segoe UI"`).
+    /// Font family name for the gesture label overlay (e.g. `"Yu Gothic UI Semibold"`).
     pub label_font_family: String,
 
     /// Font size in pixels for the gesture label overlay.
