@@ -22,6 +22,7 @@ import {
   SidebarMenuItem,
   SidebarProvider,
   SidebarTrigger,
+  useSidebar,
 } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
 
@@ -53,15 +54,24 @@ const sections = [
   },
 ]
 
-const SettingsSidebar = () => {
+const SettingsSidebarContent = () => {
+  const { state } = useSidebar()
+  const isCollapsed = state === "collapsed"
+
   return (
-    <Sidebar variant="inset" collapsible="icon" className="w-64 border-r">
+    <>
       <SidebarContent>
         <div className="p-4">
-          <div className="relative">
-            <Search className="absolute top-2.5 left-2.5 h-4 w-4 text-muted-foreground" />
-            <Input type="search" placeholder="Search..." className="pl-9" />
-          </div>
+          {isCollapsed ? (
+            <div className="flex h-9 items-center justify-center">
+              <Search className="h-4 w-4 text-muted-foreground" />
+            </div>
+          ) : (
+            <div className="relative">
+              <Search className="absolute top-2.5 left-2.5 h-4 w-4 text-muted-foreground" />
+              <Input type="search" placeholder="Search..." className="pl-9" />
+            </div>
+          )}
         </div>
         <Separator />
         <SidebarGroup>
@@ -69,7 +79,7 @@ const SettingsSidebar = () => {
             <SidebarMenu>
               {sections.map((section) => (
                 <SidebarMenuItem key={section.title}>
-                  <SidebarMenuButton asChild>
+                  <SidebarMenuButton asChild tooltip={section.title}>
                     <Link
                       to={section.url}
                       className="[&.active]:bg-accent [&.active]:text-accent-foreground"
@@ -90,6 +100,14 @@ const SettingsSidebar = () => {
       <SidebarFooter className="p-4">
         <SidebarTrigger />
       </SidebarFooter>
+    </>
+  )
+}
+
+const SettingsSidebar = () => {
+  return (
+    <Sidebar variant="inset" collapsible="icon" className="w-64 border-r">
+      <SettingsSidebarContent />
     </Sidebar>
   )
 }
