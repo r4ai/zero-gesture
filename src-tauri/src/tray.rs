@@ -101,6 +101,7 @@ pub fn setup<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
 fn handle_toggle<R: Runtime>(app: &AppHandle<R>, toggle_item: &MenuItem<R>) {
     let shared_config = app.state::<crate::SharedConfig>();
     let runtime = app.state::<crate::ThreadRuntime>();
+    let config_dir = app.state::<crate::ConfigDir>();
 
     // Read the current enabled state and build a toggled config.
     let new_config = {
@@ -118,8 +119,12 @@ fn handle_toggle<R: Runtime>(app: &AppHandle<R>, toggle_item: &MenuItem<R>) {
 
     let new_enabled = new_config.enabled;
 
-    if let Err(err) = crate::apply_config_update(new_config, shared_config.inner(), runtime.inner())
-    {
+    if let Err(err) = crate::apply_config_update(
+        new_config,
+        shared_config.inner(),
+        runtime.inner(),
+        config_dir.inner(),
+    ) {
         warn!("failed to toggle gestures: {err}");
         return;
     }
