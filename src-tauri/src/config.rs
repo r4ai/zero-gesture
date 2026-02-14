@@ -7,6 +7,48 @@ use serde::{Deserialize, Serialize};
 
 use crate::executor::Action;
 
+/// What property of the foreground window to inspect.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum MatchTarget {
+    /// Executable file name (e.g., "chrome.exe").
+    ProcessName,
+    /// Win32 window class name (e.g., "CabinetWClass").
+    WindowClass,
+    /// Window title text.
+    Title,
+}
+
+/// How to compare the target value against the pattern.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum MatchMethod {
+    /// Exact match (case-insensitive for process_name/title, case-sensitive for window_class).
+    Exact,
+    /// Substring match (case-insensitive).
+    Contains,
+    /// Regex pattern match.
+    Regex,
+}
+
+/// A single matching rule for identifying an application.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AppMatcher {
+    /// What property of the foreground window to inspect.
+    pub target: MatchTarget,
+    /// How to compare the target value against the pattern.
+    pub method: MatchMethod,
+    /// The pattern to match against.
+    pub value: String,
+}
+
+/// Definition of an application for per-app gesture bindings.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AppDefinition {
+    /// Matching rules (OR logic — any match counts).
+    pub matchers: Vec<AppMatcher>,
+}
+
 /// A gesture-to-action binding with an optional human-readable label.
 ///
 /// When serialized, the `action` fields are flattened into the same JSON object
@@ -105,11 +147,18 @@ pub struct AppConfig {
     /// Padding in pixels around the gesture label text.
     pub label_padding: f32,
 
-    /// Gesture-to-action bindings.
+    /// Named app definitions for per-app gesture bindings.
     ///
-    /// Keys are `GestureKind` variant names (e.g. `"Left"`, `"DownRight"`),
-    /// values are the action to execute when that gesture is recognised.
-    pub bindings: HashMap<String, GestureBinding>,
+    /// Each app has a list of matchers (OR logic — any match counts).
+    #[serde(default)]
+    pub apps: HashMap<String, AppDefinition>,
+
+    /// Gesture-to-action bindings, keyed by app ID.
+    ///
+    /// The `"default"` key contains the global fallback bindings. Other keys
+    /// reference app IDs defined in `apps`. When a matched app has no binding
+    /// for a gesture, the `"default"` bindings are used as fallback.
+    pub bindings: HashMap<String, HashMap<String, GestureBinding>>,
 }
 
 impl AppConfig {
@@ -140,9 +189,9 @@ impl AppConfig {
     /// Default padding (in pixels) around the gesture label text.
     pub const DEFAULT_LABEL_PADDING: f32 = 24.0;
 
-    /// Default gesture-to-action bindings.
-    fn default_bindings() -> HashMap<String, GestureBinding> {
-        HashMap::from([
+    /// Default gesture-to-action bindings (placed under `"default"` key).
+    fn default_bindings() -> HashMap<String, HashMap<String, GestureBinding>> {
+        let default_map = HashMap::from([
             (
                 "Left".to_string(),
                 GestureBinding {
@@ -233,7 +282,8 @@ impl AppConfig {
                     label: Some("Close Tab".to_string()),
                 },
             ),
-        ])
+        ]);
+        HashMap::from([("default".to_string(), default_map)])
     }
 }
 
@@ -253,6 +303,7 @@ impl Default for AppConfig {
             label_font_size: Self::DEFAULT_LABEL_FONT_SIZE,
             label_font_weight: Self::DEFAULT_LABEL_FONT_WEIGHT,
             label_padding: Self::DEFAULT_LABEL_PADDING,
+            apps: HashMap::new(),
             bindings: Self::default_bindings(),
         }
     }
@@ -309,7 +360,14 @@ fn config_path(config_dir: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{load_or_default, save, AppConfig};
+    use super::*;
+
+    /// Helper to get the "default" bindings map from config.
+    fn get_default_bindings(cfg: &AppConfig) -> &HashMap<String, GestureBinding> {
+        cfg.bindings
+            .get("default")
+            .expect("default bindings must exist")
+    }
 
     #[test]
     fn default_contains_hook_related_values() {
@@ -329,17 +387,19 @@ mod tests {
         assert_eq!(cfg.label_font_size, AppConfig::DEFAULT_LABEL_FONT_SIZE);
         assert_eq!(cfg.label_font_weight, AppConfig::DEFAULT_LABEL_FONT_WEIGHT);
         assert_eq!(cfg.label_padding, AppConfig::DEFAULT_LABEL_PADDING);
-        assert_eq!(cfg.bindings.len(), 10);
-        assert!(cfg.bindings.contains_key("Left"));
-        assert!(cfg.bindings.contains_key("Right"));
-        assert!(cfg.bindings.contains_key("Up"));
-        assert!(cfg.bindings.contains_key("Down"));
-        assert!(cfg.bindings.contains_key("DownUp"));
-        assert!(cfg.bindings.contains_key("UpDown"));
-        assert!(cfg.bindings.contains_key("UpRight"));
-        assert!(cfg.bindings.contains_key("UpLeft"));
-        assert!(cfg.bindings.contains_key("RightDown"));
-        assert!(cfg.bindings.contains_key("DownRight"));
+        assert!(cfg.apps.is_empty());
+        let bindings = get_default_bindings(&cfg);
+        assert_eq!(bindings.len(), 10);
+        assert!(bindings.contains_key("Left"));
+        assert!(bindings.contains_key("Right"));
+        assert!(bindings.contains_key("Up"));
+        assert!(bindings.contains_key("Down"));
+        assert!(bindings.contains_key("DownUp"));
+        assert!(bindings.contains_key("UpDown"));
+        assert!(bindings.contains_key("UpRight"));
+        assert!(bindings.contains_key("UpLeft"));
+        assert!(bindings.contains_key("RightDown"));
+        assert!(bindings.contains_key("DownRight"));
     }
 
     #[test]
@@ -369,17 +429,18 @@ mod tests {
         assert_eq!(cfg.label_font_size, AppConfig::DEFAULT_LABEL_FONT_SIZE);
         assert_eq!(cfg.label_font_weight, AppConfig::DEFAULT_LABEL_FONT_WEIGHT);
         assert_eq!(cfg.label_padding, AppConfig::DEFAULT_LABEL_PADDING);
-        assert_eq!(cfg.bindings.len(), 10);
-        assert!(cfg.bindings.contains_key("Left"));
-        assert!(cfg.bindings.contains_key("Right"));
-        assert!(cfg.bindings.contains_key("Up"));
-        assert!(cfg.bindings.contains_key("Down"));
-        assert!(cfg.bindings.contains_key("DownUp"));
-        assert!(cfg.bindings.contains_key("UpDown"));
-        assert!(cfg.bindings.contains_key("UpRight"));
-        assert!(cfg.bindings.contains_key("UpLeft"));
-        assert!(cfg.bindings.contains_key("RightDown"));
-        assert!(cfg.bindings.contains_key("DownRight"));
+        let bindings = get_default_bindings(&cfg);
+        assert_eq!(bindings.len(), 10);
+        assert!(bindings.contains_key("Left"));
+        assert!(bindings.contains_key("Right"));
+        assert!(bindings.contains_key("Up"));
+        assert!(bindings.contains_key("Down"));
+        assert!(bindings.contains_key("DownUp"));
+        assert!(bindings.contains_key("UpDown"));
+        assert!(bindings.contains_key("UpRight"));
+        assert!(bindings.contains_key("UpLeft"));
+        assert!(bindings.contains_key("RightDown"));
+        assert!(bindings.contains_key("DownRight"));
     }
 
     #[test]
@@ -389,21 +450,24 @@ mod tests {
             "trail_color": "#00BFFF",
             "trail_thickness": 3.0,
             "bindings": {
-                "Left": { "type": "keyboard", "keys": ["alt", "left"] },
-                "Right": { "type": "keyboard", "keys": ["alt", "right"], "label": "Forward" },
-                "Down": { "type": "keyboard", "keys": ["ctrl", "w"] }
+                "default": {
+                    "Left": { "type": "keyboard", "keys": ["alt", "left"] },
+                    "Right": { "type": "keyboard", "keys": ["alt", "right"], "label": "Forward" },
+                    "Down": { "type": "keyboard", "keys": ["ctrl", "w"] }
+                }
             }
         }"##;
 
         let cfg: AppConfig = serde_json::from_str(raw).expect("config with bindings must parse");
-        assert_eq!(cfg.bindings.len(), 3);
-        assert!(cfg.bindings.contains_key("Left"));
-        assert!(cfg.bindings.contains_key("Right"));
-        assert!(cfg.bindings.contains_key("Down"));
+        let bindings = get_default_bindings(&cfg);
+        assert_eq!(bindings.len(), 3);
+        assert!(bindings.contains_key("Left"));
+        assert!(bindings.contains_key("Right"));
+        assert!(bindings.contains_key("Down"));
         // Without label
-        assert_eq!(cfg.bindings["Left"].label, None);
+        assert_eq!(bindings["Left"].label, None);
         // With label
-        assert_eq!(cfg.bindings["Right"].label, Some("Forward".to_string()));
+        assert_eq!(bindings["Right"].label, Some("Forward".to_string()));
     }
 
     #[test]
@@ -432,17 +496,83 @@ mod tests {
     fn deserialize_legacy_json_gets_default_bindings() {
         let raw = r##"{ "gesture_trigger_button": "right" }"##;
         let cfg: AppConfig = serde_json::from_str(raw).expect("legacy JSON must parse");
-        assert_eq!(cfg.bindings.len(), 10);
-        assert!(cfg.bindings.contains_key("Left"));
-        assert!(cfg.bindings.contains_key("Right"));
-        assert!(cfg.bindings.contains_key("Up"));
-        assert!(cfg.bindings.contains_key("Down"));
-        assert!(cfg.bindings.contains_key("DownUp"));
-        assert!(cfg.bindings.contains_key("UpDown"));
-        assert!(cfg.bindings.contains_key("UpRight"));
-        assert!(cfg.bindings.contains_key("UpLeft"));
-        assert!(cfg.bindings.contains_key("RightDown"));
-        assert!(cfg.bindings.contains_key("DownRight"));
+        let bindings = get_default_bindings(&cfg);
+        assert_eq!(bindings.len(), 10);
+        assert!(bindings.contains_key("Left"));
+        assert!(bindings.contains_key("Right"));
+        assert!(bindings.contains_key("Up"));
+        assert!(bindings.contains_key("Down"));
+        assert!(bindings.contains_key("DownUp"));
+        assert!(bindings.contains_key("UpDown"));
+        assert!(bindings.contains_key("UpRight"));
+        assert!(bindings.contains_key("UpLeft"));
+        assert!(bindings.contains_key("RightDown"));
+        assert!(bindings.contains_key("DownRight"));
+    }
+
+    #[test]
+    fn deserialize_config_with_apps_and_per_app_bindings() {
+        let raw = r##"{
+            "apps": {
+                "browser": {
+                    "matchers": [
+                        { "target": "process_name", "method": "exact", "value": "chrome.exe" },
+                        { "target": "process_name", "method": "exact", "value": "firefox.exe" }
+                    ]
+                },
+                "explorer": {
+                    "matchers": [
+                        { "target": "window_class", "method": "exact", "value": "CabinetWClass" }
+                    ]
+                }
+            },
+            "bindings": {
+                "default": {
+                    "Left": { "type": "keyboard", "keys": ["alt", "left"], "label": "Back" }
+                },
+                "browser": {
+                    "Left": { "type": "keyboard", "keys": ["alt", "left"], "label": "Back" }
+                },
+                "explorer": {
+                    "Left": { "type": "keyboard", "keys": ["alt", "up"], "label": "Up" }
+                }
+            }
+        }"##;
+
+        let cfg: AppConfig = serde_json::from_str(raw).expect("per-app config must parse");
+        assert_eq!(cfg.apps.len(), 2);
+        assert!(cfg.apps.contains_key("browser"));
+        assert!(cfg.apps.contains_key("explorer"));
+        assert_eq!(cfg.apps["browser"].matchers.len(), 2);
+        assert_eq!(cfg.apps["explorer"].matchers.len(), 1);
+        assert_eq!(cfg.bindings.len(), 3);
+        assert!(cfg.bindings.contains_key("default"));
+        assert!(cfg.bindings.contains_key("browser"));
+        assert!(cfg.bindings.contains_key("explorer"));
+    }
+
+    #[test]
+    fn deserialize_matcher_types() {
+        let raw = r##"{
+            "apps": {
+                "terminals": {
+                    "matchers": [
+                        { "target": "process_name", "method": "regex", "value": "^(WindowsTerminal|cmd)\\.exe$" },
+                        { "target": "title", "method": "contains", "value": "Terminal" },
+                        { "target": "window_class", "method": "exact", "value": "CASCADIA_HOSTING_WINDOW_CLASS" }
+                    ]
+                }
+            }
+        }"##;
+
+        let cfg: AppConfig = serde_json::from_str(raw).expect("matcher types must parse");
+        let matchers = &cfg.apps["terminals"].matchers;
+        assert_eq!(matchers[0].target, super::MatchTarget::ProcessName);
+        assert_eq!(matchers[0].method, super::MatchMethod::Regex);
+        assert_eq!(matchers[1].target, super::MatchTarget::Title);
+        assert_eq!(matchers[1].method, super::MatchMethod::Contains);
+        assert_eq!(matchers[2].target, super::MatchTarget::WindowClass);
+        assert_eq!(matchers[2].method, super::MatchMethod::Exact);
     }
 
     #[test]

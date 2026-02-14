@@ -6,6 +6,7 @@ mod hook;
 mod log_config;
 pub mod overlay;
 mod tray;
+pub mod window_info;
 
 use std::path::{Path, PathBuf};
 use std::sync::{

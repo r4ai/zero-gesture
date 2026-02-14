@@ -90,10 +90,11 @@ use std::thread::{self, JoinHandle};
 use crossbeam_channel::{Receiver, Sender};
 use log::{debug, error, info, trace, warn};
 
-use crate::config::{AppConfig, GestureBinding};
+use crate::config::{AppConfig, GestureBinding, MatchMethod, MatchTarget};
 use crate::executor::{self, generate_label, Action};
 use crate::gesture::{GestureKind, GestureRecognizer};
 use crate::overlay::OverlayCommand;
+use crate::window_info::ForegroundWindowInfo;
 use crate::SharedConfig;
 
 #[cfg(windows)]
@@ -224,6 +225,85 @@ fn resolve_safety_timeout_ms(value: u32) -> u32 {
 }
 
 // ---------------------------------------------------------------------------
+// Per-app matching
+// ---------------------------------------------------------------------------
+
+/// Compiled matching logic for a single [`AppMatcher`](crate::config::AppMatcher).
+///
+/// Pre-processes the match value at startup so the hot path only does
+/// simple string operations or regex matching.
+#[derive(Debug, Clone)]
+enum CompiledMatchLogic {
+    /// Exact match (case-insensitive): value is pre-lowercased.
+    ExactCaseInsensitive(String),
+    /// Exact match (case-sensitive): value as-is.
+    ExactCaseSensitive(String),
+    /// Substring match (case-insensitive): value is pre-lowercased.
+    Contains(String),
+    /// Regex pattern match.
+    Regex(regex::Regex),
+}
+
+/// A compiled matcher combining a target and pre-processed matching logic.
+#[derive(Debug, Clone)]
+struct CompiledMatcher {
+    target: MatchTarget,
+    logic: CompiledMatchLogic,
+}
+
+impl CompiledMatcher {
+    /// Test whether this matcher matches the given window info.
+    fn matches(&self, info: &ForegroundWindowInfo) -> bool {
+        let target_value = match &self.target {
+            MatchTarget::ProcessName => info.process_name.as_deref(),
+            MatchTarget::WindowClass => info.window_class.as_deref(),
+            MatchTarget::Title => info.title.as_deref(),
+        };
+        let target_value = match target_value {
+            Some(v) => v,
+            None => return false,
+        };
+        match &self.logic {
+            CompiledMatchLogic::ExactCaseInsensitive(pattern) => {
+                target_value.to_lowercase() == *pattern
+            }
+            CompiledMatchLogic::ExactCaseSensitive(pattern) => target_value == pattern,
+            CompiledMatchLogic::Contains(pattern) => {
+                target_value.to_lowercase().contains(pattern.as_str())
+            }
+            CompiledMatchLogic::Regex(re) => re.is_match(target_value),
+        }
+    }
+}
+
+/// A compiled app definition with its ID and matchers.
+#[derive(Debug, Clone)]
+struct CompiledApp {
+    id: String,
+    matchers: Vec<CompiledMatcher>,
+}
+
+/// Pre-parsed bindings and labels for one app (or the "default" set).
+#[derive(Debug, Clone)]
+struct AppBindingSet {
+    bindings: HashMap<GestureKind, Action>,
+    labels: HashMap<GestureKind, String>,
+}
+
+/// Linear scan to find the first app whose matchers match the given window info.
+///
+/// Returns the app ID if a match is found, `None` otherwise.
+/// Each app's matchers use OR logic — any single matcher matching is sufficient.
+fn match_app<'a>(apps: &'a [CompiledApp], info: &ForegroundWindowInfo) -> Option<&'a str> {
+    for app in apps {
+        if app.matchers.iter().any(|m| m.matches(info)) {
+            return Some(&app.id);
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
 // Public interface
 // ---------------------------------------------------------------------------
 
@@ -316,17 +396,42 @@ struct HookConfig {
     min_segment_px: i32,
     direction_switch_confirm_px: i32,
     axis_ambiguity_deadzone_px: i32,
-    /// Pre-parsed gesture-to-action bindings.
-    ///
-    /// String keys from the config are parsed into [`GestureKind`] at
-    /// startup so that the hot-path hook callback only needs a `HashMap`
-    /// lookup.
-    bindings: HashMap<GestureKind, Action>,
-    /// Pre-resolved label text for each gesture binding.
-    ///
-    /// If the binding has an explicit `label`, that is used; otherwise
-    /// [`generate_label`] produces a label from the action's key names.
-    labels: HashMap<GestureKind, String>,
+    /// Compiled app definitions for per-app matching.
+    apps: Vec<CompiledApp>,
+    /// Per-app bindings, keyed by app ID. Includes `"default"`.
+    binding_sets: HashMap<String, AppBindingSet>,
+}
+
+impl HookConfig {
+    /// Look up the action for a gesture, checking app-specific bindings first,
+    /// then falling back to `"default"`.
+    fn resolve_binding(&self, kind: &GestureKind, matched_app: Option<&str>) -> Option<&Action> {
+        if let Some(app_id) = matched_app {
+            if let Some(set) = self.binding_sets.get(app_id) {
+                if let Some(action) = set.bindings.get(kind) {
+                    return Some(action);
+                }
+            }
+        }
+        self.binding_sets
+            .get("default")
+            .and_then(|set| set.bindings.get(kind))
+    }
+
+    /// Look up the label for a gesture, checking app-specific labels first,
+    /// then falling back to `"default"`.
+    fn resolve_label(&self, kind: &GestureKind, matched_app: Option<&str>) -> Option<&String> {
+        if let Some(app_id) = matched_app {
+            if let Some(set) = self.binding_sets.get(app_id) {
+                if let Some(label) = set.labels.get(kind) {
+                    return Some(label);
+                }
+            }
+        }
+        self.binding_sets
+            .get("default")
+            .and_then(|set| set.labels.get(kind))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -374,6 +479,8 @@ enum GestureState {
         recognizer: GestureRecognizer,
         /// Last gesture recognized during this gesture session (for change detection).
         last_recognized: Option<GestureKind>,
+        /// The matched app ID for this gesture session (for per-app bindings).
+        matched_app: Option<String>,
     },
 }
 
@@ -507,9 +614,6 @@ struct EventEffect {
     request_replay: Option<(i32, i32)>,
     /// If set, the given action should be executed.
     request_execute: Option<Action>,
-    /// If set, the window at these screen coordinates should be activated
-    /// (brought to the foreground).
-    activate_window_at: Option<(i32, i32)>,
 }
 
 /// Info needed to replay a suppressed click via [`SendInput`].
@@ -604,32 +708,96 @@ pub fn spawn(
     let hook_config = {
         let cfg = shared_config.0.read().unwrap();
 
-        // Parse string keys into GestureKind at startup (not in the hot path).
-        let parsed: Vec<(GestureKind, &GestureBinding)> = cfg
-            .bindings
-            .iter()
-            .filter_map(|(name, binding)| {
-                let kind = parse_gesture_kind(name);
-                if kind.is_none() {
-                    warn!("Unknown gesture name in bindings: {:?}", name);
+        // Compile app matchers.
+        // Sort by app_id for deterministic matching order, since HashMap
+        // iteration is non-deterministic and match_app returns first match.
+        let mut sorted_apps: Vec<_> = cfg.apps.iter().collect();
+        sorted_apps.sort_by_key(|(app_id, _)| (*app_id).clone());
+
+        let apps: Vec<CompiledApp> = sorted_apps
+            .into_iter()
+            .filter_map(|(app_id, app_def)| {
+                let matchers: Vec<CompiledMatcher> = app_def
+                    .matchers
+                    .iter()
+                    .filter_map(compile_matcher)
+                    .collect();
+                if matchers.is_empty() {
+                    warn!("App {:?} has no valid matchers, skipping", app_id);
+                    return None;
                 }
-                kind.map(|k| (k, binding))
+                Some(CompiledApp {
+                    id: app_id.clone(),
+                    matchers,
+                })
             })
             .collect();
 
-        let bindings: HashMap<GestureKind, Action> =
-            parsed.iter().map(|(k, b)| (*k, b.action.clone())).collect();
+        // Parse per-app bindings.
+        let mut binding_sets: HashMap<String, AppBindingSet> = HashMap::new();
+        let mut total_bindings = 0;
 
-        let labels: HashMap<GestureKind, String> = parsed
-            .iter()
-            .map(|(k, b)| {
-                let label = b.label.clone().unwrap_or_else(|| generate_label(&b.action));
-                (*k, label)
-            })
-            .collect();
+        for (app_id, gesture_map) in &cfg.bindings {
+            if app_id != "default" && !cfg.apps.contains_key(app_id) {
+                warn!(
+                    "Bindings reference app {:?} which is not defined in apps, skipping",
+                    app_id
+                );
+                continue;
+            }
 
-        if !bindings.is_empty() {
-            info!("Loaded {} gesture binding(s)", bindings.len());
+            let parsed: Vec<(GestureKind, &GestureBinding)> = gesture_map
+                .iter()
+                .filter_map(|(name, binding)| {
+                    let kind = parse_gesture_kind(name);
+                    if kind.is_none() {
+                        warn!(
+                            "Unknown gesture name {:?} in bindings for app {:?}",
+                            name, app_id
+                        );
+                    }
+                    kind.map(|k| (k, binding))
+                })
+                .collect();
+
+            let bindings: HashMap<GestureKind, Action> =
+                parsed.iter().map(|(k, b)| (*k, b.action.clone())).collect();
+
+            let labels: HashMap<GestureKind, String> = parsed
+                .iter()
+                .map(|(k, b)| {
+                    let label = b.label.clone().unwrap_or_else(|| generate_label(&b.action));
+                    (*k, label)
+                })
+                .collect();
+
+            total_bindings += bindings.len();
+            binding_sets.insert(app_id.clone(), AppBindingSet { bindings, labels });
+        }
+
+        // Ensure a "default" binding set is always present, since resolution
+        // logic falls back to it. If the user did not define one, insert an
+        // empty set and warn so gestures do not silently stop working.
+        if !binding_sets.contains_key("default") {
+            warn!("No \"default\" bindings defined in configuration; inserting empty default set");
+            binding_sets.insert(
+                "default".to_string(),
+                AppBindingSet {
+                    bindings: HashMap::new(),
+                    labels: HashMap::new(),
+                },
+            );
+        }
+
+        if total_bindings > 0 {
+            info!(
+                "Loaded {} gesture binding(s) across {} app set(s)",
+                total_bindings,
+                binding_sets.len()
+            );
+        }
+        if !apps.is_empty() {
+            info!("Compiled {} app definition(s)", apps.len());
         }
 
         HookConfig {
@@ -643,8 +811,8 @@ pub fn spawn(
             axis_ambiguity_deadzone_px: resolve_axis_ambiguity_deadzone_px(
                 cfg.axis_ambiguity_deadzone_px,
             ),
-            bindings,
-            labels,
+            apps,
+            binding_sets,
         }
     };
 
@@ -874,13 +1042,13 @@ fn process_event_pure(
     event: MouseEvent,
     pt: (i32, i32),
     tick: u32,
+    matched_app: Option<String>,
 ) -> EventEffect {
     let mut effect = EventEffect {
         suppress: false,
         overlay_commands: OverlayCommands::new(),
         request_replay: None,
         request_execute: None,
-        activate_window_at: None,
     };
 
     match state {
@@ -900,13 +1068,8 @@ fn process_event_pure(
         } => {
             let (ox, oy) = (*origin_x, *origin_y);
             if event == MouseEvent::MouseMove {
-                let dx = pt.0 - ox;
-                let dy = pt.1 - oy;
-                let dist_squared = i64::from(dx) * i64::from(dx) + i64::from(dy) * i64::from(dy);
-                let threshold = i64::from(config.gesture_threshold);
-                if dist_squared > threshold * threshold {
-                    debug!("ButtonDown → Gesturing");
-                    effect.activate_window_at = Some((ox, oy));
+                if exceeds_gesture_threshold((ox, oy), pt, config.gesture_threshold) {
+                    debug!("ButtonDown → Gesturing (app={:?})", matched_app);
                     effect.overlay_commands.push(OverlayCommand::StartGesture);
                     effect
                         .overlay_commands
@@ -924,7 +1087,7 @@ fn process_event_pure(
                     let initial_gesture = recognizer.recognize();
                     let label = initial_gesture
                         .as_ref()
-                        .and_then(|k| config.labels.get(k))
+                        .and_then(|k| config.resolve_label(k, matched_app.as_deref()))
                         .cloned();
                     effect
                         .overlay_commands
@@ -933,6 +1096,7 @@ fn process_event_pure(
                         entered_tick: tick,
                         recognizer,
                         last_recognized: initial_gesture,
+                        matched_app,
                     };
                 }
                 // never suppress mouse move
@@ -946,6 +1110,7 @@ fn process_event_pure(
         GestureState::Gesturing {
             recognizer,
             last_recognized,
+            matched_app: gesture_app,
             ..
         } => {
             if event == MouseEvent::MouseMove {
@@ -958,7 +1123,7 @@ fn process_event_pure(
                 if current_gesture != *last_recognized {
                     let label = current_gesture
                         .as_ref()
-                        .and_then(|k| config.labels.get(k))
+                        .and_then(|k| config.resolve_label(k, gesture_app.as_deref()))
                         .cloned();
                     effect
                         .overlay_commands
@@ -972,7 +1137,7 @@ fn process_event_pure(
                 let gesture = recognizer.recognize();
                 if let Some(kind) = gesture {
                     info!("Gesture recognized: {:?}", kind);
-                    if let Some(action) = config.bindings.get(&kind) {
+                    if let Some(action) = config.resolve_binding(&kind, gesture_app.as_deref()) {
                         debug!("Gesture {:?} matched binding: {:?}", kind, action);
                         effect.request_execute = Some(action.clone());
                     }
@@ -1027,11 +1192,33 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
     let tick = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount() };
     let pt = (info.pt.x, info.pt.y);
 
-    let effect = process_event_pure(&mut hs.state, &hs.config, event, pt, tick);
+    // On ButtonDown -> Gesturing transition, activate the window at the
+    // gesture origin first, then read window info from the activated target
+    // handle (falling back to foreground lookup only if no target exists).
+    let matched_app = if let (
+        GestureState::ButtonDown {
+            origin_x, origin_y, ..
+        },
+        MouseEvent::MouseMove,
+    ) = (&hs.state, event)
+    {
+        if exceeds_gesture_threshold((*origin_x, *origin_y), pt, hs.config.gesture_threshold) {
+            let activated_target = activate_window_at_point(*origin_x, *origin_y);
+            let window_info = if let Some(hwnd) = activated_target {
+                crate::window_info::get_window_info_by_hwnd(hwnd)
+            } else {
+                crate::window_info::get_foreground_window_info()
+            };
+            debug!("window info: {:?}", window_info);
+            match_app(&hs.config.apps, &window_info).map(|s| s.to_owned())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
-    if let Some((x, y)) = effect.activate_window_at {
-        activate_window_at_point(x, y);
-    }
+    let effect = process_event_pure(&mut hs.state, &hs.config, event, pt, tick, matched_app);
 
     for cmd in effect.overlay_commands {
         let _ = hs.overlay_tx.send(cmd);
@@ -1180,9 +1367,51 @@ fn parse_gesture_kind(name: &str) -> Option<GestureKind> {
     serde_json::from_value(value).ok()
 }
 
+/// Compile an [`AppMatcher`](crate::config::AppMatcher) into a [`CompiledMatcher`].
+///
+/// Returns `None` if the matcher is invalid (e.g. invalid regex pattern).
+fn compile_matcher(m: &crate::config::AppMatcher) -> Option<CompiledMatcher> {
+    let logic = match (&m.target, &m.method) {
+        // Exact on process_name/title → case-insensitive
+        (MatchTarget::ProcessName | MatchTarget::Title, MatchMethod::Exact) => {
+            CompiledMatchLogic::ExactCaseInsensitive(m.value.to_lowercase())
+        }
+        // Exact on window_class → case-sensitive
+        (MatchTarget::WindowClass, MatchMethod::Exact) => {
+            CompiledMatchLogic::ExactCaseSensitive(m.value.clone())
+        }
+        // Contains → always case-insensitive
+        (_, MatchMethod::Contains) => CompiledMatchLogic::Contains(m.value.to_lowercase()),
+        // Regex
+        (_, MatchMethod::Regex) => match regex::Regex::new(&m.value) {
+            Ok(re) => CompiledMatchLogic::Regex(re),
+            Err(err) => {
+                warn!(
+                    "Invalid regex pattern {:?} for {:?} matcher: {}",
+                    m.value, m.target, err
+                );
+                return None;
+            }
+        },
+    };
+    Some(CompiledMatcher {
+        target: m.target.clone(),
+        logic,
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Returns `true` when the cursor distance from `origin` exceeds the
+/// configured gesture threshold.
+fn exceeds_gesture_threshold(origin: (i32, i32), pt: (i32, i32), threshold: i32) -> bool {
+    let dx = i64::from(pt.0 - origin.0);
+    let dy = i64::from(pt.1 - origin.1);
+    let threshold = i64::from(threshold);
+    dx * dx + dy * dy > threshold * threshold
+}
 
 /// Convert screen coordinates to the normalised absolute coordinate space
 /// used by [`SendInput`] with `MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK`.
@@ -1263,7 +1492,7 @@ fn make_mouse_input(x: i32, y: i32, flags: u32) -> INPUT {
 /// [`GetAncestor`]: windows_sys::Win32::UI::WindowsAndMessaging::GetAncestor
 /// [`SetForegroundWindow`]: windows_sys::Win32::UI::WindowsAndMessaging::SetForegroundWindow
 #[cfg(windows)]
-fn activate_window_at_point(x: i32, y: i32) {
+fn activate_window_at_point(x: i32, y: i32) -> Option<windows_sys::Win32::Foundation::HWND> {
     use windows_sys::Win32::Foundation::POINT;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         GetAncestor, SetForegroundWindow, WindowFromPoint, GA_ROOT,
@@ -1273,14 +1502,15 @@ fn activate_window_at_point(x: i32, y: i32) {
         let hwnd = WindowFromPoint(POINT { x, y });
         if hwnd.is_null() {
             debug!("activate_window_at_point: no window at ({x}, {y})");
-            return;
+            return None;
         }
 
         let root = GetAncestor(hwnd, GA_ROOT);
         let target = if root.is_null() { hwnd } else { root };
 
         debug!("activate_window_at_point: activating window {target:?} at ({x}, {y})");
-        SetForegroundWindow(target);
+        let _ = SetForegroundWindow(target);
+        Some(target)
     }
 }
 
@@ -1301,8 +1531,8 @@ mod tests {
             min_segment_px: 12,
             direction_switch_confirm_px: 8,
             axis_ambiguity_deadzone_px: 2,
-            bindings: HashMap::new(),
-            labels: HashMap::new(),
+            apps: Vec::new(),
+            binding_sets: HashMap::new(),
         }
     }
 
@@ -1317,13 +1547,13 @@ mod tests {
             MouseEvent::TriggerDown,
             (100, 200),
             1000,
+            None,
         );
 
         assert!(effect.suppress, "trigger down should be suppressed");
         assert!(effect.overlay_commands.is_empty());
         assert!(effect.request_replay.is_none());
         assert!(effect.request_execute.is_none());
-        assert!(effect.activate_window_at.is_none());
         assert!(
             matches!(
                 state,
@@ -1346,8 +1576,14 @@ mod tests {
         };
         let config = test_config();
 
-        let effect =
-            process_event_pure(&mut state, &config, MouseEvent::TriggerUp, (101, 201), 1050);
+        let effect = process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::TriggerUp,
+            (101, 201),
+            1050,
+            None,
+        );
 
         assert!(effect.suppress, "trigger up should be suppressed");
         assert_eq!(
@@ -1368,8 +1604,14 @@ mod tests {
         };
         let config = test_config();
         // Move 20px right — exceeds threshold of 10
-        let effect =
-            process_event_pure(&mut state, &config, MouseEvent::MouseMove, (120, 200), 1010);
+        let effect = process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::MouseMove,
+            (120, 200),
+            1010,
+            None,
+        );
 
         assert!(!effect.suppress, "mouse move is never suppressed");
         assert!(effect.request_replay.is_none());
@@ -1391,11 +1633,6 @@ mod tests {
             effect.overlay_commands[3],
             OverlayCommand::UpdateLabel(_)
         ));
-        assert_eq!(
-            effect.activate_window_at,
-            Some((100, 200)),
-            "should activate window at origin when gesture starts"
-        );
         assert!(matches!(state, GestureState::Gesturing { .. }));
     }
 
@@ -1408,8 +1645,14 @@ mod tests {
         };
         let config = test_config();
         // Move 5px — below threshold of 10
-        let effect =
-            process_event_pure(&mut state, &config, MouseEvent::MouseMove, (105, 200), 1010);
+        let effect = process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::MouseMove,
+            (105, 200),
+            1010,
+            None,
+        );
 
         assert!(!effect.suppress);
         assert!(effect.overlay_commands.is_empty());
@@ -1422,11 +1665,18 @@ mod tests {
             entered_tick: 1000,
             recognizer: GestureRecognizer::new(12, 8, 2),
             last_recognized: None,
+            matched_app: None,
         };
         let config = test_config();
 
-        let effect =
-            process_event_pure(&mut state, &config, MouseEvent::TriggerUp, (200, 300), 1100);
+        let effect = process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::TriggerUp,
+            (200, 300),
+            1100,
+            None,
+        );
 
         assert!(effect.suppress, "trigger up should be suppressed");
         assert!(effect.request_replay.is_none());
@@ -1445,11 +1695,18 @@ mod tests {
             entered_tick: 1000,
             recognizer: GestureRecognizer::new(12, 8, 2),
             last_recognized: None,
+            matched_app: None,
         };
         let config = test_config();
 
-        let effect =
-            process_event_pure(&mut state, &config, MouseEvent::MouseMove, (150, 250), 1050);
+        let effect = process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::MouseMove,
+            (150, 250),
+            1050,
+            None,
+        );
 
         assert!(!effect.suppress, "mouse move is never suppressed");
         assert_eq!(effect.overlay_commands.len(), 1);
@@ -1466,7 +1723,14 @@ mod tests {
 
         // Idle
         let mut state = GestureState::Idle;
-        let effect = process_event_pure(&mut state, &config, MouseEvent::MouseMove, (50, 50), 100);
+        let effect = process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::MouseMove,
+            (50, 50),
+            100,
+            None,
+        );
         assert!(!effect.suppress);
 
         // ButtonDown
@@ -1475,8 +1739,14 @@ mod tests {
             origin_y: 200,
             entered_tick: 100,
         };
-        let effect =
-            process_event_pure(&mut state, &config, MouseEvent::MouseMove, (101, 200), 110);
+        let effect = process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::MouseMove,
+            (101, 200),
+            110,
+            None,
+        );
         assert!(!effect.suppress);
 
         // Gesturing
@@ -1484,9 +1754,16 @@ mod tests {
             entered_tick: 100,
             recognizer: GestureRecognizer::new(12, 8, 2),
             last_recognized: None,
+            matched_app: None,
         };
-        let effect =
-            process_event_pure(&mut state, &config, MouseEvent::MouseMove, (150, 250), 110);
+        let effect = process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::MouseMove,
+            (150, 250),
+            110,
+            None,
+        );
         assert!(!effect.suppress);
     }
 
@@ -1496,7 +1773,7 @@ mod tests {
 
         // Idle + Other
         let mut state = GestureState::Idle;
-        let effect = process_event_pure(&mut state, &config, MouseEvent::Other, (0, 0), 100);
+        let effect = process_event_pure(&mut state, &config, MouseEvent::Other, (0, 0), 100, None);
         assert!(!effect.suppress);
         assert!(effect.overlay_commands.is_empty());
         assert!(matches!(state, GestureState::Idle));
@@ -1507,7 +1784,7 @@ mod tests {
             origin_y: 200,
             entered_tick: 100,
         };
-        let effect = process_event_pure(&mut state, &config, MouseEvent::Other, (0, 0), 110);
+        let effect = process_event_pure(&mut state, &config, MouseEvent::Other, (0, 0), 110, None);
         assert!(!effect.suppress);
         assert!(effect.overlay_commands.is_empty());
         assert!(matches!(state, GestureState::ButtonDown { .. }));
@@ -1547,6 +1824,7 @@ mod tests {
             entered_tick: 1000,
             recognizer: GestureRecognizer::new(12, 8, 2),
             last_recognized: None,
+            matched_app: None,
         };
         assert!(check_safety_timeout(&state, 4000, 2000));
     }
@@ -1575,6 +1853,9 @@ mod tests {
         let mut labels = HashMap::new();
         labels.insert(GestureKind::Left, "Back".to_string());
 
+        let mut binding_sets = HashMap::new();
+        binding_sets.insert("default".to_string(), AppBindingSet { bindings, labels });
+
         let config = HookConfig {
             trigger: TriggerButton::Right,
             gesture_threshold: 10,
@@ -1582,8 +1863,8 @@ mod tests {
             min_segment_px: 12,
             direction_switch_confirm_px: 8,
             axis_ambiguity_deadzone_px: 2,
-            bindings,
-            labels,
+            apps: Vec::new(),
+            binding_sets,
         };
 
         // Build a recognizer and feed it a clear leftward gesture
@@ -1597,11 +1878,18 @@ mod tests {
             entered_tick: 1000,
             recognizer,
             last_recognized: Some(GestureKind::Left),
+            matched_app: None,
         };
 
         // Trigger up at far-left point to finalize the gesture
-        let effect =
-            process_event_pure(&mut state, &config, MouseEvent::TriggerUp, (100, 300), 1200);
+        let effect = process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::TriggerUp,
+            (100, 300),
+            1200,
+            None,
+        );
 
         assert!(effect.suppress);
         assert!(matches!(state, GestureState::Idle));
@@ -1610,6 +1898,434 @@ mod tests {
             effect.overlay_commands.last().unwrap(),
             OverlayCommand::EndGesture
         ));
+    }
+
+    // ── Per-app matching tests ───────────────────────────────────────────
+
+    #[test]
+    fn match_app_process_name_exact() {
+        let apps = vec![CompiledApp {
+            id: "browser".to_string(),
+            matchers: vec![CompiledMatcher {
+                target: MatchTarget::ProcessName,
+                logic: CompiledMatchLogic::ExactCaseInsensitive("chrome.exe".to_string()),
+            }],
+        }];
+
+        let info = ForegroundWindowInfo {
+            process_name: Some("chrome.exe".to_string()),
+            window_class: None,
+            title: None,
+        };
+        assert_eq!(match_app(&apps, &info), Some("browser"));
+
+        // Case insensitive
+        let info = ForegroundWindowInfo {
+            process_name: Some("Chrome.exe".to_string()),
+            window_class: None,
+            title: None,
+        };
+        assert_eq!(match_app(&apps, &info), Some("browser"));
+
+        // No match
+        let info = ForegroundWindowInfo {
+            process_name: Some("firefox.exe".to_string()),
+            window_class: None,
+            title: None,
+        };
+        assert_eq!(match_app(&apps, &info), None);
+    }
+
+    #[test]
+    fn match_app_window_class_exact_case_sensitive() {
+        let apps = vec![CompiledApp {
+            id: "explorer".to_string(),
+            matchers: vec![CompiledMatcher {
+                target: MatchTarget::WindowClass,
+                logic: CompiledMatchLogic::ExactCaseSensitive("CabinetWClass".to_string()),
+            }],
+        }];
+
+        let info = ForegroundWindowInfo {
+            process_name: None,
+            window_class: Some("CabinetWClass".to_string()),
+            title: None,
+        };
+        assert_eq!(match_app(&apps, &info), Some("explorer"));
+
+        // Case mismatch → no match (case-sensitive)
+        let info = ForegroundWindowInfo {
+            process_name: None,
+            window_class: Some("cabinetwclass".to_string()),
+            title: None,
+        };
+        assert_eq!(match_app(&apps, &info), None);
+    }
+
+    #[test]
+    fn match_app_title_contains() {
+        let apps = vec![CompiledApp {
+            id: "browser".to_string(),
+            matchers: vec![CompiledMatcher {
+                target: MatchTarget::Title,
+                logic: CompiledMatchLogic::Contains("google chrome".to_string()),
+            }],
+        }];
+
+        let info = ForegroundWindowInfo {
+            process_name: None,
+            window_class: None,
+            title: Some("My Page - Google Chrome".to_string()),
+        };
+        assert_eq!(match_app(&apps, &info), Some("browser"));
+
+        let info = ForegroundWindowInfo {
+            process_name: None,
+            window_class: None,
+            title: Some("Firefox".to_string()),
+        };
+        assert_eq!(match_app(&apps, &info), None);
+    }
+
+    #[test]
+    fn match_app_title_contains_non_ascii_case_insensitive() {
+        let apps = vec![CompiledApp {
+            id: "browser".to_string(),
+            matchers: vec![CompiledMatcher {
+                target: MatchTarget::Title,
+                logic: CompiledMatchLogic::Contains("i\u{307}stanbul".to_string()),
+            }],
+        }];
+
+        let info = ForegroundWindowInfo {
+            process_name: None,
+            window_class: None,
+            title: Some("İSTANBUL".to_string()),
+        };
+        assert_eq!(match_app(&apps, &info), Some("browser"));
+    }
+
+    #[test]
+    fn match_app_regex() {
+        let apps = vec![CompiledApp {
+            id: "terminals".to_string(),
+            matchers: vec![CompiledMatcher {
+                target: MatchTarget::ProcessName,
+                logic: CompiledMatchLogic::Regex(
+                    regex::Regex::new(r"^(windowsterminal|cmd|powershell)\.exe$").unwrap(),
+                ),
+            }],
+        }];
+
+        let info = ForegroundWindowInfo {
+            process_name: Some("windowsterminal.exe".to_string()),
+            window_class: None,
+            title: None,
+        };
+        assert_eq!(match_app(&apps, &info), Some("terminals"));
+
+        let info = ForegroundWindowInfo {
+            process_name: Some("notepad.exe".to_string()),
+            window_class: None,
+            title: None,
+        };
+        assert_eq!(match_app(&apps, &info), None);
+    }
+
+    #[test]
+    fn match_app_or_logic() {
+        let apps = vec![CompiledApp {
+            id: "browser".to_string(),
+            matchers: vec![
+                CompiledMatcher {
+                    target: MatchTarget::ProcessName,
+                    logic: CompiledMatchLogic::ExactCaseInsensitive("chrome.exe".to_string()),
+                },
+                CompiledMatcher {
+                    target: MatchTarget::ProcessName,
+                    logic: CompiledMatchLogic::ExactCaseInsensitive("firefox.exe".to_string()),
+                },
+            ],
+        }];
+
+        // Matches second matcher
+        let info = ForegroundWindowInfo {
+            process_name: Some("firefox.exe".to_string()),
+            window_class: None,
+            title: None,
+        };
+        assert_eq!(match_app(&apps, &info), Some("browser"));
+    }
+
+    #[test]
+    fn match_app_first_match_wins() {
+        let apps = vec![
+            CompiledApp {
+                id: "browser".to_string(),
+                matchers: vec![CompiledMatcher {
+                    target: MatchTarget::ProcessName,
+                    logic: CompiledMatchLogic::ExactCaseInsensitive("chrome.exe".to_string()),
+                }],
+            },
+            CompiledApp {
+                id: "google".to_string(),
+                matchers: vec![CompiledMatcher {
+                    target: MatchTarget::ProcessName,
+                    logic: CompiledMatchLogic::ExactCaseInsensitive("chrome.exe".to_string()),
+                }],
+            },
+        ];
+
+        let info = ForegroundWindowInfo {
+            process_name: Some("chrome.exe".to_string()),
+            window_class: None,
+            title: None,
+        };
+        assert_eq!(match_app(&apps, &info), Some("browser"));
+    }
+
+    #[test]
+    fn match_app_none_field_no_panic() {
+        let apps = vec![CompiledApp {
+            id: "browser".to_string(),
+            matchers: vec![CompiledMatcher {
+                target: MatchTarget::ProcessName,
+                logic: CompiledMatchLogic::ExactCaseInsensitive("chrome.exe".to_string()),
+            }],
+        }];
+
+        let info = ForegroundWindowInfo {
+            process_name: None,
+            window_class: None,
+            title: None,
+        };
+        assert_eq!(match_app(&apps, &info), None);
+    }
+
+    // ── resolve_binding / resolve_label tests ────────────────────────────
+
+    #[test]
+    fn resolve_binding_app_specific_then_fallback() {
+        let default_action = Action::Keyboard {
+            keys: vec!["alt".to_string(), "left".to_string()],
+        };
+        let app_action = Action::Keyboard {
+            keys: vec!["alt".to_string(), "up".to_string()],
+        };
+
+        let mut binding_sets = HashMap::new();
+        binding_sets.insert(
+            "default".to_string(),
+            AppBindingSet {
+                bindings: HashMap::from([(GestureKind::Left, default_action.clone())]),
+                labels: HashMap::new(),
+            },
+        );
+        binding_sets.insert(
+            "explorer".to_string(),
+            AppBindingSet {
+                bindings: HashMap::from([(GestureKind::Left, app_action.clone())]),
+                labels: HashMap::new(),
+            },
+        );
+
+        let config = HookConfig {
+            trigger: TriggerButton::Right,
+            gesture_threshold: 10,
+            safety_timeout_ms: 2000,
+            min_segment_px: 12,
+            direction_switch_confirm_px: 8,
+            axis_ambiguity_deadzone_px: 2,
+            apps: Vec::new(),
+            binding_sets,
+        };
+
+        // App-specific binding found
+        assert_eq!(
+            config.resolve_binding(&GestureKind::Left, Some("explorer")),
+            Some(&app_action)
+        );
+
+        // Fallback to default
+        assert_eq!(
+            config.resolve_binding(&GestureKind::Left, Some("unknown_app")),
+            Some(&default_action)
+        );
+
+        // No matched app → default
+        assert_eq!(
+            config.resolve_binding(&GestureKind::Left, None),
+            Some(&default_action)
+        );
+
+        // Gesture not in any set
+        assert_eq!(
+            config.resolve_binding(&GestureKind::Right, Some("explorer")),
+            None
+        );
+    }
+
+    #[test]
+    fn resolve_label_app_specific_then_fallback() {
+        let mut binding_sets = HashMap::new();
+        binding_sets.insert(
+            "default".to_string(),
+            AppBindingSet {
+                bindings: HashMap::new(),
+                labels: HashMap::from([(GestureKind::Left, "Back".to_string())]),
+            },
+        );
+        binding_sets.insert(
+            "explorer".to_string(),
+            AppBindingSet {
+                bindings: HashMap::new(),
+                labels: HashMap::from([(GestureKind::Left, "Up".to_string())]),
+            },
+        );
+
+        let config = HookConfig {
+            trigger: TriggerButton::Right,
+            gesture_threshold: 10,
+            safety_timeout_ms: 2000,
+            min_segment_px: 12,
+            direction_switch_confirm_px: 8,
+            axis_ambiguity_deadzone_px: 2,
+            apps: Vec::new(),
+            binding_sets,
+        };
+
+        assert_eq!(
+            config.resolve_label(&GestureKind::Left, Some("explorer")),
+            Some(&"Up".to_string())
+        );
+        assert_eq!(
+            config.resolve_label(&GestureKind::Left, None),
+            Some(&"Back".to_string())
+        );
+    }
+
+    #[test]
+    fn process_event_pure_with_matched_app_uses_app_binding() {
+        let default_action = Action::Keyboard {
+            keys: vec!["alt".to_string(), "left".to_string()],
+        };
+        let app_action = Action::Keyboard {
+            keys: vec!["alt".to_string(), "up".to_string()],
+        };
+
+        let mut binding_sets = HashMap::new();
+        binding_sets.insert(
+            "default".to_string(),
+            AppBindingSet {
+                bindings: HashMap::from([(GestureKind::Left, default_action.clone())]),
+                labels: HashMap::from([(GestureKind::Left, "Back".to_string())]),
+            },
+        );
+        binding_sets.insert(
+            "explorer".to_string(),
+            AppBindingSet {
+                bindings: HashMap::from([(GestureKind::Left, app_action.clone())]),
+                labels: HashMap::from([(GestureKind::Left, "Up".to_string())]),
+            },
+        );
+
+        let config = HookConfig {
+            trigger: TriggerButton::Right,
+            gesture_threshold: 10,
+            safety_timeout_ms: 2000,
+            min_segment_px: 12,
+            direction_switch_confirm_px: 8,
+            axis_ambiguity_deadzone_px: 2,
+            apps: Vec::new(),
+            binding_sets,
+        };
+
+        // Build a clear leftward gesture recognizer
+        let mut recognizer = GestureRecognizer::new(12, 8, 2);
+        recognizer.add_point(500, 300);
+        recognizer.add_point(400, 300);
+        recognizer.add_point(300, 300);
+        recognizer.add_point(200, 300);
+
+        let mut state = GestureState::Gesturing {
+            entered_tick: 1000,
+            recognizer,
+            last_recognized: Some(GestureKind::Left),
+            matched_app: Some("explorer".to_string()),
+        };
+
+        let effect = process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::TriggerUp,
+            (100, 300),
+            1200,
+            None,
+        );
+
+        // Should use the explorer-specific binding
+        assert_eq!(effect.request_execute, Some(app_action));
+    }
+
+    #[test]
+    fn process_event_pure_with_matched_app_falls_back_to_default() {
+        let default_action = Action::Keyboard {
+            keys: vec!["alt".to_string(), "right".to_string()],
+        };
+
+        let mut binding_sets = HashMap::new();
+        binding_sets.insert(
+            "default".to_string(),
+            AppBindingSet {
+                bindings: HashMap::from([(GestureKind::Right, default_action.clone())]),
+                labels: HashMap::from([(GestureKind::Right, "Forward".to_string())]),
+            },
+        );
+        // explorer has no Right binding
+        binding_sets.insert(
+            "explorer".to_string(),
+            AppBindingSet {
+                bindings: HashMap::new(),
+                labels: HashMap::new(),
+            },
+        );
+
+        let config = HookConfig {
+            trigger: TriggerButton::Right,
+            gesture_threshold: 10,
+            safety_timeout_ms: 2000,
+            min_segment_px: 12,
+            direction_switch_confirm_px: 8,
+            axis_ambiguity_deadzone_px: 2,
+            apps: Vec::new(),
+            binding_sets,
+        };
+
+        // Build a clear rightward gesture recognizer
+        let mut recognizer = GestureRecognizer::new(12, 8, 2);
+        recognizer.add_point(100, 300);
+        recognizer.add_point(200, 300);
+        recognizer.add_point(300, 300);
+        recognizer.add_point(400, 300);
+
+        let mut state = GestureState::Gesturing {
+            entered_tick: 1000,
+            recognizer,
+            last_recognized: Some(GestureKind::Right),
+            matched_app: Some("explorer".to_string()),
+        };
+
+        let effect = process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::TriggerUp,
+            (500, 300),
+            1200,
+            None,
+        );
+
+        // Should fall back to default binding
+        assert_eq!(effect.request_execute, Some(default_action));
     }
 
     // ── OverlayCommands unit tests ──────────────────────────────────────
