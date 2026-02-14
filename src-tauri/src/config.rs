@@ -21,10 +21,10 @@ use crate::executor::Action;
 ///
 /// let binding = GestureBinding {
 ///     action: Action::Keyboard { keys: vec!["alt".into(), "left".into()] },
-///     label: Some("戻る".into()),
+///     label: Some("Back".into()),
 /// };
 /// let json = serde_json::to_string(&binding).unwrap();
-/// assert!(json.contains("\"label\":\"戻る\""));
+/// assert!(json.contains("\"label\":\"Back\""));
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GestureBinding {
@@ -93,7 +93,7 @@ pub struct AppConfig {
     /// Deadzone (in pixels) used to ignore tiny ambiguous diagonal movement.
     pub axis_ambiguity_deadzone_px: i32,
 
-    /// Font family name for the gesture label overlay (e.g. `"Segoe UI"`).
+    /// Font family name for the gesture label overlay (e.g. `"Yu Gothic UI Semibold"`).
     pub label_font_family: String,
 
     /// Font size in pixels for the gesture label overlay.
@@ -149,7 +149,7 @@ impl AppConfig {
                     action: Action::Keyboard {
                         keys: vec!["alt".to_string(), "left".to_string()],
                     },
-                    label: Some("戻る".to_string()),
+                    label: Some("Back".to_string()),
                 },
             ),
             (
@@ -158,7 +158,7 @@ impl AppConfig {
                     action: Action::Keyboard {
                         keys: vec!["alt".to_string(), "right".to_string()],
                     },
-                    label: Some("進む".to_string()),
+                    label: Some("Forward".to_string()),
                 },
             ),
             (
@@ -167,7 +167,7 @@ impl AppConfig {
                     action: Action::Keyboard {
                         keys: vec!["pageup".to_string()],
                     },
-                    label: Some("上スクロール".to_string()),
+                    label: Some("Scroll Up".to_string()),
                 },
             ),
             (
@@ -176,7 +176,7 @@ impl AppConfig {
                     action: Action::Keyboard {
                         keys: vec!["pagedown".to_string()],
                     },
-                    label: Some("下スクロール".to_string()),
+                    label: Some("Scroll Down".to_string()),
                 },
             ),
             (
@@ -185,7 +185,7 @@ impl AppConfig {
                     action: Action::Keyboard {
                         keys: vec!["ctrl".to_string(), "home".to_string()],
                     },
-                    label: Some("ページ先頭".to_string()),
+                    label: Some("Top of Page".to_string()),
                 },
             ),
             (
@@ -194,7 +194,43 @@ impl AppConfig {
                     action: Action::Keyboard {
                         keys: vec!["ctrl".to_string(), "end".to_string()],
                     },
-                    label: Some("ページ末尾".to_string()),
+                    label: Some("Bottom of Page".to_string()),
+                },
+            ),
+            (
+                "UpRight".to_string(),
+                GestureBinding {
+                    action: Action::Keyboard {
+                        keys: vec!["ctrl".to_string(), "tab".to_string()],
+                    },
+                    label: Some("Next Tab".to_string()),
+                },
+            ),
+            (
+                "UpLeft".to_string(),
+                GestureBinding {
+                    action: Action::Keyboard {
+                        keys: vec!["ctrl".to_string(), "shift".to_string(), "tab".to_string()],
+                    },
+                    label: Some("Previous Tab".to_string()),
+                },
+            ),
+            (
+                "RightDown".to_string(),
+                GestureBinding {
+                    action: Action::Keyboard {
+                        keys: vec!["ctrl".to_string(), "r".to_string()],
+                    },
+                    label: Some("Reload".to_string()),
+                },
+            ),
+            (
+                "DownRight".to_string(),
+                GestureBinding {
+                    action: Action::Keyboard {
+                        keys: vec!["ctrl".to_string(), "w".to_string()],
+                    },
+                    label: Some("Close Tab".to_string()),
                 },
             ),
         ])
@@ -293,13 +329,17 @@ mod tests {
         assert_eq!(cfg.label_font_size, AppConfig::DEFAULT_LABEL_FONT_SIZE);
         assert_eq!(cfg.label_font_weight, AppConfig::DEFAULT_LABEL_FONT_WEIGHT);
         assert_eq!(cfg.label_padding, AppConfig::DEFAULT_LABEL_PADDING);
-        assert_eq!(cfg.bindings.len(), 6);
+        assert_eq!(cfg.bindings.len(), 10);
         assert!(cfg.bindings.contains_key("Left"));
         assert!(cfg.bindings.contains_key("Right"));
         assert!(cfg.bindings.contains_key("Up"));
         assert!(cfg.bindings.contains_key("Down"));
         assert!(cfg.bindings.contains_key("DownUp"));
         assert!(cfg.bindings.contains_key("UpDown"));
+        assert!(cfg.bindings.contains_key("UpRight"));
+        assert!(cfg.bindings.contains_key("UpLeft"));
+        assert!(cfg.bindings.contains_key("RightDown"));
+        assert!(cfg.bindings.contains_key("DownRight"));
     }
 
     #[test]
@@ -329,13 +369,17 @@ mod tests {
         assert_eq!(cfg.label_font_size, AppConfig::DEFAULT_LABEL_FONT_SIZE);
         assert_eq!(cfg.label_font_weight, AppConfig::DEFAULT_LABEL_FONT_WEIGHT);
         assert_eq!(cfg.label_padding, AppConfig::DEFAULT_LABEL_PADDING);
-        assert_eq!(cfg.bindings.len(), 6);
+        assert_eq!(cfg.bindings.len(), 10);
         assert!(cfg.bindings.contains_key("Left"));
         assert!(cfg.bindings.contains_key("Right"));
         assert!(cfg.bindings.contains_key("Up"));
         assert!(cfg.bindings.contains_key("Down"));
         assert!(cfg.bindings.contains_key("DownUp"));
         assert!(cfg.bindings.contains_key("UpDown"));
+        assert!(cfg.bindings.contains_key("UpRight"));
+        assert!(cfg.bindings.contains_key("UpLeft"));
+        assert!(cfg.bindings.contains_key("RightDown"));
+        assert!(cfg.bindings.contains_key("DownRight"));
     }
 
     #[test]
@@ -346,7 +390,7 @@ mod tests {
             "trail_thickness": 3.0,
             "bindings": {
                 "Left": { "type": "keyboard", "keys": ["alt", "left"] },
-                "Right": { "type": "keyboard", "keys": ["alt", "right"], "label": "進む" },
+                "Right": { "type": "keyboard", "keys": ["alt", "right"], "label": "Forward" },
                 "Down": { "type": "keyboard", "keys": ["ctrl", "w"] }
             }
         }"##;
@@ -359,7 +403,7 @@ mod tests {
         // Without label
         assert_eq!(cfg.bindings["Left"].label, None);
         // With label
-        assert_eq!(cfg.bindings["Right"].label, Some("進む".to_string()));
+        assert_eq!(cfg.bindings["Right"].label, Some("Forward".to_string()));
     }
 
     #[test]
@@ -388,13 +432,17 @@ mod tests {
     fn deserialize_legacy_json_gets_default_bindings() {
         let raw = r##"{ "gesture_trigger_button": "right" }"##;
         let cfg: AppConfig = serde_json::from_str(raw).expect("legacy JSON must parse");
-        assert_eq!(cfg.bindings.len(), 6);
+        assert_eq!(cfg.bindings.len(), 10);
         assert!(cfg.bindings.contains_key("Left"));
         assert!(cfg.bindings.contains_key("Right"));
         assert!(cfg.bindings.contains_key("Up"));
         assert!(cfg.bindings.contains_key("Down"));
         assert!(cfg.bindings.contains_key("DownUp"));
         assert!(cfg.bindings.contains_key("UpDown"));
+        assert!(cfg.bindings.contains_key("UpRight"));
+        assert!(cfg.bindings.contains_key("UpLeft"));
+        assert!(cfg.bindings.contains_key("RightDown"));
+        assert!(cfg.bindings.contains_key("DownRight"));
     }
 
     #[test]
