@@ -2,7 +2,7 @@
 
 A lightweight mouse gesture app for Windows.
 
-<video src="./.github/assets/demo.mp4" autoplay loop muted></video>
+<video src="https://github.com/user-attachments/assets/3cbf84e8-ad2b-4d6a-ab58-17797bab0463" widht="100%" autoplay loop muted></video>
 
 ## Development
 
