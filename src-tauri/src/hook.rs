@@ -719,7 +719,7 @@ pub fn spawn(
                 let matchers: Vec<CompiledMatcher> = app_def
                     .matchers
                     .iter()
-                    .filter_map(|m| compile_matcher(m))
+                    .filter_map(compile_matcher)
                     .collect();
                 if matchers.is_empty() {
                     warn!("App {:?} has no valid matchers, skipping", app_id);
