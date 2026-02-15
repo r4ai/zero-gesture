@@ -407,14 +407,12 @@ pub(super) fn process_event_pure(
                             effect.request_execute = Some(binding.action.clone());
                         }
                     }
-                    if !matched {
-                        if should_replay_unmatched(*origin, pt, config) {
-                            effect.request_replay = Some(ReplayRequest {
-                                trigger: *trigger,
-                                down_at: *origin,
-                                up_at: pt,
-                            });
-                        }
+                    if !matched && should_replay_unmatched(*origin, pt, config) {
+                        effect.request_replay = Some(ReplayRequest {
+                            trigger: *trigger,
+                            down_at: *origin,
+                            up_at: pt,
+                        });
                     }
                     effect.overlay_commands.push(OverlayCommand::EndGesture);
                     *state = GestureState::Idle;
