@@ -14,6 +14,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { useSidebarResize } from "@/hooks/use-sidebar-resize"
 import { cn } from "@/lib/utils"
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state"
@@ -22,11 +23,18 @@ const SIDEBAR_WIDTH = "16rem"
 const SIDEBAR_WIDTH_ICON = "3rem"
 const SIDEBAR_KEYBOARD_SHORTCUT = "b"
 
+const MIN_SIDEBAR_WIDTH = "14rem"
+const MAX_SIDEBAR_WIDTH = "22rem"
+
 type SidebarContextProps = {
   state: "expanded" | "collapsed"
   open: boolean
   setOpen: (open: boolean) => void
   toggleSidebar: () => void
+  width: string
+  setWidth: (width: string) => void
+  isDraggingRail: boolean
+  setIsDraggingRail: (isDragging: boolean) => void
 }
 
 const SidebarContext = React.createContext<SidebarContextProps | null>(null)
@@ -56,11 +64,13 @@ function SidebarProvider({
   className,
   style,
   children,
+  defaultWidth = SIDEBAR_WIDTH,
   ...props
 }: React.ComponentProps<"div"> & {
   defaultOpen?: boolean
   open?: boolean
   onOpenChange?: (open: boolean) => void
+  defaultWidth?: string
 }) {
   // Read the initial state from cookie or use defaultOpen
   const [_open, _setOpen] = React.useState(() => {
@@ -111,14 +121,22 @@ function SidebarProvider({
   // This makes it easier to style the sidebar with Tailwind classes.
   const state = open ? "expanded" : "collapsed"
 
+  // State for sidebar width
+  const [width, setWidth] = React.useState(defaultWidth)
+  const [isDraggingRail, setIsDraggingRail] = React.useState(false)
+
   const contextValue = React.useMemo<SidebarContextProps>(
     () => ({
       state,
       open,
       setOpen,
       toggleSidebar,
+      width,
+      setWidth,
+      isDraggingRail,
+      setIsDraggingRail,
     }),
-    [state, open, setOpen, toggleSidebar],
+    [state, open, setOpen, toggleSidebar, width, isDraggingRail],
   )
 
   return (
@@ -128,7 +146,7 @@ function SidebarProvider({
           data-slot="sidebar-wrapper"
           style={
             {
-              "--sidebar-width": SIDEBAR_WIDTH,
+              "--sidebar-width": width,
               "--sidebar-width-icon": SIDEBAR_WIDTH_ICON,
               ...style,
             } as React.CSSProperties
@@ -158,7 +176,19 @@ function Sidebar({
   variant?: "sidebar" | "floating" | "inset"
   collapsible?: "offcanvas" | "icon" | "none"
 }) {
-  const { state } = useSidebar()
+  const { state, isDraggingRail } = useSidebar()
+
+  // Separate SidebarRail from other children
+  const sidebarRail: React.ReactNode[] = []
+  const otherChildren: React.ReactNode[] = []
+
+  React.Children.forEach(children, (child) => {
+    if (React.isValidElement(child) && child.type === SidebarRail) {
+      sidebarRail.push(child)
+    } else {
+      otherChildren.push(child)
+    }
+  })
 
   if (collapsible === "none") {
     return (
@@ -183,6 +213,7 @@ function Sidebar({
       data-variant={variant}
       data-side={side}
       data-slot="sidebar"
+      data-dragging={isDraggingRail}
     >
       {/* This is what handles the sidebar gap on desktop */}
       <div
@@ -194,6 +225,7 @@ function Sidebar({
           variant === "floating" || variant === "inset"
             ? "group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4)))]"
             : "group-data-[collapsible=icon]:w-(--sidebar-width-icon)",
+          "group-data-[dragging=true]:duration-0! group-data-[dragging=true]_*:!duration-0",
         )}
       />
       <div
@@ -207,6 +239,7 @@ function Sidebar({
           variant === "floating" || variant === "inset"
             ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]"
             : "group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[side=left]:border-r group-data-[side=right]:border-l",
+          "group-data-[dragging=true]:duration-0! group-data-[dragging=true]_*:!duration-0",
           className,
         )}
         {...props}
@@ -216,8 +249,10 @@ function Sidebar({
           data-slot="sidebar-inner"
           className="flex h-full w-full flex-col bg-sidebar group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:border group-data-[variant=floating]:border-sidebar-border group-data-[variant=floating]:shadow-sm"
         >
-          {children}
+          {otherChildren}
         </div>
+        {/* Render SidebarRail inside sidebar-container for correct positioning */}
+        {sidebarRail}
       </div>
     </div>
   )
@@ -249,21 +284,42 @@ function SidebarTrigger({
   )
 }
 
-function SidebarRail({ className, ...props }: React.ComponentProps<"button">) {
-  const { toggleSidebar } = useSidebar()
+function SidebarRail({
+  className,
+  enableDrag = true,
+  ...props
+}: React.ComponentProps<"button"> & { enableDrag?: boolean }) {
+  const { toggleSidebar, setWidth, state, width, setIsDraggingRail } =
+    useSidebar()
+
+  const { dragRef, handleMouseDown } = useSidebarResize({
+    direction: "right",
+    enableDrag,
+    onResize: setWidth,
+    onToggle: toggleSidebar,
+    currentWidth: width,
+    isCollapsed: state === "collapsed",
+    minResizeWidth: MIN_SIDEBAR_WIDTH,
+    maxResizeWidth: MAX_SIDEBAR_WIDTH,
+    setIsDraggingRail,
+    widthCookieName: "sidebar:width",
+    widthCookieMaxAge: 60 * 60 * 24 * 7,
+  })
 
   return (
     <button
+      ref={dragRef}
       data-sidebar="rail"
       data-slot="sidebar-rail"
       aria-label="Toggle Sidebar"
       tabIndex={-1}
-      onClick={toggleSidebar}
+      onMouseDown={handleMouseDown}
       title="Toggle Sidebar"
       className={cn(
-        "absolute inset-y-0 z-20 hidden w-4 -translate-x-1/2 transition-all ease-linear after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] hover:after:bg-sidebar-border group-data-[side=left]:-right-4 group-data-[side=right]:left-0 sm:flex",
-        "in-data-[side=left]:cursor-w-resize in-data-[side=right]:cursor-e-resize",
-        "[[data-side=left][data-state=collapsed]_&]:cursor-e-resize [[data-side=right][data-state=collapsed]_&]:cursor-w-resize",
+        "absolute inset-y-0 z-20 hidden w-4 transition-all ease-linear after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] hover:after:bg-sidebar-border sm:flex",
+        "group-data-[side=left]:right-0 group-data-[side=right]:left-0",
+        "group-data-[side=left]:translate-x-1/2 group-data-[side=right]:-translate-x-1/2",
+        "cursor-w-resize",
         "group-data-[collapsible=offcanvas]:translate-x-0 hover:group-data-[collapsible=offcanvas]:bg-sidebar group-data-[collapsible=offcanvas]:after:left-full",
         "[[data-side=left][data-collapsible=offcanvas]_&]:-right-2",
         "[[data-side=right][data-collapsible=offcanvas]_&]:-left-2",

@@ -29,6 +29,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
+  SidebarRail,
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar"
@@ -136,8 +137,9 @@ const SettingsSidebarContent = () => {
 
 const SettingsSidebar = () => {
   return (
-    <Sidebar variant="inset" collapsible="icon" className="w-64 border-r">
+    <Sidebar variant="inset" collapsible="icon">
       <SettingsSidebarContent />
+      <SidebarRail />
     </Sidebar>
   )
 }
