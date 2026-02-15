@@ -1,7 +1,9 @@
 use crate::config;
 use crate::{tray, ConfigDir, SharedConfig, ThreadRuntime};
 use log::info;
+use std::fs;
 use tauri::Emitter;
+use tauri_plugin_opener::OpenerExt;
 
 /// Tauri command that opens (or focuses) the settings window.
 #[tauri::command]
@@ -71,6 +73,59 @@ pub fn apply_config_update<R: tauri::Runtime>(
     }
 
     Ok(())
+}
+
+/// Tauri command that reads a JSON file and applies it as the new configuration.
+#[tauri::command]
+pub fn import_config(
+    file_path: String,
+    app: tauri::AppHandle,
+    shared_config: tauri::State<'_, SharedConfig>,
+    runtime: tauri::State<'_, ThreadRuntime>,
+    config_dir: tauri::State<'_, ConfigDir>,
+) -> Result<(), String> {
+    let raw = fs::read_to_string(&file_path).map_err(|e| format!("failed to read file: {e}"))?;
+    let new_config: config::AppConfig =
+        serde_json::from_str(&raw).map_err(|e| format!("invalid config JSON: {e}"))?;
+    apply_config_update(
+        new_config,
+        &app,
+        shared_config.inner(),
+        runtime.inner(),
+        config_dir.inner(),
+    )
+}
+
+/// Tauri command that writes the current configuration as JSON to the given path.
+#[tauri::command]
+pub fn export_config(
+    file_path: String,
+    shared_config: tauri::State<'_, SharedConfig>,
+) -> Result<(), String> {
+    let config = shared_config
+        .0
+        .read()
+        .map(|c| c.clone())
+        .map_err(|_| "failed to read shared config".to_string())?;
+    let body = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("failed to serialize config: {e}"))?;
+    fs::write(&file_path, body).map_err(|e| format!("failed to write file: {e}"))
+}
+
+/// Tauri command that opens the config directory in the system file manager.
+///
+/// Creates the directory if it does not yet exist, then opens it via the
+/// opener plugin from the Rust side (bypassing JS-side path scope restrictions).
+#[tauri::command]
+pub fn open_config_dir(
+    app: tauri::AppHandle,
+    config_dir: tauri::State<'_, ConfigDir>,
+) -> Result<(), String> {
+    let path = &config_dir.0;
+    fs::create_dir_all(path).map_err(|e| format!("failed to create config dir: {e}"))?;
+    app.opener()
+        .open_path(path.to_string_lossy().as_ref(), None::<&str>)
+        .map_err(|e| format!("failed to open config dir: {e}"))
 }
 
 /// Tauri command that persists and applies a new configuration.

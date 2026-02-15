@@ -11,6 +11,7 @@ import {
 } from "lucide-react"
 import type React from "react"
 import { Suspense } from "react"
+import { Toaster } from "sonner"
 import { ThemeProvider, useTheme } from "@/components/theme-provider"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -219,6 +220,7 @@ const RootLayout = () => (
             </div>
           </div>
           <TanStackRouterDevtools position="top-right" />
+          <Toaster />
         </SidebarProvider>
       </TooltipProvider>
     </ThemeProvider>

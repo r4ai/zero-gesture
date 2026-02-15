@@ -299,6 +299,7 @@ pub fn run() {
     let log_level = log_config::resolve_log_level();
 
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_log::Builder::new().level(log_level).build())
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
@@ -316,7 +317,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::show_settings_window,
             commands::get_config,
-            commands::update_config
+            commands::update_config,
+            commands::import_config,
+            commands::export_config,
+            commands::open_config_dir
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
