@@ -9,6 +9,7 @@ import {
   Settings,
   Wrench,
 } from "lucide-react"
+import type React from "react"
 import { Suspense } from "react"
 import { ThemeProvider, useTheme } from "@/components/theme-provider"
 import { Button } from "@/components/ui/button"
@@ -37,6 +38,7 @@ import {
 } from "@/components/ui/sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { ConfigDraftProvider, useConfigDraft } from "@/contexts/config-draft"
 import { useConfigUpdatedListener } from "@/hooks/use-config"
 
 const queryClient = new QueryClient()
@@ -54,6 +56,33 @@ const SettingsPageSkeleton = () => (
     <Skeleton className="h-4 w-3/4" />
   </div>
 )
+
+const MainContent = ({ children }: { children: React.ReactNode }) => (
+  <main className="flex-1 overflow-auto p-6">{children}</main>
+)
+
+const ActionButtons = () => {
+  const { isDirty, reset, save, isSaving } = useConfigDraft()
+  return (
+    <>
+      <Button
+        variant="outline"
+        className="fixed right-39 bottom-6"
+        disabled={!isDirty || isSaving}
+        onClick={reset}
+      >
+        Cancel
+      </Button>
+      <Button
+        className="fixed right-6 bottom-6"
+        disabled={!isDirty || isSaving}
+        onClick={save}
+      >
+        Save & Apply
+      </Button>
+    </>
+  )
+}
 
 const sections = [
   {
@@ -173,18 +202,20 @@ const RootLayout = () => (
           <div className="flex h-screen w-full overflow-hidden">
             <SettingsSidebar />
             <div className="relative flex flex-1 flex-col">
-              <main className="flex-1 overflow-auto p-6">
-                <Suspense fallback={<SettingsPageSkeleton />}>
-                  <Outlet />
-                </Suspense>
-              </main>
-              <Button
-                variant="outline"
-                className="fixed right-[156px] bottom-6"
+              <Suspense
+                fallback={
+                  <MainContent>
+                    <SettingsPageSkeleton />
+                  </MainContent>
+                }
               >
-                Cancel
-              </Button>
-              <Button className="fixed right-6 bottom-6">Save & Apply</Button>
+                <ConfigDraftProvider>
+                  <MainContent>
+                    <Outlet />
+                  </MainContent>
+                  <ActionButtons />
+                </ConfigDraftProvider>
+              </Suspense>
             </div>
           </div>
           <TanStackRouterDevtools position="top-right" />
