@@ -6,6 +6,29 @@
 //! The hook starts a gesture immediately when a configured trigger button is
 //! pressed, captures directional movement plus mouse-input steps, and executes
 //! the bound action when the trigger button is released.
+//!
+//! # Architecture
+//!
+//! This module is the **Sensor** layer described in `docs/architecture.md`.
+//! It runs on a dedicated OS thread so the low-level callback never blocks the
+//! Tauri main thread or the overlay renderer.
+//!
+//! ## State Machine
+//!
+//! The core logic in [`state::process_event_pure`] is a two-state machine:
+//!
+//! ```text
+//! Idle ──[configured trigger DOWN]──► Gesturing
+//!  ▲                                    │
+//!  └──────[same trigger UP]─────────────┘
+//! ```
+//!
+//! During `Gesturing`, mouse movement, wheel input, and button events are
+//! converted into a gesture-step sequence and matched against app-aware
+//! bindings.
+//!
+//! **Key invariant:** `WM_MOUSEMOVE` is never suppressed, so pointer tracking
+//! remains natural while gestures are recorded.
 
 mod app_match;
 mod state;

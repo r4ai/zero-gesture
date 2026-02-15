@@ -28,24 +28,47 @@ use super::trigger::TriggerButton;
 use super::HookControl;
 
 /// Custom message used to execute a gesture-bound action outside the hook callback.
+///
+/// Defined as `WM_APP + 2`. Posted when a gesture has a matching binding so
+/// [`executor::execute`] runs in the message loop rather than in the low-level
+/// hook callback (avoids re-entrancy hazards).
 const WM_EXECUTE_ACTION: u32 = WM_APP + 2;
 
 /// Timer ID for the safety timeout.
 const SAFETY_TIMER_ID: usize = 1;
 
-/// All mutable state for the hook thread.
+/// All mutable state for the hook thread, stored in [`HOOK_STATE`].
 struct HookThreadState {
+    /// Current position in the gesture state machine.
     state: GestureState,
+    /// Snapshotted configuration (no locks in callback hot path).
     config: HookConfig,
+    /// Channel to the overlay thread.
     overlay_tx: Sender<OverlayCommand>,
+    /// Deferred action to execute from the message loop.
     pending_action: Option<Action>,
 }
 
+// Thread-local storage is required because `WH_MOUSE_LL` callback signature
+// does not provide user-data.
 thread_local! {
     static HOOK_STATE: RefCell<Option<HookThreadState>> = const { RefCell::new(None) };
 }
 
 /// Main loop of the hook thread (Windows implementation).
+///
+/// Performs:
+/// 1. Publish thread ID.
+/// 2. Spawn watchdog listening for [`HookControl::Shutdown`].
+/// 3. Install `WH_MOUSE_LL` hook.
+/// 4. Start safety timer.
+/// 5. Process Win32 messages until `WM_QUIT`.
+/// 6. Cleanup (timer, hook, TLS, watchdog).
+///
+/// # Safety
+///
+/// Uses Win32 FFI (`unsafe`) and must keep callback/message-loop thread
+/// affinity intact.
 pub(super) fn run_loop_win32(
     hook_config: HookConfig,
     overlay_tx: Sender<OverlayCommand>,
@@ -129,6 +152,14 @@ pub(super) fn run_loop_win32(
     }
 }
 
+/// Win32 low-level mouse hook callback (`LowLevelMouseProc`).
+///
+/// Called by the OS for each mouse event. Returns non-zero to swallow an
+/// event, or delegates via [`CallNextHookEx`] to pass through.
+///
+/// # Safety
+///
+/// `l_param` is cast to `*const MSLLHOOKSTRUCT` per `WH_MOUSE_LL` contract.
 unsafe extern "system" fn low_level_mouse_proc(
     n_code: i32,
     w_param: WPARAM,
@@ -160,6 +191,11 @@ unsafe extern "system" fn low_level_mouse_proc(
     }
 }
 
+/// Process one Win32 mouse message against the pure state machine.
+///
+/// Converts Win32 event data into [`MouseEvent`], resolves matched app context,
+/// applies produced side effects, and returns whether the original event should
+/// be suppressed.
 fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> bool {
     let event = to_mouse_event(msg, info);
     let tick = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount() };
@@ -197,6 +233,7 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
     effect.suppress
 }
 
+/// Convert Win32 mouse message IDs into hook-level [`MouseEvent`].
 fn to_mouse_event(msg: u32, info: &MSLLHOOKSTRUCT) -> MouseEvent {
     match msg {
         WM_LBUTTONDOWN => MouseEvent::ButtonDown(TriggerButton::Left),
@@ -220,10 +257,15 @@ fn to_mouse_event(msg: u32, info: &MSLLHOOKSTRUCT) -> MouseEvent {
     }
 }
 
+/// Extract signed wheel delta from `MSLLHOOKSTRUCT::mouseData`.
 fn wheel_delta(mouse_data: u32) -> i16 {
     ((mouse_data >> 16) & 0xFFFF) as i16
 }
 
+/// Safety timer handler.
+///
+/// Resets stuck gesture state back to `Idle`. If a gesture was in progress,
+/// sends [`OverlayCommand::EndGesture`] to ensure overlay cleanup.
 fn handle_safety_timer() {
     HOOK_STATE.with(|cell| {
         let mut borrow = cell.borrow_mut();
@@ -245,6 +287,7 @@ fn handle_safety_timer() {
     });
 }
 
+/// Execute pending action from `WM_EXECUTE_ACTION`.
 fn handle_execute_action() {
     let action = HOOK_STATE.with(|cell| {
         let mut borrow = cell.borrow_mut();
@@ -259,6 +302,10 @@ fn handle_execute_action() {
 
 /// Activate (bring to foreground) the top-level window at the given screen
 /// coordinates.
+///
+/// Uses [`WindowFromPoint`] to locate the window under cursor, resolves a
+/// top-level window via [`GetAncestor`] (`GA_ROOT`), and requests activation
+/// with [`SetForegroundWindow`].
 fn activate_window_at_point(x: i32, y: i32) -> Option<windows_sys::Win32::Foundation::HWND> {
     use windows_sys::Win32::Foundation::POINT;
     use windows_sys::Win32::UI::WindowsAndMessaging::{

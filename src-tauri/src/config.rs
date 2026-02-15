@@ -116,10 +116,24 @@ pub struct GestureBinding {
 const CONFIG_FILE_NAME: &str = "zero-gesture.config.json";
 
 /// Application-wide configuration persisted as JSON.
+///
+/// # Examples
+///
+/// ```
+/// use zero_gesture_lib::config::AppConfig;
+///
+/// let config = AppConfig::default();
+/// assert!(config.enabled);
+/// assert_eq!(config.trail_color, "#00BFFF");
+/// assert_eq!(config.min_segment_px, 12);
+/// assert!(config.bindings.contains_key("default"));
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct AppConfig {
     /// Whether gesture recognition is enabled.
+    ///
+    /// When `false`, worker threads (hook/overlay) are not started.
     pub enabled: bool,
 
     /// CSS colour string used to draw the gesture trail (e.g. `"#00BFFF"`).
@@ -284,6 +298,16 @@ impl Default for AppConfig {
 
 /// Loads [`AppConfig`] from the configuration file, falling back to
 /// [`AppConfig::default`] if the file is missing or contains invalid JSON.
+///
+/// # Examples
+///
+/// ```no_run
+/// use std::path::Path;
+/// use zero_gesture_lib::config::load_or_default;
+///
+/// let config = load_or_default(Path::new("./config"));
+/// assert!(config.bindings.contains_key("default"));
+/// ```
 pub fn load_or_default(config_dir: &Path) -> AppConfig {
     let raw = match fs::read_to_string(config_path(config_dir)) {
         Ok(raw) => raw,
@@ -295,6 +319,20 @@ pub fn load_or_default(config_dir: &Path) -> AppConfig {
 
 /// Serializes `config` as pretty-printed JSON and writes it to the
 /// configuration file.
+///
+/// # Errors
+///
+/// Returns [`io::Error`] if serialization or file I/O fails.
+///
+/// # Examples
+///
+/// ```no_run
+/// use std::path::Path;
+/// use zero_gesture_lib::config::{save, AppConfig};
+///
+/// let config = AppConfig::default();
+/// save(&config, Path::new("./config")).expect("failed to save config");
+/// ```
 pub fn save(config: &AppConfig, config_dir: &Path) -> io::Result<()> {
     let body = serde_json::to_string_pretty(config)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
@@ -311,6 +349,7 @@ fn config_path(config_dir: &Path) -> PathBuf {
 mod tests {
     use super::*;
 
+    /// Helper to get the `"default"` bindings map from config.
     fn get_default_bindings(cfg: &AppConfig) -> &Vec<GestureBinding> {
         cfg.bindings
             .get("default")

@@ -11,6 +11,10 @@ use super::app_match::{AppBindingSet, CompiledGestureBinding};
 use super::trigger::TriggerButton;
 
 /// Snapshot of configuration relevant to the hook, taken once at startup.
+///
+/// By copying the needed values out of [`SharedConfig`](crate::SharedConfig)
+/// before entering the hook thread, we avoid taking locks in the hot path.
+/// Updating the live config requires restarting the hook thread.
 #[derive(Debug, Clone)]
 pub(super) struct HookConfig {
     pub(super) safety_timeout_ms: u32,
@@ -98,15 +102,24 @@ impl HookConfig {
 }
 
 /// State machine that drives gesture capture.
+///
+/// Each non-`Idle` variant stores an `entered_tick` value from
+/// [`GetTickCount`](windows_sys::Win32::System::SystemInformation::GetTickCount)
+/// so the safety timer can detect stuck sessions.
 pub(super) enum GestureState {
     /// Waiting for a trigger-button press.
     Idle,
     /// Actively capturing a gesture sequence.
     Gesturing {
+        /// Tick when the gesture session started.
         entered_tick: u32,
+        /// Trigger button that started this gesture session.
         trigger: TriggerButton,
+        /// Movement/input recognizer accumulating the in-progress sequence.
         recognizer: GestureRecognizer,
+        /// Last label sent to the overlay (used for change detection).
         last_label: Option<String>,
+        /// Matched app ID for per-app bindings, if any.
         matched_app: Option<String>,
     },
 }
@@ -114,15 +127,23 @@ pub(super) enum GestureState {
 /// Abstract mouse event, decoupled from Win32 message constants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum MouseEvent {
+    /// Any mouse button down event.
     ButtonDown(TriggerButton),
+    /// Any mouse button up event.
     ButtonUp(TriggerButton),
+    /// Pointer movement.
     MouseMove,
+    /// Mouse wheel delta > 0.
     WheelUp,
+    /// Mouse wheel delta < 0.
     WheelDown,
+    /// Any event ignored by the state machine.
     Other,
 }
 
 /// Stack-allocated collection of up to `N` overlay commands.
+///
+/// Avoids heap allocation in the hot path of [`process_event_pure`].
 pub(super) struct OverlayCommands<const N: usize> {
     buf: [std::mem::MaybeUninit<OverlayCommand>; N],
     len: usize,
@@ -231,13 +252,22 @@ impl<const N: usize> Drop for OverlayCommandsIntoIter<N> {
 pub(super) struct EventEffect {
     /// Whether the event should be suppressed (swallowed by the hook).
     pub(super) suppress: bool,
-    /// Overlay commands to send (stack-allocated).
+    /// Overlay commands to send (stack-allocated, max 4).
     pub(super) overlay_commands: OverlayCommands<4>,
     /// If set, the given action should be executed.
     pub(super) request_execute: Option<Action>,
 }
 
 /// Pure-logic core of the gesture state machine.
+///
+/// Evaluates an incoming [`MouseEvent`] and mouse position against the current
+/// [`GestureState`], and returns an [`EventEffect`] describing side effects.
+/// The caller applies those side effects (overlay updates, deferred execute).
+///
+/// Transitions:
+/// - `Idle` -> `Gesturing` on `ButtonDown(trigger)` when that trigger has a
+///   matching binding for the matched app (or `"default"` fallback).
+/// - `Gesturing` -> `Idle` on `ButtonUp(trigger)` for the same trigger.
 pub(super) fn process_event_pure(
     state: &mut GestureState,
     config: &HookConfig,
@@ -390,6 +420,9 @@ fn update_label_if_needed(
 }
 
 /// Check whether the safety timer should reset the state machine.
+///
+/// Returns `true` when elapsed time since entering `Gesturing` exceeds
+/// `timeout_ms`, using wrapping tick arithmetic.
 pub(super) fn check_safety_timeout(state: &GestureState, tick: u32, timeout_ms: u32) -> bool {
     match state {
         GestureState::Idle => false,

@@ -22,16 +22,27 @@ enum Direction {
 /// Recognizes gesture sequences from mouse movement and explicit input steps.
 #[derive(Debug)]
 pub struct GestureRecognizer {
+    /// Confirmed sequence steps (movement and explicit input events).
     steps: Vec<GestureStep>,
+    /// Last recorded cursor position.
     last_point: Option<(i32, i32)>,
+    /// Direction currently being accumulated.
     current_dir: Option<Direction>,
+    /// Candidate direction waiting for hysteresis confirmation.
     pending_dir: Option<Direction>,
+    /// Accumulated distance in the pending direction.
     pending_accum: i32,
+    /// Accumulated distance for the current direction segment.
     segment_accum: i32,
+    /// Minimum distance required to confirm a movement segment.
     min_segment_px: i32,
+    /// Minimum distance required to switch direction.
     direction_switch_confirm_px: i32,
+    /// Deadzone used to ignore tiny ambiguous diagonal motion.
     axis_ambiguity_deadzone_px: i32,
+    /// Hard limit for sequence length.
     max_steps: usize,
+    /// Set once sequence length exceeds `max_steps`.
     overflowed: bool,
 }
 
@@ -59,6 +70,9 @@ impl GestureRecognizer {
     }
 
     /// Adds a mouse point and updates movement segments.
+    ///
+    /// Direction changes are accepted only after hysteresis
+    /// (`direction_switch_confirm_px`) to reduce jitter.
     pub fn add_point(&mut self, x: i32, y: i32) {
         if self.last_point.is_none() {
             self.last_point = Some((x, y));
@@ -118,6 +132,9 @@ impl GestureRecognizer {
     }
 
     /// Returns the current effective gesture sequence (without finalizing).
+    ///
+    /// Includes an in-progress movement segment when it is already over
+    /// `min_segment_px`.
     pub fn current_sequence(&self) -> Option<Vec<GestureStep>> {
         if self.overflowed {
             return None;
@@ -144,6 +161,9 @@ impl GestureRecognizer {
     }
 
     /// Finalizes ongoing movement and returns the final sequence.
+    ///
+    /// Returns `None` when no valid steps were captured, or when the sequence
+    /// overflowed the configured step limit.
     pub fn finalize_sequence(&mut self) -> Option<Vec<GestureStep>> {
         self.flush_current_segment();
         if self.overflowed || self.steps.is_empty() {

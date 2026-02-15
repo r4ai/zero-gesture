@@ -1,7 +1,10 @@
 use crate::config;
 use crate::config::GestureStep;
 
-/// Mouse button used by the hook state machine.
+/// Mouse buttons used by the hook state machine.
+///
+/// This hook-local enum normalizes configuration values into a compact form
+/// used by matching and event processing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum TriggerButton {
     Left,
@@ -19,7 +22,7 @@ impl TriggerButton {
         }
     }
 
-    /// Convert this button to the equivalent gesture step.
+    /// Convert this button into the equivalent click [`GestureStep`].
     pub(super) fn to_step(self) -> GestureStep {
         match self {
             TriggerButton::Left => GestureStep::LeftClick,
