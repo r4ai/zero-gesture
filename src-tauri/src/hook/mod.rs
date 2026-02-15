@@ -196,17 +196,17 @@ pub fn spawn(
             let bindings: Vec<CompiledGestureBinding> = app_bindings
                 .iter()
                 .filter_map(|binding| {
-                    if binding.sequence.is_empty() {
+                    if binding.gesture.sequence.is_empty() {
                         warn!(
                             "Empty gesture sequence in bindings for app {:?}, skipping",
                             app_id
                         );
                         return None;
                     }
-                    if binding.sequence.len() > AppConfig::MAX_GESTURE_STEPS {
+                    if binding.gesture.sequence.len() > AppConfig::MAX_GESTURE_STEPS {
                         warn!(
                             "Gesture sequence too long ({} > {}) in app {:?}, skipping",
-                            binding.sequence.len(),
+                            binding.gesture.sequence.len(),
                             AppConfig::MAX_GESTURE_STEPS,
                             app_id
                         );
@@ -214,8 +214,8 @@ pub fn spawn(
                     }
 
                     Some(CompiledGestureBinding {
-                        trigger: TriggerButton::from_config(&binding.trigger),
-                        sequence: binding.sequence.clone(),
+                        trigger: TriggerButton::from_config(&binding.gesture.trigger),
+                        sequence: binding.gesture.sequence.clone(),
                         action: binding.action.clone(),
                         label: binding
                             .label

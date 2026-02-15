@@ -76,29 +76,40 @@ pub enum GestureStep {
     MiddleClick,
 }
 
-/// A single gesture definition and its action.
+/// Gesture pattern definition.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GesturePattern {
+    /// Button that starts this gesture.
+    pub trigger: TriggerButton,
+    /// Ordered sequence of movement/input steps.
+    pub sequence: Vec<GestureStep>,
+}
+
+/// A single gesture binding.
 ///
 /// # Examples
 ///
 /// ```json
 /// {
-///   "trigger": "right_click",
-///   "sequence": ["right", "down"],
 ///   "label": "Reload",
-///   "type": "keyboard",
-///   "keys": ["ctrl", "r"]
+///   "gesture": {
+///     "trigger": "right_click",
+///     "sequence": ["right", "down"]
+///   },
+///   "action": {
+///     "type": "keyboard",
+///     "keys": ["ctrl", "r"]
+///   }
 /// }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GestureBinding {
-    /// Button that starts this gesture.
-    pub trigger: TriggerButton,
-    /// Ordered sequence of movement/input steps.
-    pub sequence: Vec<GestureStep>,
-    #[serde(flatten)]
-    pub action: Action,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// Gesture pattern to match.
+    pub gesture: GesturePattern,
+    /// Action to execute when the gesture matches.
+    pub action: Action,
 }
 
 /// Configuration file name.
@@ -187,48 +198,60 @@ impl AppConfig {
     fn default_bindings() -> HashMap<String, Vec<GestureBinding>> {
         let defaults = vec![
             GestureBinding {
-                trigger: TriggerButton::RightClick,
-                sequence: vec![GestureStep::Left],
+                gesture: GesturePattern {
+                    trigger: TriggerButton::RightClick,
+                    sequence: vec![GestureStep::Left],
+                },
                 action: Action::Keyboard {
                     keys: vec!["alt".to_string(), "left".to_string()],
                 },
                 label: Some("Back".to_string()),
             },
             GestureBinding {
-                trigger: TriggerButton::RightClick,
-                sequence: vec![GestureStep::Right],
+                gesture: GesturePattern {
+                    trigger: TriggerButton::RightClick,
+                    sequence: vec![GestureStep::Right],
+                },
                 action: Action::Keyboard {
                     keys: vec!["alt".to_string(), "right".to_string()],
                 },
                 label: Some("Forward".to_string()),
             },
             GestureBinding {
-                trigger: TriggerButton::RightClick,
-                sequence: vec![GestureStep::Down],
+                gesture: GesturePattern {
+                    trigger: TriggerButton::RightClick,
+                    sequence: vec![GestureStep::Down],
+                },
                 action: Action::Keyboard {
                     keys: vec!["ctrl".to_string(), "w".to_string()],
                 },
                 label: Some("Close Tab".to_string()),
             },
             GestureBinding {
-                trigger: TriggerButton::RightClick,
-                sequence: vec![GestureStep::Right, GestureStep::Down],
+                gesture: GesturePattern {
+                    trigger: TriggerButton::RightClick,
+                    sequence: vec![GestureStep::Right, GestureStep::Down],
+                },
                 action: Action::Keyboard {
                     keys: vec!["ctrl".to_string(), "r".to_string()],
                 },
                 label: Some("Reload".to_string()),
             },
             GestureBinding {
-                trigger: TriggerButton::MiddleClick,
-                sequence: vec![GestureStep::Left, GestureStep::Up],
+                gesture: GesturePattern {
+                    trigger: TriggerButton::MiddleClick,
+                    sequence: vec![GestureStep::Left, GestureStep::Up],
+                },
                 action: Action::Keyboard {
                     keys: vec!["ctrl".to_string(), "shift".to_string(), "tab".to_string()],
                 },
                 label: Some("Previous Tab".to_string()),
             },
             GestureBinding {
-                trigger: TriggerButton::MiddleClick,
-                sequence: vec![GestureStep::Right, GestureStep::Up],
+                gesture: GesturePattern {
+                    trigger: TriggerButton::MiddleClick,
+                    sequence: vec![GestureStep::Right, GestureStep::Up],
+                },
                 action: Action::Keyboard {
                     keys: vec!["ctrl".to_string(), "tab".to_string()],
                 },
@@ -316,7 +339,8 @@ mod tests {
         let defaults = get_default_bindings(&cfg);
         assert!(!defaults.is_empty());
         assert!(defaults.iter().all(|binding| {
-            !binding.sequence.is_empty() && binding.sequence.len() <= AppConfig::MAX_GESTURE_STEPS
+            !binding.gesture.sequence.is_empty()
+                && binding.gesture.sequence.len() <= AppConfig::MAX_GESTURE_STEPS
         }));
     }
 
@@ -326,17 +350,25 @@ mod tests {
             "bindings": {
                 "default": [
                     {
-                        "trigger": "right_click",
-                        "sequence": ["right", "down"],
-                        "type": "keyboard",
-                        "keys": ["ctrl", "r"],
-                        "label": "Reload"
+                        "label": "Reload",
+                        "gesture": {
+                            "trigger": "right_click",
+                            "sequence": ["right", "down"]
+                        },
+                        "action": {
+                            "type": "keyboard",
+                            "keys": ["ctrl", "r"]
+                        }
                     },
                     {
-                        "trigger": "middle_click",
-                        "sequence": ["wheel_up"],
-                        "type": "keyboard",
-                        "keys": ["pageup"]
+                        "gesture": {
+                            "trigger": "middle_click",
+                            "sequence": ["wheel_up"]
+                        },
+                        "action": {
+                            "type": "keyboard",
+                            "keys": ["pageup"]
+                        }
                     }
                 ]
             }
@@ -345,9 +377,9 @@ mod tests {
         let cfg: AppConfig = serde_json::from_str(raw).expect("config with bindings must parse");
         let defaults = get_default_bindings(&cfg);
         assert_eq!(defaults.len(), 2);
-        assert_eq!(defaults[0].trigger, TriggerButton::RightClick);
+        assert_eq!(defaults[0].gesture.trigger, TriggerButton::RightClick);
         assert_eq!(
-            defaults[0].sequence,
+            defaults[0].gesture.sequence,
             vec![GestureStep::Right, GestureStep::Down]
         );
         assert_eq!(defaults[0].label, Some("Reload".to_string()));
@@ -367,19 +399,27 @@ mod tests {
             "bindings": {
                 "default": [
                     {
-                        "trigger": "right_click",
-                        "sequence": ["left"],
-                        "type": "keyboard",
-                        "keys": ["alt", "left"]
+                        "gesture": {
+                            "trigger": "right_click",
+                            "sequence": ["left"]
+                        },
+                        "action": {
+                            "type": "keyboard",
+                            "keys": ["alt", "left"]
+                        }
                     }
                 ],
                 "browser": [
                     {
-                        "trigger": "right_click",
-                        "sequence": ["right", "down"],
-                        "type": "keyboard",
-                        "keys": ["ctrl", "r"],
-                        "label": "Reload"
+                        "label": "Reload",
+                        "gesture": {
+                            "trigger": "right_click",
+                            "sequence": ["right", "down"]
+                        },
+                        "action": {
+                            "type": "keyboard",
+                            "keys": ["ctrl", "r"]
+                        }
                     }
                 ]
             }
