@@ -10,7 +10,7 @@
 //! The overlay runs on a dedicated OS thread with its own Win32 message loop.
 //! A bridge thread reads [`OverlayCommand`] from the crossbeam channel and
 //! posts corresponding `WM_APP+N` messages to the overlay thread via
-//! [`PostThreadMessageW`], decoupling the channel-based API from the Win32
+//! `PostThreadMessageW`, decoupling the channel-based API from the Win32
 //! message pump.
 //!
 //! The window uses `WS_EX_LAYERED` with `LWA_COLORKEY` (black = transparent)
@@ -56,7 +56,7 @@ use crate::SharedConfig;
 /// Implementations are stored as `Box<dyn TrailRenderer>` in `OverlayState`
 /// and called from the Win32 message handlers.
 #[cfg(windows)]
-pub(crate) trait TrailRenderer {
+pub trait TrailRenderer {
     /// Draw one line segment (in client coordinates) into the back buffer.
     fn draw_segment(&mut self, from: POINT, to: POINT);
     /// Clear the entire back buffer (all-black = fully transparent via color key).
@@ -109,7 +109,7 @@ pub enum OverlayCommand {
 // ---------------------------------------------------------------------------
 
 /// Default trail color (deep sky blue) used when parsing fails.
-const DEFAULT_COLOR: (u8, u8, u8) = (0, 191, 255);
+pub const DEFAULT_COLOR: (u8, u8, u8) = (0, 191, 255);
 
 /// Parses a CSS-style hex color string to an `(R, G, B)` tuple.
 ///

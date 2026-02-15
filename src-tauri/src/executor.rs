@@ -2,7 +2,7 @@
 //!
 //! Maps recognised gestures to user-defined actions (currently keyboard
 //! shortcuts) and executes them by synthesising input via the Win32
-//! [`SendInput`] API.
+//! `SendInput` API.
 
 use log::{debug, warn};
 use serde::{Deserialize, Serialize};
@@ -136,7 +136,7 @@ pub fn generate_label(action: &Action) -> String {
 ///
 /// # Safety
 ///
-/// Calls [`SendInput`] which requires no special privileges but will inject
+/// Calls `SendInput` which requires no special privileges but will inject
 /// real keyboard events into the focused window.
 pub fn execute(action: &Action) {
     match action {
@@ -208,7 +208,7 @@ fn execute_keyboard(keys: &[String]) {
 }
 
 /// Returns `true` if the given virtual-key code is an extended key that
-/// requires the `KEYEVENTF_EXTENDEDKEY` flag for [`SendInput`].
+/// requires the `KEYEVENTF_EXTENDEDKEY` flag for `SendInput`.
 #[cfg(windows)]
 fn is_extended_key(vk: u16) -> bool {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
