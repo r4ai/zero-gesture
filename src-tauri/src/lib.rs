@@ -338,6 +338,16 @@ pub fn apply_config_update(
     Ok(())
 }
 
+/// Tauri command that retrieves the current configuration.
+#[tauri::command]
+fn get_config(shared_config: tauri::State<'_, SharedConfig>) -> Result<config::AppConfig, String> {
+    shared_config
+        .0
+        .read()
+        .map(|c| c.clone())
+        .map_err(|_| "failed to read shared config".to_string())
+}
+
 /// Tauri command that persists and applies a new configuration.
 #[tauri::command]
 fn update_config(
@@ -379,6 +389,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             show_settings_window,
+            get_config,
             update_config
         ])
         .build(tauri::generate_context!())
