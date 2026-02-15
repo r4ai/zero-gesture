@@ -68,6 +68,7 @@ export function useSidebarResize({
   const persistWidth = React.useCallback(
     (width: string) => {
       if (widthCookieName) {
+        // biome-ignore lint/suspicious/noDocumentCookie: this is fine
         document.cookie = `${widthCookieName}=${width}; path=/; max-age=${widthCookieMaxAge}`
       }
     },
