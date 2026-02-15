@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { createRootRoute, Link, Outlet, redirect } from "@tanstack/react-router"
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools"
 import {
@@ -8,6 +9,7 @@ import {
   Settings,
   Wrench,
 } from "lucide-react"
+import { Suspense } from "react"
 import { ThemeProvider, useTheme } from "@/components/theme-provider"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -33,7 +35,25 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar"
+import { Skeleton } from "@/components/ui/skeleton"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { useConfigUpdatedListener } from "@/hooks/use-config"
+
+const queryClient = new QueryClient()
+
+function ConfigEventBridge() {
+  useConfigUpdatedListener()
+  return null
+}
+
+const SettingsPageSkeleton = () => (
+  <div className="space-y-4">
+    <Skeleton className="h-8 w-48" />
+    <Skeleton className="h-4 w-full" />
+    <Skeleton className="h-4 w-full" />
+    <Skeleton className="h-4 w-3/4" />
+  </div>
+)
 
 const sections = [
   {
@@ -145,25 +165,33 @@ const SettingsSidebar = () => {
 }
 
 const RootLayout = () => (
-  <ThemeProvider defaultTheme="system" storageKey="zero-gesture-theme">
-    <TooltipProvider>
-      <SidebarProvider defaultOpen={true}>
-        <div className="flex h-screen w-full overflow-hidden">
-          <SettingsSidebar />
-          <div className="relative flex flex-1 flex-col">
-            <main className="flex-1 overflow-auto p-6">
-              <Outlet />
-            </main>
-            <Button variant="outline" className="fixed right-[156px] bottom-6">
-              Cancel
-            </Button>
-            <Button className="fixed right-6 bottom-6">Save & Apply</Button>
+  <QueryClientProvider client={queryClient}>
+    <ThemeProvider defaultTheme="system" storageKey="zero-gesture-theme">
+      <ConfigEventBridge />
+      <TooltipProvider>
+        <SidebarProvider defaultOpen={true}>
+          <div className="flex h-screen w-full overflow-hidden">
+            <SettingsSidebar />
+            <div className="relative flex flex-1 flex-col">
+              <main className="flex-1 overflow-auto p-6">
+                <Suspense fallback={<SettingsPageSkeleton />}>
+                  <Outlet />
+                </Suspense>
+              </main>
+              <Button
+                variant="outline"
+                className="fixed right-[156px] bottom-6"
+              >
+                Cancel
+              </Button>
+              <Button className="fixed right-6 bottom-6">Save & Apply</Button>
+            </div>
           </div>
-        </div>
-        <TanStackRouterDevtools position="top-right" />
-      </SidebarProvider>
-    </TooltipProvider>
-  </ThemeProvider>
+          <TanStackRouterDevtools position="top-right" />
+        </SidebarProvider>
+      </TooltipProvider>
+    </ThemeProvider>
+  </QueryClientProvider>
 )
 
 export const Route = createRootRoute({
