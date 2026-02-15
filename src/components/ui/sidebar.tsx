@@ -316,7 +316,7 @@ function SidebarRail({
       onMouseDown={handleMouseDown}
       title="Toggle Sidebar"
       className={cn(
-        "absolute inset-y-0 z-20 hidden w-4 transition-all ease-linear after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] hover:after:bg-sidebar-border sm:flex",
+        "absolute inset-y-0 z-20 hidden w-4 transition-all ease-linear after:absolute after:inset-y-0 after:left-1/2 after:w-px after:bg-sidebar-border hover:after:w-[2px] sm:flex",
         "group-data-[side=left]:right-0 group-data-[side=right]:left-0",
         "group-data-[side=left]:translate-x-1/2 group-data-[side=right]:-translate-x-1/2",
         "cursor-w-resize",
