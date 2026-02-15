@@ -36,7 +36,7 @@ use tauri::Manager;
 ///
 /// // Read the config from another handle.
 /// let config = cloned.0.read().unwrap();
-/// assert_eq!(config.gesture_trigger_button, "right");
+/// assert!(config.bindings.contains_key("default"));
 /// ```
 #[derive(Clone)]
 pub struct SharedConfig(pub Arc<RwLock<config::AppConfig>>);
@@ -344,7 +344,7 @@ mod tests {
         let shared = SharedConfig::new(config::AppConfig::default());
 
         let next = config::AppConfig {
-            gesture_trigger_button: "middle".to_string(),
+            trail_thickness: 6.0,
             ..config::AppConfig::default()
         };
 
