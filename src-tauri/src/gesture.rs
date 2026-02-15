@@ -22,7 +22,7 @@ pub enum Direction {
 /// Recognized gesture types: 16 distinct gesture patterns.
 ///
 /// The mapping between gesture names and direction sequences:
-/// - Single direction: [L], [R], [U], [D]
+/// - Single direction: `[L]`, `[R]`, `[U]`, `[D]`
 /// - Two-segment gestures: all combinations of direction pairs
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum GestureKind {
