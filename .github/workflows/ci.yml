@@ -97,6 +97,27 @@ jobs:
       - name: Run tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --all-targets
 
+  rust-doc:
+    name: Rust Doc
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Check documentation
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --manifest-path src-tauri/Cargo.toml --no-deps
+
   frontend-check:
     name: Frontend Check
     runs-on: ubuntu-24.04
