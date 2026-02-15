@@ -30,4 +30,32 @@ impl TriggerButton {
             TriggerButton::Middle => GestureStep::MiddleClick,
         }
     }
+
+    /// Convert this button into `SendInput` mouse-button-down flags.
+    #[cfg(windows)]
+    pub(super) fn send_input_down_flag(self) -> u32 {
+        use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+            MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_RIGHTDOWN,
+        };
+
+        match self {
+            TriggerButton::Left => MOUSEEVENTF_LEFTDOWN,
+            TriggerButton::Right => MOUSEEVENTF_RIGHTDOWN,
+            TriggerButton::Middle => MOUSEEVENTF_MIDDLEDOWN,
+        }
+    }
+
+    /// Convert this button into `SendInput` mouse-button-up flags.
+    #[cfg(windows)]
+    pub(super) fn send_input_up_flag(self) -> u32 {
+        use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+            MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_RIGHTUP,
+        };
+
+        match self {
+            TriggerButton::Left => MOUSEEVENTF_LEFTUP,
+            TriggerButton::Right => MOUSEEVENTF_RIGHTUP,
+            TriggerButton::Middle => MOUSEEVENTF_MIDDLEUP,
+        }
+    }
 }

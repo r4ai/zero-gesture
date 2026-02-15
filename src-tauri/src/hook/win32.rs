@@ -8,11 +8,17 @@ use log::{debug, error, info, warn};
 use windows_sys::Win32::System::Threading::GetCurrentThreadId;
 use windows_sys::Win32::{
     Foundation::{LPARAM, LRESULT, WPARAM},
-    UI::WindowsAndMessaging::{
-        CallNextHookEx, DispatchMessageW, GetMessageW, KillTimer, PostThreadMessageW, SetTimer,
-        SetWindowsHookExW, UnhookWindowsHookEx, LLMHF_INJECTED, MSG, MSLLHOOKSTRUCT, WH_MOUSE_LL,
-        WM_APP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE,
-        WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_TIMER,
+    UI::{
+        Input::KeyboardAndMouse::{
+            SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_VIRTUALDESK,
+            MOUSEINPUT,
+        },
+        WindowsAndMessaging::{
+            CallNextHookEx, DispatchMessageW, GetMessageW, KillTimer, PostThreadMessageW, SetTimer,
+            SetWindowsHookExW, UnhookWindowsHookEx, LLMHF_INJECTED, MSG, MSLLHOOKSTRUCT,
+            WH_MOUSE_LL, WM_APP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
+            WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_TIMER,
+        },
     },
 };
 
@@ -22,10 +28,16 @@ use crate::overlay::OverlayCommand;
 
 use super::app_match::match_app;
 use super::state::{
-    check_safety_timeout, process_event_pure, GestureState, HookConfig, MouseEvent,
+    check_safety_timeout, process_event_pure, GestureState, HookConfig, MouseEvent, ReplayRequest,
 };
 use super::trigger::TriggerButton;
 use super::HookControl;
+
+/// Custom message used to replay trigger-button operation outside hook callback.
+///
+/// Defined as `WM_APP + 1` so we can call `SendInput` from the message loop
+/// and avoid callback re-entrancy.
+const WM_REPLAY_OPERATION: u32 = WM_APP + 1;
 
 /// Custom message used to execute a gesture-bound action outside the hook callback.
 ///
@@ -45,6 +57,8 @@ struct HookThreadState {
     config: HookConfig,
     /// Channel to the overlay thread.
     overlay_tx: Sender<OverlayCommand>,
+    /// Deferred trigger-button replay request from hook callback.
+    pending_replay: Option<ReplayRequest>,
     /// Deferred action to execute from the message loop.
     pending_action: Option<Action>,
 }
@@ -100,6 +114,7 @@ pub(super) fn run_loop_win32(
                 state: GestureState::Idle,
                 config: hook_config,
                 overlay_tx,
+                pending_replay: None,
                 pending_action: None,
             });
         });
@@ -130,7 +145,9 @@ pub(super) fn run_loop_win32(
                 break;
             }
 
-            if msg.message == WM_EXECUTE_ACTION {
+            if msg.message == WM_REPLAY_OPERATION {
+                handle_replay_operation();
+            } else if msg.message == WM_EXECUTE_ACTION {
                 handle_execute_action();
             } else if msg.message == WM_TIMER {
                 handle_safety_timer();
@@ -223,6 +240,13 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
         let _ = hs.overlay_tx.send(cmd);
     }
 
+    if let Some(replay) = effect.request_replay {
+        hs.pending_replay = Some(replay);
+        unsafe {
+            PostThreadMessageW(GetCurrentThreadId(), WM_REPLAY_OPERATION, 0, 0);
+        }
+    }
+
     if let Some(action) = effect.request_execute {
         hs.pending_action = Some(action);
         unsafe {
@@ -297,6 +321,91 @@ fn handle_execute_action() {
     if let Some(action) = action {
         debug!("Executing bound action: {:?}", action);
         executor::execute(&action);
+    }
+}
+
+/// Replay suppressed trigger-button operation via `SendInput`.
+///
+/// Replays:
+/// - trigger button down at captured press position
+/// - trigger button up at captured release position
+///
+/// Both events use absolute virtual-desktop coordinates so behavior remains
+/// correct on multi-monitor setups.
+fn handle_replay_operation() {
+    let replay = HOOK_STATE.with(|cell| {
+        let mut borrow = cell.borrow_mut();
+        borrow.as_mut().and_then(|hs| hs.pending_replay.take())
+    });
+
+    if let Some(replay) = replay {
+        let (down_x, down_y) = screen_to_absolute(replay.down_at.0, replay.down_at.1);
+        let (up_x, up_y) = screen_to_absolute(replay.up_at.0, replay.up_at.1);
+        let base = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
+        let inputs = [
+            make_mouse_input(down_x, down_y, base | replay.trigger.send_input_down_flag()),
+            make_mouse_input(up_x, up_y, base | replay.trigger.send_input_up_flag()),
+        ];
+
+        let sent = unsafe {
+            SendInput(
+                inputs.len() as u32,
+                inputs.as_ptr(),
+                std::mem::size_of::<INPUT>() as i32,
+            )
+        };
+        if sent < inputs.len() as u32 {
+            warn!(
+                "SendInput replay was partial (sent {sent}/{}) for trigger {:?}",
+                inputs.len(),
+                replay.trigger
+            );
+        } else {
+            debug!(
+                "Replayed trigger operation {:?} down_at=({}, {}), up_at=({}, {})",
+                replay.trigger, replay.down_at.0, replay.down_at.1, replay.up_at.0, replay.up_at.1
+            );
+        }
+    }
+}
+
+/// Convert screen coordinates to `SendInput` absolute virtual-desktop space.
+fn screen_to_absolute(x: i32, y: i32) -> (i32, i32) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
+        SM_YVIRTUALSCREEN,
+    };
+
+    unsafe {
+        let vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        let vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        let vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        let vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+
+        if vw == 0 || vh == 0 {
+            return (0, 0);
+        }
+
+        let ax = ((x - vx) as i64 * 65536 / vw as i64) as i32;
+        let ay = ((y - vy) as i64 * 65536 / vh as i64) as i32;
+        (ax, ay)
+    }
+}
+
+/// Build one mouse `INPUT` event at absolute coordinates with custom flags.
+fn make_mouse_input(x: i32, y: i32, flags: u32) -> INPUT {
+    INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: MOUSEINPUT {
+                dx: x,
+                dy: y,
+                mouseData: 0,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
     }
 }
 

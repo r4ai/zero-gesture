@@ -117,6 +117,8 @@ pub(super) enum GestureState {
         trigger: TriggerButton,
         /// Movement/input recognizer accumulating the in-progress sequence.
         recognizer: GestureRecognizer,
+        /// Cursor position where the trigger button was initially pressed.
+        origin: (i32, i32),
         /// Last label sent to the overlay (used for change detection).
         last_label: Option<String>,
         /// Matched app ID for per-app bindings, if any.
@@ -254,9 +256,28 @@ pub(super) struct EventEffect {
     pub(super) suppress: bool,
     /// Overlay commands to send (stack-allocated, max 4).
     pub(super) overlay_commands: OverlayCommands<4>,
+    /// If set, replay the original trigger-button operation.
+    pub(super) request_replay: Option<ReplayRequest>,
     /// If set, the given action should be executed.
     pub(super) request_execute: Option<Action>,
 }
+
+/// Mouse operation to replay when gesture matching fails.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct ReplayRequest {
+    /// Trigger button to replay.
+    pub(super) trigger: TriggerButton,
+    /// Cursor position where the trigger was initially pressed.
+    pub(super) down_at: (i32, i32),
+    /// Cursor position where the trigger was released.
+    pub(super) up_at: (i32, i32),
+}
+
+/// Minimum cursor movement (in px) beyond which click replay is disabled.
+///
+/// This prevents large "cancel-like" motions from being replayed as normal
+/// clicks when no gesture binding matches.
+const MIN_REPLAY_DISTANCE_THRESHOLD_PX: i32 = 8;
 
 /// Pure-logic core of the gesture state machine.
 ///
@@ -279,6 +300,7 @@ pub(super) fn process_event_pure(
     let mut effect = EventEffect {
         suppress: false,
         overlay_commands: OverlayCommands::new(),
+        request_replay: None,
         request_execute: None,
     };
 
@@ -308,6 +330,7 @@ pub(super) fn process_event_pure(
                         entered_tick: tick,
                         trigger,
                         recognizer,
+                        origin: pt,
                         last_label: None,
                         matched_app,
                     };
@@ -317,6 +340,7 @@ pub(super) fn process_event_pure(
         GestureState::Gesturing {
             trigger,
             recognizer,
+            origin,
             last_label,
             matched_app: gesture_app,
             ..
@@ -378,12 +402,23 @@ pub(super) fn process_event_pure(
 
                 if button == *trigger {
                     debug!("Gesturing → Idle (finalize)");
+                    let mut matched = false;
                     if let Some(sequence) = recognizer.finalize_sequence() {
                         if let Some(binding) =
                             config.resolve_binding(*trigger, &sequence, gesture_app.as_deref())
                         {
                             info!("Gesture matched sequence: {:?}", sequence);
+                            matched = true;
                             effect.request_execute = Some(binding.action.clone());
+                        }
+                    }
+                    if !matched {
+                        if should_replay_unmatched(*origin, pt, config) {
+                            effect.request_replay = Some(ReplayRequest {
+                                trigger: *trigger,
+                                down_at: *origin,
+                                up_at: pt,
+                            });
                         }
                     }
                     effect.overlay_commands.push(OverlayCommand::EndGesture);
@@ -395,6 +430,20 @@ pub(super) fn process_event_pure(
     }
 
     effect
+}
+
+fn should_replay_unmatched(origin: (i32, i32), release: (i32, i32), config: &HookConfig) -> bool {
+    let threshold = config
+        .min_segment_px
+        .max(config.direction_switch_confirm_px)
+        .max(MIN_REPLAY_DISTANCE_THRESHOLD_PX);
+    squared_distance(origin, release) <= i64::from(threshold) * i64::from(threshold)
+}
+
+fn squared_distance(a: (i32, i32), b: (i32, i32)) -> i64 {
+    let dx = i64::from(b.0 - a.0);
+    let dy = i64::from(b.1 - a.1);
+    dx * dx + dy * dy
 }
 
 fn update_label_if_needed(
@@ -574,12 +623,139 @@ mod tests {
         );
 
         assert!(effect.suppress);
+        assert!(effect.request_replay.is_none());
         assert_eq!(effect.request_execute, Some(action));
         assert!(matches!(state, GestureState::Idle));
         assert!(matches!(
             effect.overlay_commands.last(),
             Some(OverlayCommand::EndGesture)
         ));
+    }
+
+    #[test]
+    fn trigger_click_without_matching_sequence_requests_replay() {
+        let config = test_config(vec![binding(
+            TriggerButton::Right,
+            vec![GestureStep::Right],
+            key_action("a"),
+            "A",
+        )]);
+        let mut state = GestureState::Idle;
+
+        process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::ButtonDown(TriggerButton::Right),
+            (100, 100),
+            1000,
+            None,
+        );
+        let effect = process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::ButtonUp(TriggerButton::Right),
+            (100, 100),
+            1010,
+            None,
+        );
+
+        assert!(effect.suppress);
+        assert!(effect.request_execute.is_none());
+        assert_eq!(
+            effect.request_replay,
+            Some(ReplayRequest {
+                trigger: TriggerButton::Right,
+                down_at: (100, 100),
+                up_at: (100, 100),
+            })
+        );
+    }
+
+    #[test]
+    fn unmatched_sequence_with_short_move_requests_replay() {
+        let config = test_config(vec![binding(
+            TriggerButton::Right,
+            vec![GestureStep::Down],
+            key_action("a"),
+            "A",
+        )]);
+        let mut state = GestureState::Idle;
+
+        process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::ButtonDown(TriggerButton::Right),
+            (100, 100),
+            1000,
+            None,
+        );
+        process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::MouseMove,
+            (105, 103),
+            1010,
+            None,
+        );
+        let effect = process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::ButtonUp(TriggerButton::Right),
+            (106, 104),
+            1020,
+            None,
+        );
+
+        assert!(effect.suppress);
+        assert!(effect.request_execute.is_none());
+        assert_eq!(
+            effect.request_replay,
+            Some(ReplayRequest {
+                trigger: TriggerButton::Right,
+                down_at: (100, 100),
+                up_at: (106, 104),
+            })
+        );
+    }
+
+    #[test]
+    fn unmatched_sequence_with_long_move_does_not_request_replay() {
+        let config = test_config(vec![binding(
+            TriggerButton::Right,
+            vec![GestureStep::Down],
+            key_action("a"),
+            "A",
+        )]);
+        let mut state = GestureState::Idle;
+
+        process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::ButtonDown(TriggerButton::Right),
+            (100, 100),
+            1000,
+            None,
+        );
+        process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::MouseMove,
+            (150, 100),
+            1010,
+            None,
+        );
+        let effect = process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::ButtonUp(TriggerButton::Right),
+            (160, 120),
+            1020,
+            None,
+        );
+
+        assert!(effect.suppress);
+        assert!(effect.request_execute.is_none());
+        assert!(effect.request_replay.is_none());
     }
 
     #[test]
