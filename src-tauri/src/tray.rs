@@ -121,6 +121,7 @@ fn handle_toggle<R: Runtime>(app: &AppHandle<R>, toggle_item: &MenuItem<R>) {
 
     if let Err(err) = crate::apply_config_update(
         new_config,
+        app,
         shared_config.inner(),
         runtime.inner(),
         config_dir.inner(),

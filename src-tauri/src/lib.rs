@@ -17,7 +17,7 @@ use std::thread::JoinHandle;
 
 use crossbeam_channel::Sender;
 use log::{debug, info, warn};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 /// Thread-safe, clonable handle to the application configuration.
 ///
@@ -300,8 +300,9 @@ fn show_settings_window(app: tauri::AppHandle) -> Result<(), String> {
 /// Any effective config change restarts or stops worker threads depending on
 /// the `enabled` field. This function is called by both the `update_config`
 /// Tauri command and the tray toggle handler.
-pub fn apply_config_update(
+pub fn apply_config_update<R: tauri::Runtime>(
     new_config: config::AppConfig,
+    app: &tauri::AppHandle<R>,
     shared_config: &SharedConfig,
     runtime: &ThreadRuntime,
     config_dir: &ConfigDir,
@@ -329,6 +330,9 @@ pub fn apply_config_update(
         return Err(format!("failed to save config: {err}"));
     }
 
+    // Notify frontend that config has been updated
+    let _ = app.emit("config-updated", new_config.clone());
+
     if restart_required {
         info!("config updated and worker state applied");
     } else {
@@ -352,12 +356,14 @@ fn get_config(shared_config: tauri::State<'_, SharedConfig>) -> Result<config::A
 #[tauri::command]
 fn update_config(
     new_config: config::AppConfig,
+    app: tauri::AppHandle,
     shared_config: tauri::State<'_, SharedConfig>,
     runtime: tauri::State<'_, ThreadRuntime>,
     config_dir: tauri::State<'_, ConfigDir>,
 ) -> Result<(), String> {
     apply_config_update(
         new_config,
+        &app,
         shared_config.inner(),
         runtime.inner(),
         config_dir.inner(),
