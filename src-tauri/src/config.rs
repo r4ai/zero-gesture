@@ -156,6 +156,12 @@ pub struct AppConfig {
     /// Deadzone (in pixels) used to ignore tiny ambiguous diagonal movement.
     pub axis_ambiguity_deadzone_px: i32,
 
+    /// Maximum cursor travel distance (in pixels) to replay the original
+    /// trigger-button click when no gesture binding matches.
+    ///
+    /// If movement exceeds this threshold, replay is skipped.
+    pub replay_distance_threshold_px: i32,
+
     /// Font family name for the gesture label overlay.
     pub label_font_family: String,
 
@@ -195,6 +201,9 @@ impl AppConfig {
 
     /// Default deadzone for tiny ambiguous diagonal movement.
     pub const DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX: i32 = 2;
+
+    /// Default cursor travel threshold for replaying unmatched trigger clicks.
+    pub const DEFAULT_REPLAY_DISTANCE_THRESHOLD_PX: i32 = 12;
 
     /// Default font family for the gesture label overlay.
     pub const DEFAULT_LABEL_FONT_FAMILY: &str = "Yu Gothic UI Semibold";
@@ -326,6 +335,7 @@ impl Default for AppConfig {
             min_segment_px: Self::DEFAULT_MIN_SEGMENT_PX,
             direction_switch_confirm_px: Self::DEFAULT_DIRECTION_SWITCH_CONFIRM_PX,
             axis_ambiguity_deadzone_px: Self::DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX,
+            replay_distance_threshold_px: Self::DEFAULT_REPLAY_DISTANCE_THRESHOLD_PX,
             label_font_family: Self::DEFAULT_LABEL_FONT_FAMILY.to_string(),
             label_font_size: Self::DEFAULT_LABEL_FONT_SIZE,
             label_font_weight: Self::DEFAULT_LABEL_FONT_WEIGHT,
@@ -409,6 +419,10 @@ mod tests {
         assert_eq!(
             cfg.axis_ambiguity_deadzone_px,
             AppConfig::DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX
+        );
+        assert_eq!(
+            cfg.replay_distance_threshold_px,
+            AppConfig::DEFAULT_REPLAY_DISTANCE_THRESHOLD_PX
         );
         assert_eq!(cfg.label_font_family, AppConfig::DEFAULT_LABEL_FONT_FAMILY);
         assert_eq!(cfg.label_font_size, AppConfig::DEFAULT_LABEL_FONT_SIZE);

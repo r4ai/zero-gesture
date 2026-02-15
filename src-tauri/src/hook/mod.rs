@@ -120,6 +120,23 @@ fn resolve_axis_ambiguity_deadzone_px(value: i32) -> i32 {
     }
 }
 
+/// Resolves `replay_distance_threshold_px` from config with a safe fallback.
+///
+/// Values less than or equal to zero are invalid and replaced by
+/// [`AppConfig::DEFAULT_REPLAY_DISTANCE_THRESHOLD_PX`].
+fn resolve_replay_distance_threshold_px(value: i32) -> i32 {
+    if value > 0 {
+        value
+    } else {
+        warn!(
+            "Invalid replay_distance_threshold_px={} in config, falling back to {}",
+            value,
+            AppConfig::DEFAULT_REPLAY_DISTANCE_THRESHOLD_PX
+        );
+        AppConfig::DEFAULT_REPLAY_DISTANCE_THRESHOLD_PX
+    }
+}
+
 /// Resolves `safety_timeout_ms` from config with a safe fallback.
 ///
 /// A value of zero is invalid and replaced by
@@ -284,6 +301,9 @@ pub fn spawn(
             ),
             axis_ambiguity_deadzone_px: resolve_axis_ambiguity_deadzone_px(
                 cfg.axis_ambiguity_deadzone_px,
+            ),
+            replay_distance_threshold_px: resolve_replay_distance_threshold_px(
+                cfg.replay_distance_threshold_px,
             ),
             max_gesture_steps: AppConfig::MAX_GESTURE_STEPS,
             apps,

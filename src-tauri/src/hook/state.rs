@@ -21,6 +21,7 @@ pub(super) struct HookConfig {
     pub(super) min_segment_px: i32,
     pub(super) direction_switch_confirm_px: i32,
     pub(super) axis_ambiguity_deadzone_px: i32,
+    pub(super) replay_distance_threshold_px: i32,
     pub(super) max_gesture_steps: usize,
     /// Compiled app definitions for per-app matching.
     pub(super) apps: Vec<super::app_match::CompiledApp>,
@@ -273,12 +274,6 @@ pub(super) struct ReplayRequest {
     pub(super) up_at: (i32, i32),
 }
 
-/// Minimum cursor movement (in px) beyond which click replay is disabled.
-///
-/// This prevents large "cancel-like" motions from being replayed as normal
-/// clicks when no gesture binding matches.
-const MIN_REPLAY_DISTANCE_THRESHOLD_PX: i32 = 8;
-
 /// Pure-logic core of the gesture state machine.
 ///
 /// Evaluates an incoming [`MouseEvent`] and mouse position against the current
@@ -436,7 +431,7 @@ fn should_replay_unmatched(origin: (i32, i32), release: (i32, i32), config: &Hoo
     let threshold = config
         .min_segment_px
         .max(config.direction_switch_confirm_px)
-        .max(MIN_REPLAY_DISTANCE_THRESHOLD_PX);
+        .max(config.replay_distance_threshold_px);
     squared_distance(origin, release) <= i64::from(threshold) * i64::from(threshold)
 }
 
@@ -513,6 +508,7 @@ mod tests {
             min_segment_px: 1,
             direction_switch_confirm_px: 1,
             axis_ambiguity_deadzone_px: 0,
+            replay_distance_threshold_px: 8,
             max_gesture_steps: 8,
             apps: Vec::<CompiledApp>::new(),
             binding_sets: HashMap::from([(
@@ -759,6 +755,54 @@ mod tests {
     }
 
     #[test]
+    fn unmatched_sequence_replay_threshold_is_configurable() {
+        let mut config = test_config(vec![binding(
+            TriggerButton::Right,
+            vec![GestureStep::Down],
+            key_action("a"),
+            "A",
+        )]);
+        config.replay_distance_threshold_px = 32;
+        let mut state = GestureState::Idle;
+
+        process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::ButtonDown(TriggerButton::Right),
+            (100, 100),
+            1000,
+            None,
+        );
+        process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::MouseMove,
+            (119, 100),
+            1010,
+            None,
+        );
+        let effect = process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::ButtonUp(TriggerButton::Right),
+            (120, 100),
+            1020,
+            None,
+        );
+
+        assert!(effect.suppress);
+        assert!(effect.request_execute.is_none());
+        assert_eq!(
+            effect.request_replay,
+            Some(ReplayRequest {
+                trigger: TriggerButton::Right,
+                down_at: (100, 100),
+                up_at: (120, 100),
+            })
+        );
+    }
+
+    #[test]
     fn supports_wheel_input_in_sequence() {
         let action = key_action("pageup");
         let config = test_config(vec![binding(
@@ -830,6 +874,7 @@ mod tests {
             min_segment_px: 1,
             direction_switch_confirm_px: 1,
             axis_ambiguity_deadzone_px: 0,
+            replay_distance_threshold_px: 8,
             max_gesture_steps: 8,
             apps: Vec::<CompiledApp>::new(),
             binding_sets: HashMap::from([
