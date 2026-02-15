@@ -234,12 +234,62 @@ impl AppConfig {
             GestureBinding {
                 gesture: GesturePattern {
                     trigger: TriggerButton::RightClick,
+                    sequence: vec![GestureStep::Up],
+                },
+                action: Action::Keyboard {
+                    keys: vec!["pageup".to_string()],
+                },
+                label: Some("Scroll Up".to_string()),
+            },
+            GestureBinding {
+                gesture: GesturePattern {
+                    trigger: TriggerButton::RightClick,
                     sequence: vec![GestureStep::Down],
                 },
                 action: Action::Keyboard {
-                    keys: vec!["ctrl".to_string(), "w".to_string()],
+                    keys: vec!["pagedown".to_string()],
                 },
-                label: Some("Close Tab".to_string()),
+                label: Some("Scroll Down".to_string()),
+            },
+            GestureBinding {
+                gesture: GesturePattern {
+                    trigger: TriggerButton::RightClick,
+                    sequence: vec![GestureStep::Down, GestureStep::Up],
+                },
+                action: Action::Keyboard {
+                    keys: vec!["ctrl".to_string(), "home".to_string()],
+                },
+                label: Some("Top of Page".to_string()),
+            },
+            GestureBinding {
+                gesture: GesturePattern {
+                    trigger: TriggerButton::RightClick,
+                    sequence: vec![GestureStep::Up, GestureStep::Down],
+                },
+                action: Action::Keyboard {
+                    keys: vec!["ctrl".to_string(), "end".to_string()],
+                },
+                label: Some("Bottom of Page".to_string()),
+            },
+            GestureBinding {
+                gesture: GesturePattern {
+                    trigger: TriggerButton::RightClick,
+                    sequence: vec![GestureStep::Up, GestureStep::Right],
+                },
+                action: Action::Keyboard {
+                    keys: vec!["ctrl".to_string(), "tab".to_string()],
+                },
+                label: Some("Next Tab".to_string()),
+            },
+            GestureBinding {
+                gesture: GesturePattern {
+                    trigger: TriggerButton::RightClick,
+                    sequence: vec![GestureStep::Up, GestureStep::Left],
+                },
+                action: Action::Keyboard {
+                    keys: vec!["ctrl".to_string(), "shift".to_string(), "tab".to_string()],
+                },
+                label: Some("Previous Tab".to_string()),
             },
             GestureBinding {
                 gesture: GesturePattern {
@@ -253,23 +303,13 @@ impl AppConfig {
             },
             GestureBinding {
                 gesture: GesturePattern {
-                    trigger: TriggerButton::MiddleClick,
-                    sequence: vec![GestureStep::Left, GestureStep::Up],
+                    trigger: TriggerButton::RightClick,
+                    sequence: vec![GestureStep::Down, GestureStep::Right],
                 },
                 action: Action::Keyboard {
-                    keys: vec!["ctrl".to_string(), "shift".to_string(), "tab".to_string()],
+                    keys: vec!["ctrl".to_string(), "w".to_string()],
                 },
-                label: Some("Previous Tab".to_string()),
-            },
-            GestureBinding {
-                gesture: GesturePattern {
-                    trigger: TriggerButton::MiddleClick,
-                    sequence: vec![GestureStep::Right, GestureStep::Up],
-                },
-                action: Action::Keyboard {
-                    keys: vec!["ctrl".to_string(), "tab".to_string()],
-                },
-                label: Some("Next Tab".to_string()),
+                label: Some("Close Tab".to_string()),
             },
         ];
         HashMap::from([("default".to_string(), defaults)])
@@ -381,6 +421,65 @@ mod tests {
             !binding.gesture.sequence.is_empty()
                 && binding.gesture.sequence.len() <= AppConfig::MAX_GESTURE_STEPS
         }));
+    }
+
+    #[test]
+    fn default_bindings_match_legacy_defaults() {
+        let cfg = AppConfig::default();
+        let defaults = get_default_bindings(&cfg);
+        assert_eq!(defaults.len(), 10);
+
+        let expected: Vec<(Vec<GestureStep>, Vec<&str>, &str)> = vec![
+            (vec![GestureStep::Left], vec!["alt", "left"], "Back"),
+            (vec![GestureStep::Right], vec!["alt", "right"], "Forward"),
+            (vec![GestureStep::Up], vec!["pageup"], "Scroll Up"),
+            (vec![GestureStep::Down], vec!["pagedown"], "Scroll Down"),
+            (
+                vec![GestureStep::Down, GestureStep::Up],
+                vec!["ctrl", "home"],
+                "Top of Page",
+            ),
+            (
+                vec![GestureStep::Up, GestureStep::Down],
+                vec!["ctrl", "end"],
+                "Bottom of Page",
+            ),
+            (
+                vec![GestureStep::Up, GestureStep::Right],
+                vec!["ctrl", "tab"],
+                "Next Tab",
+            ),
+            (
+                vec![GestureStep::Up, GestureStep::Left],
+                vec!["ctrl", "shift", "tab"],
+                "Previous Tab",
+            ),
+            (
+                vec![GestureStep::Right, GestureStep::Down],
+                vec!["ctrl", "r"],
+                "Reload",
+            ),
+            (
+                vec![GestureStep::Down, GestureStep::Right],
+                vec!["ctrl", "w"],
+                "Close Tab",
+            ),
+        ];
+
+        for (sequence, keys, label) in expected {
+            let binding = defaults
+                .iter()
+                .find(|binding| binding.gesture.sequence == sequence)
+                .expect("expected sequence must exist in default bindings");
+            assert_eq!(binding.gesture.trigger, TriggerButton::RightClick);
+            assert_eq!(binding.label.as_deref(), Some(label));
+            let expected_keys = keys
+                .into_iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
+            let Action::Keyboard { keys: actual } = &binding.action;
+            assert_eq!(actual, &expected_keys);
+        }
     }
 
     #[test]
