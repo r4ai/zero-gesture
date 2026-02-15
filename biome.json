@@ -6,7 +6,8 @@
     "useIgnoreFile": true
   },
   "files": {
-    "ignoreUnknown": false
+    "ignoreUnknown": false,
+    "includes": ["**", "!src/routeTree.gen.ts", "!src/components/ui/*.tsx"]
   },
   "formatter": {
     "enabled": true,
@@ -15,7 +16,16 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true
+      "recommended": true,
+      "nursery": {
+        "useSortedClasses": {
+          "fix": "safe",
+          "level": "error",
+          "options": {
+            "functions": ["twMerge", "twJoin", "tv"]
+          }
+        }
+      }
     },
     "domains": {
       "react": "recommended"
@@ -25,6 +35,11 @@
     "formatter": {
       "quoteStyle": "double",
       "semicolons": "asNeeded"
+    }
+  },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
     }
   },
   "assist": {

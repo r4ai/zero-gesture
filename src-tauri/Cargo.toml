@@ -26,6 +26,7 @@ crossbeam-channel = "0.5"
 tauri-plugin-log = "2"
 log = "0.4"
 regex = "1"
+tauri-plugin-dialog = "2"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [

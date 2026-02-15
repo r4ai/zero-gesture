@@ -1,3 +1,4 @@
+pub mod commands;
 pub mod config;
 pub mod executor;
 pub mod gesture;
@@ -254,7 +255,7 @@ impl ThreadRuntime {
 }
 
 /// Replaces the in-memory config and returns whether workers should restart.
-fn replace_live_config(
+pub fn replace_live_config(
     shared_config: &SharedConfig,
     next: config::AppConfig,
 ) -> Result<(bool, config::AppConfig), String> {
@@ -270,7 +271,7 @@ fn replace_live_config(
 }
 
 /// Restores a previous config after an update failure.
-fn rollback_config_update(
+pub fn rollback_config_update(
     shared_config: &SharedConfig,
     runtime: &ThreadRuntime,
     previous_config: config::AppConfig,
@@ -289,71 +290,6 @@ fn rollback_config_update(
     }
 }
 
-/// Tauri command that opens (or focuses) the settings window.
-#[tauri::command]
-fn show_settings_window(app: tauri::AppHandle) -> Result<(), String> {
-    tray::show_settings_window(&app).map_err(|e| e.to_string())
-}
-
-/// Persists and applies a new configuration.
-///
-/// Any effective config change restarts or stops worker threads depending on
-/// the `enabled` field. This function is called by both the `update_config`
-/// Tauri command and the tray toggle handler.
-pub fn apply_config_update(
-    new_config: config::AppConfig,
-    shared_config: &SharedConfig,
-    runtime: &ThreadRuntime,
-    config_dir: &ConfigDir,
-) -> Result<(), String> {
-    let _update_guard = runtime
-        .config_update_lock
-        .lock()
-        .map_err(|_| "config update lock poisoned".to_string())?;
-
-    if runtime.should_allow_exit() {
-        return Err("thread runtime is already shut down".to_string());
-    }
-
-    let (restart_required, previous_config) =
-        replace_live_config(shared_config, new_config.clone())?;
-    if restart_required {
-        if let Err(err) = runtime.apply_worker_state(shared_config.clone(), new_config.enabled) {
-            rollback_config_update(shared_config, runtime, previous_config, restart_required);
-            return Err(format!("failed to apply worker state: {err}"));
-        }
-    }
-
-    if let Err(err) = config::save(&new_config, config_dir.as_path()) {
-        rollback_config_update(shared_config, runtime, previous_config, restart_required);
-        return Err(format!("failed to save config: {err}"));
-    }
-
-    if restart_required {
-        info!("config updated and worker state applied");
-    } else {
-        info!("config update requested but no effective change detected");
-    }
-
-    Ok(())
-}
-
-/// Tauri command that persists and applies a new configuration.
-#[tauri::command]
-fn update_config(
-    new_config: config::AppConfig,
-    shared_config: tauri::State<'_, SharedConfig>,
-    runtime: tauri::State<'_, ThreadRuntime>,
-    config_dir: tauri::State<'_, ConfigDir>,
-) -> Result<(), String> {
-    apply_config_update(
-        new_config,
-        shared_config.inner(),
-        runtime.inner(),
-        config_dir.inner(),
-    )
-}
-
 /// Application entry point — builds and runs the Tauri application.
 ///
 /// Sets up logging, loads configuration, spawns background threads,
@@ -363,6 +299,7 @@ pub fn run() {
     let log_level = log_config::resolve_log_level();
 
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_log::Builder::new().level(log_level).build())
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
@@ -378,8 +315,12 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            show_settings_window,
-            update_config
+            commands::show_settings_window,
+            commands::get_config,
+            commands::update_config,
+            commands::import_config,
+            commands::export_config,
+            commands::open_config_dir
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
