@@ -1,4 +1,5 @@
 import path from "node:path"
+import optimizeLocales from "@react-aria/optimize-locales-plugin"
 import tailwindcss from "@tailwindcss/vite"
 import { tanstackRouter } from "@tanstack/router-plugin/vite"
 import react from "@vitejs/plugin-react"
@@ -13,6 +14,12 @@ export default defineConfig(async () => ({
       target: "react",
       autoCodeSplitting: true,
     }),
+    {
+      ...optimizeLocales.vite({
+        locales: ["en-US"],
+      }),
+      enforce: "pre",
+    },
     react(),
     // biome-ignore lint/suspicious/noExplicitAny: plugin type is broken
     tailwindcss() as any,
