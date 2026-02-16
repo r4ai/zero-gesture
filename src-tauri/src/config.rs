@@ -1,8 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use log::warn;
 use serde::{Deserialize, Serialize};
 
 use crate::executor::Action;
@@ -61,7 +62,7 @@ pub enum TriggerButton {
 /// One element inside a gesture sequence.
 ///
 /// A gesture sequence can combine directional movement and mouse inputs.
-/// Maximum length is enforced by the hook logic (`8` elements).
+/// Maximum length is enforced by [`AppConfig::validate`] (`8` elements).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum GestureStep {
@@ -132,6 +133,28 @@ pub struct GestureBinding {
     pub gesture: GesturePattern,
     /// Action to execute when the gesture matches.
     pub action: Action,
+}
+
+fn has_consecutive_same_move_steps(sequence: &[GestureStep]) -> bool {
+    sequence.windows(2).any(|pair| {
+        pair[0] == pair[1]
+            && matches!(
+                pair[0],
+                GestureStep::Up | GestureStep::Down | GestureStep::Left | GestureStep::Right
+            )
+    })
+}
+
+fn trigger_to_step(trigger: TriggerButton) -> GestureStep {
+    match trigger {
+        TriggerButton::LeftClick => GestureStep::LeftClick,
+        TriggerButton::RightClick => GestureStep::RightClick,
+        TriggerButton::MiddleClick => GestureStep::MiddleClick,
+    }
+}
+
+fn is_supported_hold_step(step: GestureStep) -> bool {
+    matches!(step, GestureStep::WheelUp | GestureStep::WheelDown)
 }
 
 /// Configuration file name.
@@ -237,6 +260,215 @@ impl AppConfig {
 
     /// Default padding (in pixels) around the gesture label overlay text.
     pub const DEFAULT_LABEL_PADDING: f32 = 24.0;
+
+    /// Reserved app ID for global fallback bindings.
+    pub const DEFAULT_APP_ID: &str = "default";
+
+    /// Validates and normalizes configuration values in-place.
+    ///
+    /// Invalid values are replaced with safe defaults and unsupported gesture
+    /// bindings are dropped.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use zero_gesture_lib::config::AppConfig;
+    ///
+    /// let mut cfg = AppConfig::default();
+    /// cfg.min_segment_px = 0;
+    /// cfg.validate();
+    /// assert_eq!(cfg.min_segment_px, AppConfig::DEFAULT_MIN_SEGMENT_PX);
+    /// ```
+    pub fn validate(&mut self) {
+        if self.safety_timeout_ms == 0 {
+            warn!(
+                "Invalid safety_timeout_ms={} in config, falling back to {}",
+                self.safety_timeout_ms,
+                Self::DEFAULT_SAFETY_TIMEOUT_MS
+            );
+            self.safety_timeout_ms = Self::DEFAULT_SAFETY_TIMEOUT_MS;
+        }
+        if self.min_segment_px <= 0 {
+            warn!(
+                "Invalid min_segment_px={} in config, falling back to {}",
+                self.min_segment_px,
+                Self::DEFAULT_MIN_SEGMENT_PX
+            );
+            self.min_segment_px = Self::DEFAULT_MIN_SEGMENT_PX;
+        }
+        if self.direction_switch_confirm_px <= 0 {
+            warn!(
+                "Invalid direction_switch_confirm_px={} in config, falling back to {}",
+                self.direction_switch_confirm_px,
+                Self::DEFAULT_DIRECTION_SWITCH_CONFIRM_PX
+            );
+            self.direction_switch_confirm_px = Self::DEFAULT_DIRECTION_SWITCH_CONFIRM_PX;
+        }
+        if self.axis_ambiguity_deadzone_px < 0 {
+            warn!(
+                "Invalid axis_ambiguity_deadzone_px={} in config, falling back to {}",
+                self.axis_ambiguity_deadzone_px,
+                Self::DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX
+            );
+            self.axis_ambiguity_deadzone_px = Self::DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX;
+        }
+        if self.replay_distance_threshold_px <= 0 {
+            warn!(
+                "Invalid replay_distance_threshold_px={} in config, falling back to {}",
+                self.replay_distance_threshold_px,
+                Self::DEFAULT_REPLAY_DISTANCE_THRESHOLD_PX
+            );
+            self.replay_distance_threshold_px = Self::DEFAULT_REPLAY_DISTANCE_THRESHOLD_PX;
+        }
+
+        let mut validated_bindings: HashMap<String, Vec<GestureBinding>> =
+            HashMap::with_capacity(self.bindings.len().max(1));
+        for (app_id, app_bindings) in &self.bindings {
+            if app_id != Self::DEFAULT_APP_ID && !self.apps.contains_key(app_id) {
+                warn!(
+                    "Bindings reference app {:?} which is not defined in apps, skipping",
+                    app_id
+                );
+                continue;
+            }
+            let normalized = Self::validate_bindings_for_app(app_id, app_bindings);
+            validated_bindings.insert(app_id.clone(), normalized);
+        }
+
+        if !validated_bindings.contains_key(Self::DEFAULT_APP_ID) {
+            warn!(
+                "No \"{}\" bindings defined in configuration; inserting empty default set",
+                Self::DEFAULT_APP_ID
+            );
+            validated_bindings.insert(Self::DEFAULT_APP_ID.to_string(), Vec::new());
+        }
+        self.bindings = validated_bindings;
+    }
+
+    /// Returns a validated copy of this configuration.
+    pub fn validated(mut self) -> Self {
+        self.validate();
+        self
+    }
+
+    fn validate_bindings_for_app(
+        app_id: &str,
+        app_bindings: &[GestureBinding],
+    ) -> Vec<GestureBinding> {
+        let mut validated: Vec<GestureBinding> = Vec::new();
+        let mut seen_release: HashSet<(TriggerButton, Vec<GestureStep>)> = HashSet::new();
+        let mut seen_hold: HashSet<(TriggerButton, Vec<GestureStep>, GestureStep)> = HashSet::new();
+
+        for binding in app_bindings {
+            match binding.gesture.mode {
+                GestureMode::Release => {
+                    if binding.gesture.sequence.is_empty() {
+                        warn!(
+                            "Empty release gesture sequence in bindings for app {:?}, skipping",
+                            app_id
+                        );
+                        continue;
+                    }
+                    if binding.gesture.sequence.len() > Self::MAX_GESTURE_STEPS {
+                        warn!(
+                            "Release gesture sequence too long ({} > {}) in app {:?}, skipping",
+                            binding.gesture.sequence.len(),
+                            Self::MAX_GESTURE_STEPS,
+                            app_id
+                        );
+                        continue;
+                    }
+                    if has_consecutive_same_move_steps(&binding.gesture.sequence) {
+                        warn!(
+                            "Release gesture sequence contains consecutive identical directional moves {:?} in app {:?}, skipping",
+                            binding.gesture.sequence, app_id
+                        );
+                        continue;
+                    }
+
+                    let trigger_step = trigger_to_step(binding.gesture.trigger);
+                    if binding.gesture.sequence.contains(&trigger_step) {
+                        warn!(
+                            "Release gesture sequence contains its own trigger step {:?} in app {:?}, skipping",
+                            trigger_step, app_id
+                        );
+                        continue;
+                    }
+
+                    let sequence = binding.gesture.sequence.clone();
+                    if !seen_release.insert((binding.gesture.trigger, sequence)) {
+                        warn!(
+                            "Duplicate release gesture binding for trigger={:?}, sequence={:?} in app {:?}, skipping",
+                            binding.gesture.trigger, binding.gesture.sequence, app_id
+                        );
+                        continue;
+                    }
+
+                    let mut normalized = binding.clone();
+                    if normalized.gesture.step.is_some() {
+                        warn!(
+                            "Release gesture includes hold-only `step` in app {:?}, dropping step",
+                            app_id
+                        );
+                        normalized.gesture.step = None;
+                    }
+                    validated.push(normalized);
+                }
+                GestureMode::Hold => {
+                    if binding.gesture.sequence.len() > Self::MAX_GESTURE_STEPS {
+                        warn!(
+                            "Hold gesture sequence too long ({} > {}) in app {:?}, skipping",
+                            binding.gesture.sequence.len(),
+                            Self::MAX_GESTURE_STEPS,
+                            app_id
+                        );
+                        continue;
+                    }
+                    if has_consecutive_same_move_steps(&binding.gesture.sequence) {
+                        warn!(
+                            "Hold gesture sequence contains consecutive identical directional moves {:?} in app {:?}, skipping",
+                            binding.gesture.sequence, app_id
+                        );
+                        continue;
+                    }
+
+                    let trigger_step = trigger_to_step(binding.gesture.trigger);
+                    if binding.gesture.sequence.contains(&trigger_step) {
+                        warn!(
+                            "Hold gesture sequence contains its own trigger step {:?} in app {:?}, skipping",
+                            trigger_step, app_id
+                        );
+                        continue;
+                    }
+
+                    let Some(step) = binding.gesture.step else {
+                        warn!("Hold gesture is missing step in app {:?}, skipping", app_id);
+                        continue;
+                    };
+                    if !is_supported_hold_step(step) {
+                        warn!(
+                            "Unsupported hold step {:?} in app {:?}, skipping",
+                            step, app_id
+                        );
+                        continue;
+                    }
+
+                    let sequence = binding.gesture.sequence.clone();
+                    if !seen_hold.insert((binding.gesture.trigger, sequence, step)) {
+                        warn!(
+                            "Duplicate hold gesture binding for trigger={:?}, sequence={:?}, step={:?} in app {:?}, skipping",
+                            binding.gesture.trigger, binding.gesture.sequence, step, app_id
+                        );
+                        continue;
+                    }
+
+                    validated.push(binding.clone());
+                }
+            }
+        }
+
+        validated
+    }
 
     /// Default gesture bindings (under `"default"`).
     fn default_bindings() -> HashMap<String, Vec<GestureBinding>> {
@@ -362,7 +594,7 @@ impl AppConfig {
                 label: Some("Close Tab".to_string()),
             },
         ];
-        HashMap::from([("default".to_string(), defaults)])
+        HashMap::from([(Self::DEFAULT_APP_ID.to_string(), defaults)])
     }
 }
 
@@ -405,7 +637,8 @@ pub fn load_or_default(config_dir: &Path) -> AppConfig {
         Err(_) => return AppConfig::default(),
     };
 
-    serde_json::from_str(&raw).unwrap_or_default()
+    let cfg: AppConfig = serde_json::from_str(&raw).unwrap_or_default();
+    cfg.validated()
 }
 
 /// Serializes `config` as pretty-printed JSON and writes it to the
@@ -425,7 +658,8 @@ pub fn load_or_default(config_dir: &Path) -> AppConfig {
 /// save(&config, Path::new("./config")).expect("failed to save config");
 /// ```
 pub fn save(config: &AppConfig, config_dir: &Path) -> io::Result<()> {
-    let body = serde_json::to_string_pretty(config)
+    let normalized = config.clone().validated();
+    let body = serde_json::to_string_pretty(&normalized)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
     fs::create_dir_all(config_dir)?;
     fs::write(config_path(config_dir), body)
@@ -445,6 +679,47 @@ mod tests {
         cfg.bindings
             .get("default")
             .expect("default bindings must exist")
+    }
+
+    fn keyboard_action(key: &str) -> Action {
+        Action::Keyboard {
+            keys: vec![key.to_string()],
+        }
+    }
+
+    fn release_binding(
+        trigger: TriggerButton,
+        sequence: Vec<GestureStep>,
+        key: &str,
+    ) -> GestureBinding {
+        GestureBinding {
+            label: None,
+            gesture: GesturePattern {
+                trigger,
+                mode: GestureMode::Release,
+                sequence,
+                step: None,
+            },
+            action: keyboard_action(key),
+        }
+    }
+
+    fn hold_binding(
+        trigger: TriggerButton,
+        sequence: Vec<GestureStep>,
+        step: Option<GestureStep>,
+        key: &str,
+    ) -> GestureBinding {
+        GestureBinding {
+            label: None,
+            gesture: GesturePattern {
+                trigger,
+                mode: GestureMode::Hold,
+                sequence,
+                step,
+            },
+            action: keyboard_action(key),
+        }
     }
 
     #[test]
@@ -690,6 +965,160 @@ mod tests {
         let cfg: AppConfig = serde_json::from_str(raw).expect("JSON with enabled=false must parse");
         assert!(!cfg.enabled);
         assert!(cfg.bindings.contains_key("default"));
+    }
+
+    #[test]
+    fn validate_normalizes_numeric_thresholds() {
+        let mut cfg = AppConfig {
+            safety_timeout_ms: 0,
+            min_segment_px: 0,
+            direction_switch_confirm_px: -1,
+            axis_ambiguity_deadzone_px: -1,
+            replay_distance_threshold_px: 0,
+            ..AppConfig::default()
+        };
+
+        cfg.validate();
+
+        assert_eq!(cfg.safety_timeout_ms, AppConfig::DEFAULT_SAFETY_TIMEOUT_MS);
+        assert_eq!(cfg.min_segment_px, AppConfig::DEFAULT_MIN_SEGMENT_PX);
+        assert_eq!(
+            cfg.direction_switch_confirm_px,
+            AppConfig::DEFAULT_DIRECTION_SWITCH_CONFIRM_PX
+        );
+        assert_eq!(
+            cfg.axis_ambiguity_deadzone_px,
+            AppConfig::DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX
+        );
+        assert_eq!(
+            cfg.replay_distance_threshold_px,
+            AppConfig::DEFAULT_REPLAY_DISTANCE_THRESHOLD_PX
+        );
+    }
+
+    #[test]
+    fn validate_inserts_empty_default_bindings_when_missing() {
+        let mut cfg = AppConfig {
+            bindings: HashMap::new(),
+            ..AppConfig::default()
+        };
+
+        cfg.validate();
+
+        assert!(cfg.bindings.contains_key(AppConfig::DEFAULT_APP_ID));
+        assert_eq!(cfg.bindings[AppConfig::DEFAULT_APP_ID].len(), 0);
+    }
+
+    #[test]
+    fn validate_removes_bindings_for_unknown_apps() {
+        let mut cfg = AppConfig {
+            bindings: HashMap::from([
+                (
+                    AppConfig::DEFAULT_APP_ID.to_string(),
+                    vec![release_binding(
+                        TriggerButton::RightClick,
+                        vec![GestureStep::Left],
+                        "a",
+                    )],
+                ),
+                (
+                    "missing-app".to_string(),
+                    vec![release_binding(
+                        TriggerButton::RightClick,
+                        vec![GestureStep::Right],
+                        "b",
+                    )],
+                ),
+            ]),
+            ..AppConfig::default()
+        };
+
+        cfg.validate();
+
+        assert!(cfg.bindings.contains_key(AppConfig::DEFAULT_APP_ID));
+        assert!(!cfg.bindings.contains_key("missing-app"));
+    }
+
+    #[test]
+    fn validate_filters_invalid_release_bindings_and_deduplicates() {
+        let mut cfg = AppConfig {
+            bindings: HashMap::from([(
+                AppConfig::DEFAULT_APP_ID.to_string(),
+                vec![
+                    release_binding(TriggerButton::RightClick, vec![], "empty"),
+                    release_binding(
+                        TriggerButton::RightClick,
+                        vec![GestureStep::RightClick],
+                        "contains-trigger",
+                    ),
+                    release_binding(
+                        TriggerButton::RightClick,
+                        vec![GestureStep::Left, GestureStep::Left],
+                        "same-move",
+                    ),
+                    release_binding(TriggerButton::RightClick, vec![GestureStep::Up], "first"),
+                    release_binding(TriggerButton::RightClick, vec![GestureStep::Up], "second"),
+                ],
+            )]),
+            ..AppConfig::default()
+        };
+
+        cfg.validate();
+
+        let defaults = get_default_bindings(&cfg);
+        assert_eq!(defaults.len(), 1);
+        assert_eq!(defaults[0].action, keyboard_action("first"));
+    }
+
+    #[test]
+    fn validate_filters_invalid_hold_bindings_and_deduplicates() {
+        let mut cfg = AppConfig {
+            bindings: HashMap::from([(
+                AppConfig::DEFAULT_APP_ID.to_string(),
+                vec![
+                    hold_binding(TriggerButton::RightClick, Vec::new(), None, "missing-step"),
+                    hold_binding(
+                        TriggerButton::RightClick,
+                        Vec::new(),
+                        Some(GestureStep::LeftClick),
+                        "unsupported-step",
+                    ),
+                    hold_binding(
+                        TriggerButton::RightClick,
+                        vec![GestureStep::RightClick],
+                        Some(GestureStep::WheelUp),
+                        "contains-trigger",
+                    ),
+                    hold_binding(
+                        TriggerButton::RightClick,
+                        vec![GestureStep::Left, GestureStep::Left],
+                        Some(GestureStep::WheelUp),
+                        "same-move",
+                    ),
+                    hold_binding(
+                        TriggerButton::RightClick,
+                        Vec::new(),
+                        Some(GestureStep::WheelUp),
+                        "first",
+                    ),
+                    hold_binding(
+                        TriggerButton::RightClick,
+                        Vec::new(),
+                        Some(GestureStep::WheelUp),
+                        "second",
+                    ),
+                ],
+            )]),
+            ..AppConfig::default()
+        };
+
+        cfg.validate();
+
+        let defaults = get_default_bindings(&cfg);
+        assert_eq!(defaults.len(), 1);
+        assert_eq!(defaults[0].gesture.mode, GestureMode::Hold);
+        assert_eq!(defaults[0].gesture.step, Some(GestureStep::WheelUp));
+        assert_eq!(defaults[0].action, keyboard_action("first"));
     }
 
     #[test]

@@ -35,6 +35,8 @@ pub fn apply_config_update<R: tauri::Runtime>(
     runtime: &ThreadRuntime,
     config_dir: &ConfigDir,
 ) -> Result<(), String> {
+    let new_config = new_config.validated();
+
     let _update_guard = runtime
         .config_update_lock
         .lock()
