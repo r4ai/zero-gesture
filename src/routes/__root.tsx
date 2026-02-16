@@ -26,6 +26,7 @@ import {
   SidebarHeader,
   SidebarItem,
 } from "@/components/ui/sidebar"
+import { ConfigDraftProvider } from "@/contexts/config-draft"
 import { useConfigUpdatedListener } from "@/hooks/use-config"
 
 const queryClient = new QueryClient()
@@ -191,7 +192,9 @@ const RootLayout = () => (
   <QueryClientProvider client={queryClient}>
     <ThemeProvider defaultTheme="system" storageKey="zero-gesture-theme">
       <ConfigEventBridge />
-      <AppLayout />
+      <ConfigDraftProvider>
+        <AppLayout />
+      </ConfigDraftProvider>
       <TanStackRouterDevtools position="top-right" />
       <Toaster />
     </ThemeProvider>

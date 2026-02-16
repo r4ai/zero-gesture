@@ -1,13 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router"
-import { useState } from "react"
-import { Button } from "@/components/ui/button"
-import {
-  Panel,
-  PanelBody,
-  PanelFooter,
-  PanelHeader,
-} from "@/components/ui/panel"
+import { SettingsFormActions } from "@/components/settings-form-actions"
+import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel"
 import { Switch } from "@/components/ui/switch"
+import { useConfigDraft } from "@/contexts/config-draft"
 
 export const Route = createFileRoute("/general/")({
   component: GeneralSettings,
@@ -18,7 +13,7 @@ export const Route = createFileRoute("/general/")({
  * Displays general preferences for the application
  */
 function GeneralSettings() {
-  const [enableZeroGesture, setEnableZeroGesture] = useState(true)
+  const { draft, setDraft, isDirty, reset, save, isSaving } = useConfigDraft()
 
   return (
     <Panel>
@@ -42,18 +37,18 @@ function GeneralSettings() {
               </span>
             </div>
             <Switch
-              isSelected={enableZeroGesture}
-              onChange={setEnableZeroGesture}
+              isSelected={draft.enabled}
+              onChange={(enabled) => setDraft({ ...draft, enabled })}
             />
           </div>
         </div>
       </PanelBody>
-      <PanelFooter>
-        <Button variant="outline">Cancel</Button>
-        <Button>
-          <span className="font-semibold text-[13px]">Save Changes</span>
-        </Button>
-      </PanelFooter>
+      <SettingsFormActions
+        isDirty={isDirty}
+        isSaving={isSaving}
+        onSave={save}
+        onCancel={reset}
+      />
     </Panel>
   )
 }
