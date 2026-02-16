@@ -282,7 +282,7 @@ impl AppConfig {
     ///   - If `default` is missing after validation, an empty
     ///     `default: []` entry is inserted.
     /// - Per-app binding list validation is delegated to
-    ///   [`Self::validate_bindings_for_app`].
+    ///   `validate_bindings_for_app`.
     ///
     /// This method is lossy by design: unsupported bindings are dropped and a
     /// warning is logged for each dropped/normalized case.
