@@ -24,9 +24,12 @@ dist-ssr
 *.sw?
 .claude/worktrees
 
+# Framework
 *storybook.log
 storybook-static
+.tanstack
 
+# LLM
 .agents
 .agent
 .claude

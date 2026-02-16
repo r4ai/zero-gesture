@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as GeneralIndexRouteImport } from './routes/general/index'
+import { Route as AdvancedIndexRouteImport } from './routes/advanced/index'
 
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
@@ -22,30 +23,39 @@ const GeneralIndexRoute = GeneralIndexRouteImport.update({
   path: '/general/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdvancedIndexRoute = AdvancedIndexRouteImport.update({
+  id: '/advanced/',
+  path: '/advanced/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRoute
+  '/advanced/': typeof AdvancedIndexRoute
   '/general/': typeof GeneralIndexRoute
 }
 export interface FileRoutesByTo {
   '/settings': typeof SettingsRoute
+  '/advanced': typeof AdvancedIndexRoute
   '/general': typeof GeneralIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/settings': typeof SettingsRoute
+  '/advanced/': typeof AdvancedIndexRoute
   '/general/': typeof GeneralIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/settings' | '/general/'
+  fullPaths: '/settings' | '/advanced/' | '/general/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/settings' | '/general'
-  id: '__root__' | '/settings' | '/general/'
+  to: '/settings' | '/advanced' | '/general'
+  id: '__root__' | '/settings' | '/advanced/' | '/general/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRoute
+  AdvancedIndexRoute: typeof AdvancedIndexRoute
   GeneralIndexRoute: typeof GeneralIndexRoute
 }
 
@@ -65,11 +75,19 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof GeneralIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/advanced/': {
+      id: '/advanced/'
+      path: '/advanced'
+      fullPath: '/advanced/'
+      preLoaderRoute: typeof AdvancedIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRoute,
+  AdvancedIndexRoute: AdvancedIndexRoute,
   GeneralIndexRoute: GeneralIndexRoute,
 }
 export const routeTree = rootRouteImport
