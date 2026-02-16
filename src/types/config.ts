@@ -1,8 +1,10 @@
 /** What property of the foreground window to inspect. */
-export type MatchTarget = "process_name" | "window_class" | "title"
+export const MATCH_TARGETS = ["process_name", "window_class", "title"] as const
+export type MatchTarget = (typeof MATCH_TARGETS)[number]
 
 /** How to compare the target value against the pattern. */
-export type MatchMethod = "exact" | "contains" | "regex"
+export const MATCH_METHODS = ["exact", "contains", "regex"] as const
+export type MatchMethod = (typeof MATCH_METHODS)[number]
 
 /** A single matching rule for identifying an application. */
 export interface AppMatcher {
@@ -21,25 +23,34 @@ export interface AppDefinition {
 }
 
 /** Mouse button that starts a gesture session. */
-export type TriggerButton = "left_click" | "right_click" | "middle_click"
+export const TRIGGER_BUTTONS = [
+  "left_click",
+  "right_click",
+  "middle_click",
+] as const
+export type TriggerButton = (typeof TRIGGER_BUTTONS)[number]
 
 /** One element inside a gesture sequence. */
-export type GestureStep =
-  | "up"
-  | "down"
-  | "left"
-  | "right"
-  | "wheel_up"
-  | "wheel_down"
-  | "left_click"
-  | "right_click"
-  | "middle_click"
+export const GESTURE_STEPS = [
+  "up",
+  "down",
+  "left",
+  "right",
+  "wheel_up",
+  "wheel_down",
+  "left_click",
+  "right_click",
+  "middle_click",
+] as const
+export type GestureStep = (typeof GESTURE_STEPS)[number]
 
 /** Valid step values for `hold`-mode bindings (backend-supported only). */
-export type HoldStep = "wheel_up" | "wheel_down"
+export const HOLD_STEPS = ["wheel_up", "wheel_down"] as const
+export type HoldStep = (typeof HOLD_STEPS)[number]
 
 /** Timing mode for a gesture binding. */
-export type GestureMode = "release" | "hold"
+export const GESTURE_MODES = ["release", "hold"] as const
+export type GestureMode = (typeof GESTURE_MODES)[number]
 
 /** Base properties shared by all gesture patterns. */
 interface GesturePatternBase {

@@ -5,7 +5,7 @@
       "type": "frame",
       "id": "Wvn92",
       "x": 3265,
-      "y": 909,
+      "y": 927,
       "name": "Pick-From-Screen: Step 1 - Pick Window",
       "clip": true,
       "width": 1100,
@@ -937,8 +937,8 @@
           "children": [
             {
               "type": "frame",
-              "id": "DBJIE",
-              "name": "Panel Header",
+              "id": "1mHmB",
+              "name": "advHeader",
               "width": "fill_container",
               "height": 64,
               "stroke": {
@@ -958,14 +958,14 @@
               "children": [
                 {
                   "type": "frame",
-                  "id": "LpCRy",
+                  "id": "b1HGb",
                   "name": "panelTitleGroup",
                   "layout": "vertical",
                   "gap": 2,
                   "children": [
                     {
                       "type": "text",
-                      "id": "dXJyM",
+                      "id": "XkVAS",
                       "name": "panelTitle",
                       "fill": "$foreground",
                       "content": "Advanced",
@@ -975,7 +975,7 @@
                     },
                     {
                       "type": "text",
-                      "id": "rZkZy",
+                      "id": "8WeAl",
                       "name": "panelSubtitle",
                       "fill": "$foreground-subtle",
                       "content": "Advanced configuration options for power users.",
@@ -1014,8 +1014,8 @@
                   "children": [
                     {
                       "type": "frame",
-                      "id": "OcRKO",
-                      "name": "Import Config Item",
+                      "id": "7SCKf",
+                      "name": "row1",
                       "width": "fill_container",
                       "height": 72,
                       "stroke": {
@@ -1035,16 +1035,16 @@
                       "children": [
                         {
                           "type": "frame",
-                          "id": "oL2eG",
-                          "name": "item1Left",
+                          "id": "bvVHp",
+                          "name": "rowLeft",
                           "width": "fill_container",
                           "layout": "vertical",
                           "gap": 4,
                           "children": [
                             {
                               "type": "text",
-                              "id": "2VRkL",
-                              "name": "item1Title",
+                              "id": "eSBsh",
+                              "name": "rowTitle",
                               "fill": "$foreground",
                               "content": "Import Config",
                               "fontFamily": "DM Sans",
@@ -1053,8 +1053,8 @@
                             },
                             {
                               "type": "text",
-                              "id": "u4Crh",
-                              "name": "item1Desc",
+                              "id": "w2xYT",
+                              "name": "rowDesc",
                               "fill": "$foreground-subtle",
                               "textGrowth": "fixed-width",
                               "width": "fill_container",
@@ -1067,8 +1067,8 @@
                         },
                         {
                           "type": "frame",
-                          "id": "U4oIv",
-                          "name": "ImportButton",
+                          "id": "fGWAJ",
+                          "name": "rowAction",
                           "height": 34,
                           "fill": "$background-card",
                           "cornerRadius": 7,
@@ -1086,8 +1086,8 @@
                           "children": [
                             {
                               "type": "icon_font",
-                              "id": "I49tt",
-                              "name": "item1BtnIcon",
+                              "id": "Hp4Vp",
+                              "name": "rowActionIcon",
                               "width": 14,
                               "height": 14,
                               "iconFontName": "upload",
@@ -1096,8 +1096,8 @@
                             },
                             {
                               "type": "text",
-                              "id": "oLZrG",
-                              "name": "item1BtnLabel",
+                              "id": "qRXcu",
+                              "name": "rowActionLabel",
                               "fill": "$foreground",
                               "content": "Import",
                               "fontFamily": "DM Sans",
@@ -1110,8 +1110,8 @@
                     },
                     {
                       "type": "frame",
-                      "id": "22KJ9",
-                      "name": "Export Config Item",
+                      "id": "pchOh",
+                      "name": "row2",
                       "width": "fill_container",
                       "height": 72,
                       "stroke": {
@@ -1131,16 +1131,16 @@
                       "children": [
                         {
                           "type": "frame",
-                          "id": "TYCso",
-                          "name": "item2Left",
+                          "id": "4637C",
+                          "name": "rowLeft",
                           "width": "fill_container",
                           "layout": "vertical",
                           "gap": 4,
                           "children": [
                             {
                               "type": "text",
-                              "id": "fquEL",
-                              "name": "item2Title",
+                              "id": "Anif8",
+                              "name": "rowTitle",
                               "fill": "$foreground",
                               "content": "Export Config",
                               "fontFamily": "DM Sans",
@@ -1149,8 +1149,8 @@
                             },
                             {
                               "type": "text",
-                              "id": "6YUvM",
-                              "name": "item2Desc",
+                              "id": "ZdQIA",
+                              "name": "rowDesc",
                               "fill": "$foreground-subtle",
                               "textGrowth": "fixed-width",
                               "width": "fill_container",
@@ -1163,8 +1163,8 @@
                         },
                         {
                           "type": "frame",
-                          "id": "ZG4hs",
-                          "name": "ExportButton",
+                          "id": "Oes1s",
+                          "name": "rowAction",
                           "height": 34,
                           "fill": "$background-card",
                           "cornerRadius": 7,
@@ -1182,8 +1182,8 @@
                           "children": [
                             {
                               "type": "icon_font",
-                              "id": "56sQZ",
-                              "name": "item2BtnIcon",
+                              "id": "A0wi3",
+                              "name": "rowActionIcon",
                               "width": 14,
                               "height": 14,
                               "iconFontName": "download",
@@ -1192,8 +1192,8 @@
                             },
                             {
                               "type": "text",
-                              "id": "MsF4M",
-                              "name": "item2BtnLabel",
+                              "id": "PpqAb",
+                              "name": "rowActionLabel",
                               "fill": "$foreground",
                               "content": "Export",
                               "fontFamily": "DM Sans",
@@ -1206,8 +1206,8 @@
                     },
                     {
                       "type": "frame",
-                      "id": "biSbi",
-                      "name": "Open Config Item",
+                      "id": "BJJjD",
+                      "name": "row3",
                       "width": "fill_container",
                       "height": 72,
                       "gap": 16,
@@ -1220,16 +1220,16 @@
                       "children": [
                         {
                           "type": "frame",
-                          "id": "84YvA",
-                          "name": "item3Left",
+                          "id": "u8Vjj",
+                          "name": "rowLeft",
                           "width": "fill_container",
                           "layout": "vertical",
                           "gap": 4,
                           "children": [
                             {
                               "type": "text",
-                              "id": "FrdiX",
-                              "name": "item3Title",
+                              "id": "RVyYI",
+                              "name": "rowTitle",
                               "fill": "$foreground",
                               "content": "Open Config",
                               "fontFamily": "DM Sans",
@@ -1238,8 +1238,8 @@
                             },
                             {
                               "type": "text",
-                              "id": "ohBPK",
-                              "name": "item3Desc",
+                              "id": "UY4W8",
+                              "name": "rowDesc",
                               "fill": "$foreground-subtle",
                               "textGrowth": "fixed-width",
                               "width": "fill_container",
@@ -1252,8 +1252,8 @@
                         },
                         {
                           "type": "frame",
-                          "id": "qAHRI",
-                          "name": "OpenFolderButton",
+                          "id": "hayeE",
+                          "name": "rowAction",
                           "height": 34,
                           "fill": "$background-card",
                           "cornerRadius": 7,
@@ -1271,8 +1271,8 @@
                           "children": [
                             {
                               "type": "icon_font",
-                              "id": "RGteW",
-                              "name": "item3BtnIcon",
+                              "id": "0GYp6",
+                              "name": "rowActionIcon",
                               "width": 14,
                               "height": 14,
                               "iconFontName": "folder-open",
@@ -1281,8 +1281,8 @@
                             },
                             {
                               "type": "text",
-                              "id": "3GU80",
-                              "name": "item3BtnLabel",
+                              "id": "Ew5Im",
+                              "name": "rowActionLabel",
                               "fill": "$foreground",
                               "content": "Open Folder",
                               "fontFamily": "DM Sans",
@@ -1299,8 +1299,8 @@
             },
             {
               "type": "frame",
-              "id": "uavqV",
-              "name": "Panel Footer",
+              "id": "cowTu",
+              "name": "advFooter",
               "width": "fill_container",
               "height": 64,
               "stroke": {
@@ -1320,7 +1320,7 @@
               "children": [
                 {
                   "type": "frame",
-                  "id": "RoeU1",
+                  "id": "kRRdE",
                   "name": "cancelBtn",
                   "height": 36,
                   "fill": "$transparent",
@@ -1339,7 +1339,7 @@
                   "children": [
                     {
                       "type": "text",
-                      "id": "cFmvQ",
+                      "id": "3JGiZ",
                       "name": "cancelLabel",
                       "fill": "$foreground",
                       "content": "Cancel",
@@ -1351,7 +1351,7 @@
                 },
                 {
                   "type": "frame",
-                  "id": "eAPq1",
+                  "id": "r3M0I",
                   "name": "saveBtn",
                   "height": 36,
                   "fill": "$foreground",
@@ -1375,7 +1375,7 @@
                   "children": [
                     {
                       "type": "icon_font",
-                      "id": "Lx3hK",
+                      "id": "oWzrS",
                       "name": "saveIcon",
                       "width": 14,
                       "height": 14,
@@ -1385,7 +1385,7 @@
                     },
                     {
                       "type": "text",
-                      "id": "2fvYb",
+                      "id": "JgXwx",
                       "name": "saveLabel",
                       "fill": "$background",
                       "content": "Save Changes",
@@ -1868,8 +1868,8 @@
           "children": [
             {
               "type": "frame",
-              "id": "0XOSF",
-              "name": "Action Header",
+              "id": "xYz7x",
+              "name": "actionEditHeader",
               "width": "fill_container",
               "height": 64,
               "stroke": {
@@ -1888,14 +1888,14 @@
               "children": [
                 {
                   "type": "frame",
-                  "id": "5LjFE",
+                  "id": "QZhYb",
                   "name": "actionHeaderLeft",
                   "layout": "vertical",
                   "gap": 3,
                   "children": [
                     {
                       "type": "text",
-                      "id": "AqaSl",
+                      "id": "Mm0oV",
                       "name": "actionHeaderTitle",
                       "fill": "$foreground",
                       "content": "Left",
@@ -1905,7 +1905,7 @@
                     },
                     {
                       "type": "text",
-                      "id": "qaOdR",
+                      "id": "KBDxc",
                       "name": "actionHeaderSub",
                       "fill": "$foreground-subtle",
                       "content": "Left",
@@ -1917,14 +1917,14 @@
                 },
                 {
                   "type": "frame",
-                  "id": "jnbCU",
+                  "id": "GISgM",
                   "name": "actionHeaderRight",
                   "gap": 8,
                   "alignItems": "center",
                   "children": [
                     {
                       "type": "frame",
-                      "id": "QnxH1",
+                      "id": "jDmJv",
                       "name": "Delete Btn",
                       "height": 32,
                       "fill": "$destructive-subtle",
@@ -1943,7 +1943,7 @@
                       "children": [
                         {
                           "type": "icon_font",
-                          "id": "9CvgX",
+                          "id": "GhMqa",
                           "name": "deleteBtnIcon",
                           "width": 13,
                           "height": 13,
@@ -1953,7 +1953,7 @@
                         },
                         {
                           "type": "text",
-                          "id": "kPhYF",
+                          "id": "BzXEk",
                           "name": "deleteBtnText",
                           "fill": "$destructive",
                           "content": "Remove Action",
@@ -1969,8 +1969,8 @@
             },
             {
               "type": "frame",
-              "id": "KVgNP",
-              "name": "Tab Bar Row",
+              "id": "6asU5",
+              "name": "actionEditTabBar",
               "width": "fill_container",
               "height": 56,
               "padding": [
@@ -1981,7 +1981,7 @@
               "children": [
                 {
                   "type": "frame",
-                  "id": "SPm1I",
+                  "id": "eAzXy",
                   "name": "Tab Bar",
                   "width": "fill_container",
                   "height": 40,
@@ -1998,7 +1998,7 @@
                   "children": [
                     {
                       "type": "frame",
-                      "id": "RFyoc",
+                      "id": "87W1Y",
                       "name": "Tab Gesture",
                       "width": "fill_container",
                       "height": "fill_container",
@@ -2009,7 +2009,7 @@
                       "children": [
                         {
                           "type": "text",
-                          "id": "AK5e9",
+                          "id": "dGr3j",
                           "name": "Tab Gesture Label",
                           "fill": "#a1a1aa",
                           "content": "Gesture",
@@ -2021,7 +2021,7 @@
                     },
                     {
                       "type": "frame",
-                      "id": "RANXZ",
+                      "id": "x60LC",
                       "name": "Tab Action",
                       "width": "fill_container",
                       "height": "fill_container",
@@ -2047,7 +2047,7 @@
                       "children": [
                         {
                           "type": "text",
-                          "id": "d9xLM",
+                          "id": "J2Qwy",
                           "name": "Tab Action Label",
                           "fill": "#fafaf9",
                           "content": "Action",
@@ -2185,7 +2185,7 @@
                           "content": "Shortcut",
                           "fontFamily": "DM Sans",
                           "fontSize": 12,
-                          "fontWeight": "500"
+                          "fontWeight": "600"
                         },
                         {
                           "type": "frame",
@@ -2367,8 +2367,8 @@
             },
             {
               "type": "frame",
-              "id": "IFFY8",
-              "name": "Action Footer",
+              "id": "XEGSB",
+              "name": "actionEditFooter",
               "width": "fill_container",
               "height": 64,
               "stroke": {
@@ -2388,8 +2388,8 @@
               "children": [
                 {
                   "type": "frame",
-                  "id": "FmgJw",
-                  "name": "Cancel Btn",
+                  "id": "3obiX",
+                  "name": "cancelBtn",
                   "height": 36,
                   "fill": "$transparent",
                   "cornerRadius": 6,
@@ -2398,6 +2398,7 @@
                     "thickness": 1,
                     "fill": "$border-muted"
                   },
+                  "gap": 8,
                   "padding": [
                     0,
                     16
@@ -2406,9 +2407,9 @@
                   "children": [
                     {
                       "type": "text",
-                      "id": "K0zQa",
-                      "name": "cancelText",
-                      "fill": "$foreground-muted",
+                      "id": "pCGpL",
+                      "name": "cancelLabel",
+                      "fill": "$foreground",
                       "content": "Cancel",
                       "fontFamily": "DM Sans",
                       "fontSize": 13,
@@ -2418,22 +2419,22 @@
                 },
                 {
                   "type": "frame",
-                  "id": "mz13i",
-                  "name": "Save Btn",
+                  "id": "SGv55",
+                  "name": "saveBtn",
                   "height": 36,
                   "fill": "$foreground",
                   "cornerRadius": 6,
                   "effect": {
                     "type": "shadow",
                     "shadowType": "outer",
-                    "color": "$scrim",
+                    "color": "#00000033",
                     "offset": {
                       "x": 0,
                       "y": 2
                     },
                     "blur": 8
                   },
-                  "gap": 6,
+                  "gap": 8,
                   "padding": [
                     0,
                     16
@@ -2442,19 +2443,19 @@
                   "children": [
                     {
                       "type": "icon_font",
-                      "id": "QaFtO",
-                      "name": "saveBtnIcon",
-                      "width": 13,
-                      "height": 13,
+                      "id": "peNZQ",
+                      "name": "saveIcon",
+                      "width": 14,
+                      "height": 14,
                       "iconFontName": "check",
                       "iconFontFamily": "lucide",
-                      "fill": "$foreground-inverted"
+                      "fill": "$background"
                     },
                     {
                       "type": "text",
-                      "id": "CA8vV",
-                      "name": "saveBtnText",
-                      "fill": "$foreground-inverted",
+                      "id": "6cKrg",
+                      "name": "saveLabel",
+                      "fill": "$background",
                       "content": "Save Changes",
                       "fontFamily": "DM Sans",
                       "fontSize": 13,
@@ -2629,8 +2630,8 @@
           "children": [
             {
               "type": "frame",
-              "id": "edLaR",
-              "name": "Action Header",
+              "id": "rqwRB",
+              "name": "appHeader",
               "width": "fill_container",
               "height": 64,
               "stroke": {
@@ -2649,24 +2650,24 @@
               "children": [
                 {
                   "type": "frame",
-                  "id": "2AgLu",
+                  "id": "X8V71",
                   "name": "actionHeaderLeft",
                   "layout": "vertical",
                   "gap": 3,
                   "children": [
                     {
                       "type": "text",
-                      "id": "hn4Fx",
+                      "id": "Brrvz",
                       "name": "actionHeaderTitle",
                       "fill": "$foreground",
                       "content": "Google Chrome",
                       "fontFamily": "DM Sans",
-                      "fontSize": 15,
+                      "fontSize": 16,
                       "fontWeight": "600"
                     },
                     {
                       "type": "text",
-                      "id": "pBUSe",
+                      "id": "WlMwc",
                       "name": "actionHeaderSub",
                       "fill": "$foreground-subtle",
                       "content": "4 matching conditions",
@@ -2678,15 +2679,15 @@
                 },
                 {
                   "type": "frame",
-                  "id": "k9sbp",
+                  "id": "aZVRG",
                   "name": "actionHeaderRight",
                   "gap": 8,
                   "alignItems": "center",
                   "children": [
                     {
                       "type": "frame",
-                      "id": "i7i4A",
-                      "name": "Delete App Btn",
+                      "id": "Yu6Ii",
+                      "name": "Delete Btn",
                       "height": 32,
                       "fill": "$destructive-subtle",
                       "cornerRadius": 6,
@@ -2704,8 +2705,8 @@
                       "children": [
                         {
                           "type": "icon_font",
-                          "id": "7Rvxf",
-                          "name": "delIcon",
+                          "id": "KbjWz",
+                          "name": "deleteBtnIcon",
                           "width": 13,
                           "height": 13,
                           "iconFontName": "trash-2",
@@ -2714,13 +2715,13 @@
                         },
                         {
                           "type": "text",
-                          "id": "UxdjR",
-                          "name": "delLabel",
+                          "id": "OtJX1",
+                          "name": "deleteBtnText",
                           "fill": "$destructive",
                           "content": "Delete App",
                           "fontFamily": "DM Sans",
                           "fontSize": 12,
-                          "fontWeight": "600"
+                          "fontWeight": "500"
                         }
                       ]
                     }
@@ -3334,8 +3335,8 @@
             },
             {
               "type": "frame",
-              "id": "Uu7VA",
-              "name": "Action Footer",
+              "id": "2xQlp",
+              "name": "appFooter",
               "width": "fill_container",
               "height": 64,
               "stroke": {
@@ -3355,8 +3356,8 @@
               "children": [
                 {
                   "type": "frame",
-                  "id": "lSbcV",
-                  "name": "Cancel Btn",
+                  "id": "tmCQ8",
+                  "name": "cancelBtn",
                   "height": 36,
                   "fill": "$transparent",
                   "cornerRadius": 6,
@@ -3365,6 +3366,7 @@
                     "thickness": 1,
                     "fill": "$border-muted"
                   },
+                  "gap": 8,
                   "padding": [
                     0,
                     16
@@ -3373,9 +3375,9 @@
                   "children": [
                     {
                       "type": "text",
-                      "id": "576pE",
-                      "name": "cancelText",
-                      "fill": "$foreground-muted",
+                      "id": "YbUhQ",
+                      "name": "cancelLabel",
+                      "fill": "$foreground",
                       "content": "Cancel",
                       "fontFamily": "DM Sans",
                       "fontSize": 13,
@@ -3385,22 +3387,22 @@
                 },
                 {
                   "type": "frame",
-                  "id": "38ZBU",
-                  "name": "Save Btn",
+                  "id": "6XxXw",
+                  "name": "saveBtn",
                   "height": 36,
                   "fill": "$foreground",
                   "cornerRadius": 6,
                   "effect": {
                     "type": "shadow",
                     "shadowType": "outer",
-                    "color": "$scrim",
+                    "color": "#00000033",
                     "offset": {
                       "x": 0,
                       "y": 2
                     },
                     "blur": 8
                   },
-                  "gap": 6,
+                  "gap": 8,
                   "padding": [
                     0,
                     16
@@ -3409,19 +3411,19 @@
                   "children": [
                     {
                       "type": "icon_font",
-                      "id": "OXDsn",
-                      "name": "saveBtnIcon",
-                      "width": 13,
-                      "height": 13,
+                      "id": "DzFAo",
+                      "name": "saveIcon",
+                      "width": 14,
+                      "height": 14,
                       "iconFontName": "check",
                       "iconFontFamily": "lucide",
-                      "fill": "$foreground-inverted"
+                      "fill": "$background"
                     },
                     {
                       "type": "text",
-                      "id": "UWrhZ",
-                      "name": "saveBtnText",
-                      "fill": "$foreground-inverted",
+                      "id": "8G4vR",
+                      "name": "saveLabel",
+                      "fill": "$background",
                       "content": "Save Changes",
                       "fontFamily": "DM Sans",
                       "fontSize": 13,
@@ -3879,8 +3881,8 @@
           "children": [
             {
               "type": "frame",
-              "id": "olEYF",
-              "name": "Panel Header",
+              "id": "5CBqv",
+              "name": "genHeader",
               "width": "fill_container",
               "height": 64,
               "stroke": {
@@ -3900,14 +3902,14 @@
               "children": [
                 {
                   "type": "frame",
-                  "id": "t8wMv",
+                  "id": "zEeEl",
                   "name": "panelTitleGroup",
                   "layout": "vertical",
                   "gap": 2,
                   "children": [
                     {
                       "type": "text",
-                      "id": "gACoD",
+                      "id": "7MXEn",
                       "name": "panelTitle",
                       "fill": "$foreground",
                       "content": "General",
@@ -3917,7 +3919,7 @@
                     },
                     {
                       "type": "text",
-                      "id": "llD7M",
+                      "id": "xbaT4",
                       "name": "panelSubtitle",
                       "fill": "$foreground-subtle",
                       "content": "General preferences for everyday use.",
@@ -4031,8 +4033,8 @@
             },
             {
               "type": "frame",
-              "id": "Wzstu",
-              "name": "Panel Footer",
+              "id": "KqTWP",
+              "name": "genFooter",
               "width": "fill_container",
               "height": 64,
               "stroke": {
@@ -4052,7 +4054,7 @@
               "children": [
                 {
                   "type": "frame",
-                  "id": "YkZ4t",
+                  "id": "BFQYD",
                   "name": "cancelBtn",
                   "height": 36,
                   "fill": "$transparent",
@@ -4071,7 +4073,7 @@
                   "children": [
                     {
                       "type": "text",
-                      "id": "W1mmM",
+                      "id": "zgBZw",
                       "name": "cancelLabel",
                       "fill": "$foreground",
                       "content": "Cancel",
@@ -4083,7 +4085,7 @@
                 },
                 {
                   "type": "frame",
-                  "id": "9CK1y",
+                  "id": "Wmeoh",
                   "name": "saveBtn",
                   "height": 36,
                   "fill": "$foreground",
@@ -4107,7 +4109,7 @@
                   "children": [
                     {
                       "type": "icon_font",
-                      "id": "T4ooo",
+                      "id": "639qg",
                       "name": "saveIcon",
                       "width": 14,
                       "height": 14,
@@ -4117,7 +4119,7 @@
                     },
                     {
                       "type": "text",
-                      "id": "4nZNM",
+                      "id": "bm8X9",
                       "name": "saveLabel",
                       "fill": "$background",
                       "content": "Save Changes",
@@ -4390,7 +4392,7 @@
       "name": "Applications Settings - Gesture Edit",
       "clip": true,
       "width": 1100,
-      "height": 820,
+      "height": 900,
       "fill": "$background",
       "children": [
         {
@@ -4439,8 +4441,8 @@
           "children": [
             {
               "type": "frame",
-              "id": "AvfOC",
-              "name": "Action Header",
+              "id": "pmgy8",
+              "name": "gestureHeader",
               "width": "fill_container",
               "height": 64,
               "stroke": {
@@ -4459,14 +4461,14 @@
               "children": [
                 {
                   "type": "frame",
-                  "id": "iFEvx",
+                  "id": "7ZS9q",
                   "name": "actionHeaderLeft",
                   "layout": "vertical",
                   "gap": 3,
                   "children": [
                     {
                       "type": "text",
-                      "id": "xsLmJ",
+                      "id": "1llSe",
                       "name": "actionHeaderTitle",
                       "fill": "$foreground",
                       "content": "Left",
@@ -4476,7 +4478,7 @@
                     },
                     {
                       "type": "text",
-                      "id": "0uvYz",
+                      "id": "wc1zs",
                       "name": "actionHeaderSub",
                       "fill": "$foreground-subtle",
                       "content": "Left → Right → Ctrl + K → WheelUp",
@@ -4488,14 +4490,14 @@
                 },
                 {
                   "type": "frame",
-                  "id": "vbdmM",
+                  "id": "GJQKW",
                   "name": "actionHeaderRight",
                   "gap": 8,
                   "alignItems": "center",
                   "children": [
                     {
                       "type": "frame",
-                      "id": "Mowdw",
+                      "id": "fgkKP",
                       "name": "Delete Btn",
                       "height": 32,
                       "fill": "$destructive-subtle",
@@ -4514,7 +4516,7 @@
                       "children": [
                         {
                           "type": "icon_font",
-                          "id": "aGmRJ",
+                          "id": "1yExn",
                           "name": "deleteBtnIcon",
                           "width": 13,
                           "height": 13,
@@ -4524,7 +4526,7 @@
                         },
                         {
                           "type": "text",
-                          "id": "2JDBY",
+                          "id": "rChHc",
                           "name": "deleteBtnText",
                           "fill": "$destructive",
                           "content": "Remove Gesture",
@@ -4540,8 +4542,8 @@
             },
             {
               "type": "frame",
-              "id": "LnM4Y",
-              "name": "Tab Bar Row",
+              "id": "MR84z",
+              "name": "gestureTabBar",
               "width": "fill_container",
               "height": 56,
               "padding": [
@@ -4552,7 +4554,7 @@
               "children": [
                 {
                   "type": "frame",
-                  "id": "ZWGcp",
+                  "id": "98tqc",
                   "name": "Tab Bar",
                   "width": "fill_container",
                   "height": 40,
@@ -4569,7 +4571,7 @@
                   "children": [
                     {
                       "type": "frame",
-                      "id": "oq1uf",
+                      "id": "ksa3q",
                       "name": "Tab Gesture",
                       "width": "fill_container",
                       "height": "fill_container",
@@ -4595,9 +4597,9 @@
                       "children": [
                         {
                           "type": "text",
-                          "id": "ORJLH",
+                          "id": "j0HWO",
                           "name": "Tab Gesture Label",
-                          "fill": "#fafaf9",
+                          "fill": "#a1a1aa",
                           "content": "Gesture",
                           "fontFamily": "DM Sans",
                           "fontSize": 14,
@@ -4607,7 +4609,7 @@
                     },
                     {
                       "type": "frame",
-                      "id": "dFf01",
+                      "id": "Wjxdf",
                       "name": "Tab Action",
                       "width": "fill_container",
                       "height": "fill_container",
@@ -4629,9 +4631,9 @@
                       "children": [
                         {
                           "type": "text",
-                          "id": "KeUhK",
+                          "id": "WxZNi",
                           "name": "Tab Action Label",
-                          "fill": "#a1a1aa",
+                          "fill": "#fafaf9",
                           "content": "Action",
                           "fontFamily": "DM Sans",
                           "fontSize": 14,
@@ -4766,6 +4768,135 @@
                 },
                 {
                   "type": "frame",
+                  "id": "2qeHk",
+                  "name": "Mode Section",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 10,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "jfyzn",
+                      "name": "Mode Label Row",
+                      "width": "fill_container",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "a68Vz",
+                          "name": "Mode Label",
+                          "fill": "#71717a",
+                          "content": "Gesture Mode",
+                          "fontFamily": "DM Sans",
+                          "fontSize": 12,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "rAPBU",
+                      "name": "Tab Bar",
+                      "width": "fill_container",
+                      "height": 40,
+                      "fill": "#27272a",
+                      "cornerRadius": 12,
+                      "stroke": {
+                        "align": "inside",
+                        "thickness": 1,
+                        "fill": "#323238"
+                      },
+                      "gap": 4,
+                      "padding": 4,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "z8ITv",
+                          "name": "Tab Gesture",
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "fill": "#1f1f23",
+                          "cornerRadius": 8,
+                          "stroke": {
+                            "align": "inside",
+                            "thickness": 1,
+                            "fill": "#575760"
+                          },
+                          "effect": {
+                            "type": "shadow",
+                            "shadowType": "outer",
+                            "color": "#00000040",
+                            "offset": {
+                              "x": 0,
+                              "y": 1
+                            },
+                            "blur": 8
+                          },
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "9WDYT",
+                              "name": "Tab Gesture Label",
+                              "fill": "#fafaf9",
+                              "content": "Hold",
+                              "fontFamily": "DM Sans",
+                              "fontSize": 14,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "VutUb",
+                          "name": "Tab Action",
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "fill": "#00000000",
+                          "cornerRadius": 8,
+                          "stroke": {
+                            "align": "inside",
+                            "thickness": 0,
+                            "fill": "#00000000"
+                          },
+                          "effect": {
+                            "type": "shadow",
+                            "shadowType": "outer",
+                            "enabled": false,
+                            "color": "#000000"
+                          },
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "PbR9X",
+                              "name": "Tab Action Label",
+                              "fill": "#a1a1aa",
+                              "content": "Release",
+                              "fontFamily": "DM Sans",
+                              "fontSize": 14,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "zlyaF",
+                      "name": "Mode Hint",
+                      "fill": "#52525b",
+                      "content": "Hold: fires while the trigger is held. Release: fires on trigger release.",
+                      "fontFamily": "DM Sans",
+                      "fontSize": 11,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
                   "id": "b6tOx",
                   "name": "Builder Section",
                   "width": "fill_container",
@@ -4776,20 +4907,20 @@
                       "type": "text",
                       "id": "VdmPx",
                       "name": "Builder Title",
-                      "fill": "#fafaf9",
-                      "content": "Gesture Sequence",
+                      "fill": "#71717a",
+                      "content": "Sequence",
                       "fontFamily": "DM Sans",
-                      "fontSize": 14,
+                      "fontSize": 12,
                       "fontWeight": "600"
                     },
                     {
                       "type": "text",
                       "id": "pFULf",
                       "name": "Builder Hint",
-                      "fill": "#71717a",
-                      "content": "Combine Mouse Move, Keyboard Input, and Mouse Input steps. Up to 8 steps.",
+                      "fill": "#52525b",
+                      "content": "Ordered steps recognized before the final step fires. Up to 8 steps.",
                       "fontFamily": "DM Sans",
-                      "fontSize": 12,
+                      "fontSize": 11,
                       "fontWeight": "normal"
                     },
                     {
@@ -5018,205 +5149,6 @@
                         },
                         {
                           "type": "frame",
-                          "id": "gXE1w",
-                          "name": "Step 3",
-                          "width": "fill_container",
-                          "height": 40,
-                          "gap": 8,
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "jtB1u",
-                              "name": "Step 3 Index",
-                              "fill": "#71717a",
-                              "textGrowth": "fixed-width",
-                              "width": 16,
-                              "content": "3",
-                              "textAlign": "center",
-                              "fontFamily": "DM Sans",
-                              "fontSize": 12,
-                              "fontWeight": "600"
-                            },
-                            {
-                              "type": "frame",
-                              "id": "bFWDh",
-                              "name": "Step 3 Type",
-                              "width": 160,
-                              "height": 40,
-                              "fill": "#1c1c1f",
-                              "cornerRadius": 8,
-                              "stroke": {
-                                "align": "inside",
-                                "thickness": 1,
-                                "fill": "#27272a"
-                              },
-                              "padding": [
-                                0,
-                                12
-                              ],
-                              "justifyContent": "space_between",
-                              "alignItems": "center",
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "QhUux",
-                                  "name": "Step 3 Type Text",
-                                  "fill": "#fafaf9",
-                                  "content": "Keyboard Input",
-                                  "fontFamily": "DM Sans",
-                                  "fontSize": 13,
-                                  "fontWeight": "500"
-                                },
-                                {
-                                  "type": "icon_font",
-                                  "id": "cfLni",
-                                  "name": "Type 3 Chevron",
-                                  "width": 14,
-                                  "height": 14,
-                                  "iconFontName": "chevron-down",
-                                  "iconFontFamily": "lucide",
-                                  "fill": "#71717a"
-                                }
-                              ]
-                            },
-                            {
-                              "type": "frame",
-                              "id": "KT2eS",
-                              "name": "Step 3 Keyboard Input Wrap",
-                              "width": "fill_container",
-                              "height": 40,
-                              "gap": 8,
-                              "alignItems": "center",
-                              "children": [
-                                {
-                                  "type": "frame",
-                                  "id": "c0Co1",
-                                  "name": "Keyboard Capture Display",
-                                  "width": "fill_container",
-                                  "height": 40,
-                                  "fill": "#1c1c1f",
-                                  "cornerRadius": 8,
-                                  "stroke": {
-                                    "align": "inside",
-                                    "thickness": 1,
-                                    "fill": "#27272a"
-                                  },
-                                  "gap": 8,
-                                  "padding": [
-                                    0,
-                                    12
-                                  ],
-                                  "alignItems": "center",
-                                  "children": [
-                                    {
-                                      "type": "frame",
-                                      "id": "QWJkP",
-                                      "name": "Keycap Ctrl",
-                                      "height": 24,
-                                      "fill": "#27272a",
-                                      "cornerRadius": 6,
-                                      "stroke": {
-                                        "align": "inside",
-                                        "thickness": 1,
-                                        "fill": "#3f3f46"
-                                      },
-                                      "padding": [
-                                        0,
-                                        8
-                                      ],
-                                      "justifyContent": "center",
-                                      "alignItems": "center",
-                                      "children": [
-                                        {
-                                          "type": "text",
-                                          "id": "vX6la",
-                                          "name": "Keycap Ctrl Text",
-                                          "fill": "#fafaf9",
-                                          "content": "Ctrl",
-                                          "fontFamily": "DM Sans",
-                                          "fontSize": 12,
-                                          "fontWeight": "600"
-                                        }
-                                      ]
-                                    },
-                                    {
-                                      "type": "text",
-                                      "id": "5aMLO",
-                                      "name": "Key Plus",
-                                      "fill": "#71717a",
-                                      "content": "+",
-                                      "fontFamily": "DM Sans",
-                                      "fontSize": 12,
-                                      "fontWeight": "600"
-                                    },
-                                    {
-                                      "type": "frame",
-                                      "id": "HwCSS",
-                                      "name": "Keycap K",
-                                      "height": 24,
-                                      "fill": "#27272a",
-                                      "cornerRadius": 6,
-                                      "stroke": {
-                                        "align": "inside",
-                                        "thickness": 1,
-                                        "fill": "#3f3f46"
-                                      },
-                                      "padding": [
-                                        0,
-                                        8
-                                      ],
-                                      "justifyContent": "center",
-                                      "alignItems": "center",
-                                      "children": [
-                                        {
-                                          "type": "text",
-                                          "id": "VZhee",
-                                          "name": "Keycap K Text",
-                                          "fill": "#fafaf9",
-                                          "content": "K",
-                                          "fontFamily": "DM Sans",
-                                          "fontSize": 12,
-                                          "fontWeight": "600"
-                                        }
-                                      ]
-                                    }
-                                  ]
-                                },
-                                {
-                                  "type": "frame",
-                                  "id": "JTQ4W",
-                                  "name": "Keyboard Pick From Input",
-                                  "width": 40,
-                                  "height": 40,
-                                  "fill": "#00000000",
-                                  "cornerRadius": 8,
-                                  "stroke": {
-                                    "align": "inside",
-                                    "thickness": 1,
-                                    "fill": "#3f3f46"
-                                  },
-                                  "justifyContent": "center",
-                                  "alignItems": "center",
-                                  "children": [
-                                    {
-                                      "type": "icon_font",
-                                      "id": "ZAHpd",
-                                      "name": "Keyboard Pick Icon",
-                                      "width": 16,
-                                      "height": 16,
-                                      "iconFontName": "keyboard",
-                                      "iconFontFamily": "lucide",
-                                      "fill": "#a1a1aa"
-                                    }
-                                  ]
-                                }
-                              ]
-                            }
-                          ]
-                        },
-                        {
-                          "type": "frame",
                           "id": "TpJy5",
                           "name": "Step 4",
                           "width": "fill_container",
@@ -5231,7 +5163,7 @@
                               "fill": "#71717a",
                               "textGrowth": "fixed-width",
                               "width": 16,
-                              "content": "4",
+                              "content": "3",
                               "textAlign": "center",
                               "fontFamily": "DM Sans",
                               "fontSize": 12,
@@ -5388,7 +5320,7 @@
                               "id": "XFrW7",
                               "name": "Step Count Text",
                               "fill": "#a1a1aa",
-                              "content": "4 / 8 used",
+                              "content": "3 / 8 used",
                               "fontFamily": "DM Sans",
                               "fontSize": 12,
                               "fontWeight": "500"
@@ -5443,10 +5375,93 @@
                       "id": "5j30S",
                       "name": "Limit Note",
                       "fill": "#52525b",
-                      "content": "Mouse Move supports Left/Right/Up/Down. Keyboard Input accepts any key combo.",
+                      "content": "Supported steps: Left / Right / Up / Down / Wheel Up / Wheel Down / Left Click / Right Click / Middle Click",
                       "fontFamily": "DM Sans",
                       "fontSize": 11,
                       "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "hL6JK",
+                      "name": "Step Section",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 10,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "Vqy2X",
+                          "name": "Step Section Label",
+                          "fill": "#71717a",
+                          "content": "Step",
+                          "fontFamily": "DM Sans",
+                          "fontSize": 12,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "IZufu",
+                          "name": "Step Hint",
+                          "fill": "#71717a",
+                          "content": "Single non-movement input that fires while the trigger is held.",
+                          "fontFamily": "DM Sans",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "GJYxQ",
+                          "name": "Step Row",
+                          "width": "fill_container",
+                          "height": 40,
+                          "gap": 8,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "EFOVx",
+                              "name": "Step Select",
+                              "width": "fill_container",
+                              "height": 40,
+                              "fill": "#1c1c1f",
+                              "cornerRadius": 8,
+                              "stroke": {
+                                "align": "inside",
+                                "thickness": 1,
+                                "fill": "#27272a"
+                              },
+                              "padding": [
+                                0,
+                                14
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "n9tNG",
+                                  "name": "Step Select Text",
+                                  "fill": "#fafaf9",
+                                  "content": "Left Click",
+                                  "fontFamily": "DM Sans",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "icon_font",
+                                  "id": "XMM0P",
+                                  "name": "Step Select Chevron",
+                                  "width": 14,
+                                  "height": 14,
+                                  "iconFontName": "chevron-down",
+                                  "iconFontFamily": "lucide",
+                                  "fill": "#71717a"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
                     }
                   ]
                 }
@@ -5454,8 +5469,8 @@
             },
             {
               "type": "frame",
-              "id": "6RLQr",
-              "name": "Action Footer",
+              "id": "Uigo7",
+              "name": "gestureFooter",
               "width": "fill_container",
               "height": 64,
               "stroke": {
@@ -5475,8 +5490,8 @@
               "children": [
                 {
                   "type": "frame",
-                  "id": "u236V",
-                  "name": "Cancel Btn",
+                  "id": "MHb6U",
+                  "name": "cancelBtn",
                   "height": 36,
                   "fill": "$transparent",
                   "cornerRadius": 6,
@@ -5485,6 +5500,7 @@
                     "thickness": 1,
                     "fill": "$border-muted"
                   },
+                  "gap": 8,
                   "padding": [
                     0,
                     16
@@ -5493,9 +5509,9 @@
                   "children": [
                     {
                       "type": "text",
-                      "id": "arLYO",
-                      "name": "cancelText",
-                      "fill": "$foreground-muted",
+                      "id": "kNT5q",
+                      "name": "cancelLabel",
+                      "fill": "$foreground",
                       "content": "Cancel",
                       "fontFamily": "DM Sans",
                       "fontSize": 13,
@@ -5505,22 +5521,22 @@
                 },
                 {
                   "type": "frame",
-                  "id": "orXb1",
-                  "name": "Save Btn",
+                  "id": "l1nL5",
+                  "name": "saveBtn",
                   "height": 36,
                   "fill": "$foreground",
                   "cornerRadius": 6,
                   "effect": {
                     "type": "shadow",
                     "shadowType": "outer",
-                    "color": "$scrim",
+                    "color": "#00000033",
                     "offset": {
                       "x": 0,
                       "y": 2
                     },
                     "blur": 8
                   },
-                  "gap": 6,
+                  "gap": 8,
                   "padding": [
                     0,
                     16
@@ -5529,19 +5545,19 @@
                   "children": [
                     {
                       "type": "icon_font",
-                      "id": "QnI6L",
-                      "name": "saveBtnIcon",
-                      "width": 13,
-                      "height": 13,
+                      "id": "r7KXG",
+                      "name": "saveIcon",
+                      "width": 14,
+                      "height": 14,
                       "iconFontName": "check",
                       "iconFontFamily": "lucide",
-                      "fill": "$foreground-inverted"
+                      "fill": "$background"
                     },
                     {
                       "type": "text",
-                      "id": "Eon2R",
-                      "name": "saveBtnText",
-                      "fill": "$foreground-inverted",
+                      "id": "tPnbx",
+                      "name": "saveLabel",
+                      "fill": "$background",
                       "content": "Save Changes",
                       "fontFamily": "DM Sans",
                       "fontSize": 13,
@@ -6764,8 +6780,8 @@
           "children": [
             {
               "type": "frame",
-              "id": "4kLuv",
-              "name": "Panel Header",
+              "id": "j2Rzl",
+              "name": "styleHeader",
               "width": "fill_container",
               "height": 64,
               "stroke": {
@@ -6785,14 +6801,14 @@
               "children": [
                 {
                   "type": "frame",
-                  "id": "grGti",
+                  "id": "hRUMD",
                   "name": "panelTitleGroup",
                   "layout": "vertical",
                   "gap": 2,
                   "children": [
                     {
                       "type": "text",
-                      "id": "ZxAWV",
+                      "id": "bVfGo",
                       "name": "panelTitle",
                       "fill": "$foreground",
                       "content": "Style",
@@ -6802,7 +6818,7 @@
                     },
                     {
                       "type": "text",
-                      "id": "izF0k",
+                      "id": "rVYmI",
                       "name": "panelSubtitle",
                       "fill": "$foreground-subtle",
                       "content": "Customize label and stroke appearance.",
@@ -6836,7 +6852,12 @@
                   "name": "Preview Mockup",
                   "width": "fill_container",
                   "height": 280,
-                  "fill": "$background-elevated",
+                  "fill": {
+                    "type": "image",
+                    "enabled": true,
+                    "url": "",
+                    "mode": "fill"
+                  },
                   "cornerRadius": 10,
                   "stroke": {
                     "align": "inside",
@@ -6851,14 +6872,19 @@
                       "type": "frame",
                       "id": "UlIxQ",
                       "name": "Centered Label Mock",
-                      "width": 360,
-                      "height": 120,
-                      "fill": "$background-card",
+                      "opacity": 0.7999999999999998,
+                      "width": 160,
+                      "height": 80,
+                      "fill": "$background",
                       "cornerRadius": 12,
                       "stroke": {
                         "align": "inside",
                         "thickness": 1,
-                        "fill": "$border-muted"
+                        "fill": {
+                          "type": "color",
+                          "color": "$border-muted",
+                          "enabled": false
+                        }
                       },
                       "layout": "vertical",
                       "gap": 8,
@@ -6870,20 +6896,10 @@
                           "id": "pqqKA",
                           "name": "previewMain",
                           "fill": "$foreground",
-                          "content": "Gesture recognized",
+                          "content": "Back",
                           "fontFamily": "DM Sans",
-                          "fontSize": 20,
+                          "fontSize": 24,
                           "fontWeight": "600"
-                        },
-                        {
-                          "type": "text",
-                          "id": "jwiGi",
-                          "name": "previewSub",
-                          "fill": "$foreground-subtle",
-                          "content": "Live style preview mock",
-                          "fontFamily": "DM Sans",
-                          "fontSize": 12,
-                          "fontWeight": "normal"
                         }
                       ]
                     }
@@ -7527,7 +7543,7 @@
                             {
                               "type": "text",
                               "id": "eOgYf",
-                              "fill": "$success",
+                              "fill": "$foreground",
                               "content": "#32D583",
                               "fontFamily": "DM Sans",
                               "fontSize": 12,
@@ -7551,8 +7567,8 @@
             },
             {
               "type": "frame",
-              "id": "g5a6w",
-              "name": "Panel Footer",
+              "id": "a5koe",
+              "name": "styleFooter",
               "width": "fill_container",
               "height": 64,
               "stroke": {
@@ -7572,7 +7588,7 @@
               "children": [
                 {
                   "type": "frame",
-                  "id": "eLNUv",
+                  "id": "JhXHe",
                   "name": "cancelBtn",
                   "height": 36,
                   "fill": "$transparent",
@@ -7591,7 +7607,7 @@
                   "children": [
                     {
                       "type": "text",
-                      "id": "hMfdm",
+                      "id": "dYxSr",
                       "name": "cancelLabel",
                       "fill": "$foreground",
                       "content": "Cancel",
@@ -7603,7 +7619,7 @@
                 },
                 {
                   "type": "frame",
-                  "id": "l625M",
+                  "id": "xilNV",
                   "name": "saveBtn",
                   "height": 36,
                   "fill": "$foreground",
@@ -7627,7 +7643,7 @@
                   "children": [
                     {
                       "type": "icon_font",
-                      "id": "p9lLs",
+                      "id": "PywdC",
                       "name": "saveIcon",
                       "width": 14,
                       "height": 14,
@@ -7637,7 +7653,7 @@
                     },
                     {
                       "type": "text",
-                      "id": "pXaBq",
+                      "id": "b4VJM",
                       "name": "saveLabel",
                       "fill": "$background",
                       "content": "Save Changes",
@@ -7648,6 +7664,519 @@
                   ]
                 }
               ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "UO0mW",
+      "x": 787,
+      "y": -1954,
+      "name": "Component Library",
+      "fill": "$background",
+      "cornerRadius": 16,
+      "stroke": {
+        "align": "inside",
+        "thickness": 1,
+        "fill": "$border"
+      },
+      "layout": "vertical",
+      "gap": 48,
+      "padding": 40,
+      "children": [
+        {
+          "type": "text",
+          "id": "Dx0Sl",
+          "name": "compLabel",
+          "fill": "$foreground-subtle",
+          "content": "Component Library",
+          "fontFamily": "DM Sans",
+          "fontSize": 12,
+          "fontWeight": "600"
+        },
+        {
+          "type": "frame",
+          "id": "sa2jZ",
+          "name": "Component/Panel Footer",
+          "width": 640,
+          "height": 64,
+          "stroke": {
+            "align": "inside",
+            "thickness": {
+              "top": 1
+            },
+            "fill": "$border"
+          },
+          "gap": 12,
+          "padding": [
+            0,
+            24
+          ],
+          "justifyContent": "end",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "Cwbmj",
+              "name": "cancelBtn",
+              "height": 36,
+              "fill": "$transparent",
+              "cornerRadius": 6,
+              "stroke": {
+                "align": "inside",
+                "thickness": 1,
+                "fill": "$border-muted"
+              },
+              "gap": 8,
+              "padding": [
+                0,
+                16
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "iYkzy",
+                  "name": "cancelLabel",
+                  "fill": "$foreground",
+                  "content": "Cancel",
+                  "fontFamily": "DM Sans",
+                  "fontSize": 13,
+                  "fontWeight": "500"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "C3hzK",
+              "name": "saveBtn",
+              "height": 36,
+              "fill": "$foreground",
+              "cornerRadius": 6,
+              "effect": {
+                "type": "shadow",
+                "shadowType": "outer",
+                "color": "#00000033",
+                "offset": {
+                  "x": 0,
+                  "y": 2
+                },
+                "blur": 8
+              },
+              "gap": 8,
+              "padding": [
+                0,
+                16
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon_font",
+                  "id": "V6CBi",
+                  "name": "saveIcon",
+                  "width": 14,
+                  "height": 14,
+                  "iconFontName": "check",
+                  "iconFontFamily": "lucide",
+                  "fill": "$background"
+                },
+                {
+                  "type": "text",
+                  "id": "9ChXy",
+                  "name": "saveLabel",
+                  "fill": "$background",
+                  "content": "Save Changes",
+                  "fontFamily": "DM Sans",
+                  "fontSize": 13,
+                  "fontWeight": "600"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "BxOyM",
+          "name": "Component/Panel Header",
+          "width": 640,
+          "height": 64,
+          "stroke": {
+            "align": "inside",
+            "thickness": {
+              "bottom": 1
+            },
+            "fill": "$border"
+          },
+          "gap": 12,
+          "padding": [
+            0,
+            24
+          ],
+          "justifyContent": "space_between",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "UjZtz",
+              "name": "panelTitleGroup",
+              "layout": "vertical",
+              "gap": 2,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "6CjQW",
+                  "name": "panelTitle",
+                  "fill": "$foreground",
+                  "content": "Advanced",
+                  "fontFamily": "DM Sans",
+                  "fontSize": 18,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "text",
+                  "id": "FmPCg",
+                  "name": "panelSubtitle",
+                  "fill": "$foreground-subtle",
+                  "content": "Advanced configuration options for power users.",
+                  "fontFamily": "DM Sans",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "EHgYZ",
+          "name": "Component/Action Header",
+          "width": 640,
+          "height": 64,
+          "stroke": {
+            "align": "inside",
+            "thickness": {
+              "bottom": 1
+            },
+            "fill": "$border"
+          },
+          "padding": [
+            0,
+            24
+          ],
+          "justifyContent": "space_between",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "kcYU9",
+              "name": "actionHeaderLeft",
+              "layout": "vertical",
+              "gap": 3,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "1PCsG",
+                  "name": "actionHeaderTitle",
+                  "fill": "$foreground",
+                  "content": "Left",
+                  "fontFamily": "DM Sans",
+                  "fontSize": 16,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "text",
+                  "id": "4NgTz",
+                  "name": "actionHeaderSub",
+                  "fill": "$foreground-subtle",
+                  "content": "Left",
+                  "fontFamily": "DM Sans",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "IGmI4",
+              "name": "actionHeaderRight",
+              "gap": 8,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "iAruT",
+                  "name": "Delete Btn",
+                  "height": 32,
+                  "fill": "$destructive-subtle",
+                  "cornerRadius": 6,
+                  "stroke": {
+                    "align": "inside",
+                    "thickness": 1,
+                    "fill": "$destructive-subtle"
+                  },
+                  "gap": 6,
+                  "padding": [
+                    0,
+                    12
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon_font",
+                      "id": "IR9DN",
+                      "name": "deleteBtnIcon",
+                      "width": 13,
+                      "height": 13,
+                      "iconFontName": "trash-2",
+                      "iconFontFamily": "lucide",
+                      "fill": "$destructive"
+                    },
+                    {
+                      "type": "text",
+                      "id": "pe6nF",
+                      "name": "deleteBtnText",
+                      "fill": "$destructive",
+                      "content": "Remove Action",
+                      "fontFamily": "DM Sans",
+                      "fontSize": 12,
+                      "fontWeight": "500"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "k5qlM",
+          "name": "Component/Tab Bar",
+          "width": 640,
+          "height": 56,
+          "padding": [
+            8,
+            24
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "g7n1e",
+              "name": "Tab Bar",
+              "width": "fill_container",
+              "height": 40,
+              "fill": "#27272a",
+              "cornerRadius": 12,
+              "stroke": {
+                "align": "inside",
+                "thickness": 1,
+                "fill": "#323238"
+              },
+              "gap": 4,
+              "padding": 4,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "7nk8G",
+                  "name": "Tab Gesture",
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "fill": "#00000000",
+                  "cornerRadius": 8,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "RDclq",
+                      "name": "Tab Gesture Label",
+                      "fill": "#a1a1aa",
+                      "content": "Gesture",
+                      "fontFamily": "DM Sans",
+                      "fontSize": 14,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "teFxn",
+                  "name": "Tab Action",
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "fill": "#1f1f23",
+                  "cornerRadius": 8,
+                  "stroke": {
+                    "align": "inside",
+                    "thickness": 1,
+                    "fill": "#575760"
+                  },
+                  "effect": {
+                    "type": "shadow",
+                    "shadowType": "outer",
+                    "color": "#00000040",
+                    "offset": {
+                      "x": 0,
+                      "y": 1
+                    },
+                    "blur": 8
+                  },
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "3HTfC",
+                      "name": "Tab Action Label",
+                      "fill": "#fafaf9",
+                      "content": "Action",
+                      "fontFamily": "DM Sans",
+                      "fontSize": 14,
+                      "fontWeight": "500"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "RhuOp",
+          "name": "Component/Settings Row Item",
+          "width": 640,
+          "height": 72,
+          "stroke": {
+            "align": "inside",
+            "thickness": {
+              "bottom": 1
+            },
+            "fill": "$border"
+          },
+          "gap": 16,
+          "padding": [
+            0,
+            20
+          ],
+          "justifyContent": "space_between",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "Kavff",
+              "name": "rowLeft",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 4,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "p0wWp",
+                  "name": "rowTitle",
+                  "fill": "$foreground",
+                  "content": "Setting Title",
+                  "fontFamily": "DM Sans",
+                  "fontSize": 14,
+                  "fontWeight": "500"
+                },
+                {
+                  "type": "text",
+                  "id": "Pc04F",
+                  "name": "rowDesc",
+                  "fill": "$foreground-subtle",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Description of this setting.",
+                  "fontFamily": "DM Sans",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "xvjwl",
+              "name": "rowAction",
+              "height": 34,
+              "fill": "$background-card",
+              "cornerRadius": 7,
+              "stroke": {
+                "align": "inside",
+                "thickness": 1,
+                "fill": "$border-muted"
+              },
+              "gap": 8,
+              "padding": [
+                0,
+                14
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon_font",
+                  "id": "b9cct",
+                  "name": "rowActionIcon",
+                  "width": 14,
+                  "height": 14,
+                  "iconFontName": "upload",
+                  "iconFontFamily": "lucide",
+                  "fill": "$foreground"
+                },
+                {
+                  "type": "text",
+                  "id": "qMp2s",
+                  "name": "rowActionLabel",
+                  "fill": "$foreground",
+                  "content": "Action",
+                  "fontFamily": "DM Sans",
+                  "fontSize": 13,
+                  "fontWeight": "500"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "ZCsJX",
+          "name": "Component/Delete Button",
+          "height": 32,
+          "fill": "$destructive-subtle",
+          "cornerRadius": 6,
+          "stroke": {
+            "align": "inside",
+            "thickness": 1,
+            "fill": "$destructive-subtle"
+          },
+          "gap": 6,
+          "padding": [
+            0,
+            12
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon_font",
+              "id": "QeaLb",
+              "name": "deleteBtnIcon",
+              "width": 13,
+              "height": 13,
+              "iconFontName": "trash-2",
+              "iconFontFamily": "lucide",
+              "fill": "$destructive"
+            },
+            {
+              "type": "text",
+              "id": "USeEW",
+              "name": "deleteBtnText",
+              "fill": "$destructive",
+              "content": "Delete",
+              "fontFamily": "DM Sans",
+              "fontSize": 12,
+              "fontWeight": "500"
             }
           ]
         }
