@@ -12,6 +12,7 @@ import {
   Moon,
   MousePointer2,
   Search,
+  Settings2,
   SlidersHorizontal,
   Sun,
 } from "lucide-react"
@@ -94,6 +95,13 @@ function AppLayout() {
               >
                 <SlidersHorizontal className="size-4" />
                 {!compact ? <span>General</span> : null}
+              </SidebarItem>
+              <SidebarItem
+                active={isRouteActive("/advanced")}
+                onClick={() => navigate({ to: "/advanced" })}
+              >
+                <Settings2 className="size-4" />
+                {!compact ? <span>Advanced</span> : null}
               </SidebarItem>
               <div className="min-h-0 flex-1" />
             </SidebarBody>
