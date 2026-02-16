@@ -219,6 +219,8 @@ export const StateTransitions: Story = {
     const canvas = within(canvasElement)
     const sidebarRoot = canvas.getByTestId("sidebar-root")
     const rail = canvas.getByLabelText("Resize sidebar")
+    const { left, width } = rail.getBoundingClientRect()
+    const startX = left + width / 2
 
     expect(sidebarRoot.style.getPropertyValue("--sidebar-width")).toBe("200px")
     expect(canvas.getByText("PAGES")).toBeInTheDocument()
@@ -236,6 +238,26 @@ export const StateTransitions: Story = {
       expect(sidebarRoot.getAttribute("data-compact")).toBe("true")
     })
     expect(sidebarRoot.style.getPropertyValue("--sidebar-width")).toBe("72px")
+
+    fireEvent.pointerDown(rail, { button: 0, clientX: startX, pointerId: 7 })
+    await waitFor(() => {
+      expect(rail.getAttribute("data-dragging")).toBe("true")
+    })
+    expect(sidebarRoot.className).toContain("transition-none")
+    fireEvent.pointerMove(window, { clientX: startX + 30, pointerId: 7 })
+    fireEvent.pointerMove(window, { clientX: startX + 80, pointerId: 7 })
+    fireEvent.pointerMove(window, { clientX: startX + 120, pointerId: 7 })
+    fireEvent.pointerUp(window, { clientX: startX + 120, pointerId: 7 })
+
+    await waitFor(() => {
+      expect(rail.getAttribute("data-dragging")).toBe("false")
+    })
+    expect(sidebarRoot.className).toContain("transition-[width]")
+    await waitFor(() => {
+      expect(sidebarRoot.style.getPropertyValue("--sidebar-width")).toBe(
+        "192px",
+      )
+    })
 
     await dragRailBy(rail, 180, 2)
 
@@ -268,7 +290,7 @@ export const StateTransitions: Story = {
 export const Collapsed: Story = {
   render: () => (
     <div className="h-[600px] border">
-      <Sidebar collapsed resizable={false}>
+      <Sidebar defaultCollapsed resizable={false}>
         <SidebarHeader className="justify-center px-0">
           <span className="font-semibold">MA</span>
         </SidebarHeader>

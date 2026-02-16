@@ -12,7 +12,7 @@ import { tv } from "tailwind-variants"
 
 const sidebar = tv({
   slots: {
-    root: "group/sidebar relative flex h-full w-[var(--sidebar-width)] shrink-0 flex-col border-border border-r bg-background-elevated transition-[width] duration-150 ease-out",
+    root: "group/sidebar relative flex h-full w-[var(--sidebar-width)] shrink-0 flex-col border-border border-r bg-background-elevated",
     header: "flex flex-col gap-4 border-border border-b px-4 pt-5 pb-4",
     body: "flex flex-1 flex-col gap-1 overflow-y-auto p-2",
     footer: "flex flex-col gap-2 border-border border-t px-3 pt-3 pb-4",
@@ -36,6 +36,14 @@ const sidebar = tv({
         item: "text-foreground-muted",
       },
     },
+    dragging: {
+      true: {
+        root: "transition-none",
+      },
+      false: {
+        root: "transition-[width] duration-150 ease-out",
+      },
+    },
   },
 })
 
@@ -57,12 +65,8 @@ function useSidebarContext() {
 }
 
 type SidebarProps = Omit<React.HTMLAttributes<HTMLDivElement>, "children"> & {
-  collapsed?: boolean
   defaultCollapsed?: boolean
-  onCollapsedChange?: (collapsed: boolean) => void
-  width?: number
   defaultWidth?: number
-  onWidthChange?: (width: number) => void
   minWidth?: number
   maxWidth?: number
   compactThreshold?: number
@@ -78,12 +82,8 @@ function clampWidth(width: number, min: number, max: number) {
 export function Sidebar({
   className,
   style,
-  collapsed,
   defaultCollapsed = false,
-  onCollapsedChange,
-  width,
   defaultWidth = 200,
-  onWidthChange,
   minWidth = 144,
   maxWidth = 360,
   compactThreshold = 112,
@@ -93,50 +93,65 @@ export function Sidebar({
   ...props
 }: SidebarProps) {
   const [internalCompact, setInternalCompact] = useState(defaultCollapsed)
-  const [internalWidth, setInternalWidth] = useState(defaultWidth)
+  const [internalWidth, setInternalWidth] = useState(() =>
+    clampWidth(defaultWidth, minWidth, maxWidth),
+  )
   const [isDragging, setIsDragging] = useState(false)
   const dragStateRef = useRef<{
     startX: number
     startWidth: number
   } | null>(null)
+  const pointerIdRef = useRef<number | null>(null)
+  const compactRef = useRef(internalCompact)
+  const widthRef = useRef(internalWidth)
+  const latestClientXRef = useRef<number | null>(null)
+  const frameRequestRef = useRef<number | null>(null)
 
-  const isCompact = collapsed ?? internalCompact
-  const currentWidth = width ?? internalWidth
-  const expandedWidth = clampWidth(currentWidth, minWidth, maxWidth)
+  const isCompact = internalCompact
+  const expandedWidth = clampWidth(internalWidth, minWidth, maxWidth)
   const appliedWidth = isCompact ? compactWidth : expandedWidth
 
-  const setCompact = useCallback(
-    (next: boolean) => {
-      if (collapsed !== undefined) {
-        onCollapsedChange?.(next)
-        return
-      }
-      setInternalCompact(next)
-      onCollapsedChange?.(next)
-    },
-    [collapsed, onCollapsedChange],
-  )
+  useEffect(() => {
+    compactRef.current = internalCompact
+  }, [internalCompact])
+
+  useEffect(() => {
+    widthRef.current = internalWidth
+  }, [internalWidth])
+
+  const setCompact = useCallback((next: boolean) => {
+    if (compactRef.current === next) {
+      return
+    }
+    compactRef.current = next
+    setInternalCompact(next)
+  }, [])
 
   const setWidthValue = useCallback(
     (next: number) => {
       const clamped = clampWidth(next, minWidth, maxWidth)
-      if (width === undefined) {
-        setInternalWidth(clamped)
+      if (widthRef.current === clamped) {
+        return
       }
-      onWidthChange?.(clamped)
+      widthRef.current = clamped
+      setInternalWidth(clamped)
     },
-    [maxWidth, minWidth, onWidthChange, width],
+    [maxWidth, minWidth],
   )
 
   useEffect(() => {
-    if (!isDragging) return
+    setWidthValue(widthRef.current)
+  }, [setWidthValue])
 
-    const handlePointerMove = (event: PointerEvent) => {
+  const processDrag = useCallback(
+    (clientX: number) => {
       const dragState = dragStateRef.current
-      if (!dragState) return
+      if (!dragState) {
+        return
+      }
 
-      if (isCompact) {
-        const compactDragDelta = event.clientX - dragState.startX
+      if (compactRef.current) {
+        const compactDragDelta = clientX - dragState.startX
         if (compactDragDelta <= 0) {
           setCompact(true)
           return
@@ -149,12 +164,11 @@ export function Sidebar({
         }
 
         setCompact(false)
-        setWidthValue(clampWidth(compactDragWidth, minWidth, maxWidth))
+        setWidthValue(compactDragWidth)
         return
       }
 
-      const pointerWidth =
-        dragState.startWidth + (event.clientX - dragState.startX)
+      const pointerWidth = dragState.startWidth + (clientX - dragState.startX)
       const clampedPointerWidth = clampWidth(
         pointerWidth,
         compactWidth,
@@ -166,13 +180,78 @@ export function Sidebar({
         return
       }
 
-      setWidthValue(clampWidth(clampedPointerWidth, minWidth, maxWidth))
+      setWidthValue(clampedPointerWidth)
+    },
+    [compactThreshold, compactWidth, maxWidth, setCompact, setWidthValue],
+  )
+
+  const flushPendingFrame = useCallback(() => {
+    if (frameRequestRef.current !== null) {
+      cancelAnimationFrame(frameRequestRef.current)
+      frameRequestRef.current = null
     }
 
-    const handlePointerUp = () => {
-      setIsDragging(false)
-      dragStateRef.current = null
-      document.body.style.userSelect = ""
+    if (latestClientXRef.current === null) {
+      return
+    }
+
+    const latestX = latestClientXRef.current
+    latestClientXRef.current = null
+    processDrag(latestX)
+  }, [processDrag])
+
+  const scheduleDrag = useCallback(
+    (clientX: number) => {
+      latestClientXRef.current = clientX
+      if (frameRequestRef.current !== null) {
+        return
+      }
+
+      frameRequestRef.current = requestAnimationFrame(() => {
+        frameRequestRef.current = null
+        if (latestClientXRef.current === null) {
+          return
+        }
+
+        const latestX = latestClientXRef.current
+        latestClientXRef.current = null
+        processDrag(latestX)
+      })
+    },
+    [processDrag],
+  )
+
+  const finishDrag = useCallback(() => {
+    flushPendingFrame()
+    setIsDragging(false)
+    dragStateRef.current = null
+    pointerIdRef.current = null
+    document.body.style.userSelect = ""
+  }, [flushPendingFrame])
+
+  useEffect(() => {
+    if (!isDragging) {
+      return
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      if (
+        pointerIdRef.current !== null &&
+        event.pointerId !== pointerIdRef.current
+      ) {
+        return
+      }
+      scheduleDrag(event.clientX)
+    }
+
+    const handlePointerUp = (event: PointerEvent) => {
+      if (
+        pointerIdRef.current !== null &&
+        event.pointerId !== pointerIdRef.current
+      ) {
+        return
+      }
+      finishDrag()
     }
 
     window.addEventListener("pointermove", handlePointerMove)
@@ -180,32 +259,33 @@ export function Sidebar({
     window.addEventListener("pointercancel", handlePointerUp)
 
     return () => {
+      flushPendingFrame()
       window.removeEventListener("pointermove", handlePointerMove)
       window.removeEventListener("pointerup", handlePointerUp)
       window.removeEventListener("pointercancel", handlePointerUp)
       document.body.style.userSelect = ""
     }
-  }, [
-    compactThreshold,
-    compactWidth,
-    isCompact,
-    isDragging,
-    maxWidth,
-    minWidth,
-    setCompact,
-    setWidthValue,
-  ])
+  }, [finishDrag, flushPendingFrame, isDragging, scheduleDrag])
 
   const handleRailPointerDown = (
     event: React.PointerEvent<HTMLButtonElement>,
   ) => {
     if (!resizable || event.button !== 0) return
     event.preventDefault()
+    if (event.currentTarget.setPointerCapture) {
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId)
+      } catch {
+        // Test environments may not track active pointers for synthetic events.
+      }
+    }
+    pointerIdRef.current = event.pointerId
     setIsDragging(true)
     document.body.style.userSelect = "none"
+    latestClientXRef.current = event.clientX
     dragStateRef.current = {
       startX: event.clientX,
-      startWidth: isCompact ? compactWidth : expandedWidth,
+      startWidth: compactRef.current ? compactWidth : widthRef.current,
     }
   }
 
@@ -218,14 +298,15 @@ export function Sidebar({
     [appliedWidth, style],
   )
 
-  const { root, rail } = sidebar()
+  const { root, rail } = sidebar({ dragging: isDragging })
   const renderChildren =
     typeof children === "function"
       ? children({ compact: isCompact, width: appliedWidth })
       : children
+  const contextValue = useMemo(() => ({ compact: isCompact }), [isCompact])
 
   return (
-    <SidebarContext.Provider value={{ compact: isCompact }}>
+    <SidebarContext.Provider value={contextValue}>
       <div
         data-compact={isCompact}
         className={root({ className })}
