@@ -1,11 +1,12 @@
-import { Search } from "lucide-react"
 import {
+  FieldError,
   Input as RAInput,
   Label as RALabel,
   TextField as RATextField,
   type TextFieldProps as RATextFieldProps,
   type ValidationResult,
 } from "react-aria-components"
+
 import { tv } from "tailwind-variants"
 
 const input = tv({
@@ -47,7 +48,9 @@ export function TextField({
         <p className="text-muted-foreground text-sm">{description}</p>
       )}
       {errorMessage && (
-        <p className="font-medium text-destructive text-sm">{errorMessage}</p>
+        <FieldError className="font-medium text-destructive text-sm">
+          {errorMessage}
+        </FieldError>
       )}
     </RATextField>
   )
