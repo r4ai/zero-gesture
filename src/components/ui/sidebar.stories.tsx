@@ -273,17 +273,32 @@ export const StateTransitions: Story = {
       )
     })
 
-    await dragRailBy(rail, -40, 4)
-    await waitFor(() => {
-      expect(sidebarRoot.getAttribute("data-compact")).toBe("false")
-    })
-    expect(sidebarRoot.style.getPropertyValue("--sidebar-width")).toBe("320px")
-
     await dragRailBy(rail, -500, 5)
     await waitFor(() => {
       expect(sidebarRoot.getAttribute("data-compact")).toBe("true")
     })
     expect(sidebarRoot.style.getPropertyValue("--sidebar-width")).toBe("72px")
+
+    await dragRailBy(rail, 500, 8)
+    await waitFor(() => {
+      expect(sidebarRoot.style.getPropertyValue("--sidebar-width")).toBe(
+        "360px",
+      )
+    })
+
+    const { left: maxLeft, width: maxRailWidth } = rail.getBoundingClientRect()
+    const maxStartX = maxLeft + maxRailWidth / 2
+    fireEvent.pointerDown(rail, { button: 0, clientX: maxStartX, pointerId: 9 })
+    fireEvent.pointerMove(window, { clientX: maxStartX - 500, pointerId: 9 })
+    await waitFor(() => {
+      expect(sidebarRoot.getAttribute("data-compact")).toBe("true")
+    })
+    fireEvent.pointerMove(window, { clientX: maxStartX - 216, pointerId: 9 })
+    fireEvent.pointerUp(window, { clientX: maxStartX - 216, pointerId: 9 })
+    await waitFor(() => {
+      expect(sidebarRoot.getAttribute("data-compact")).toBe("false")
+    })
+    expect(sidebarRoot.style.getPropertyValue("--sidebar-width")).toBe("144px")
   },
 }
 

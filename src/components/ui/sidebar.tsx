@@ -150,24 +150,6 @@ export function Sidebar({
         return
       }
 
-      if (compactRef.current) {
-        const compactDragDelta = clientX - dragState.startX
-        if (compactDragDelta <= 0) {
-          setCompact(true)
-          return
-        }
-
-        const compactDragWidth = compactWidth + compactDragDelta
-        if (compactDragWidth <= compactThreshold) {
-          setCompact(true)
-          return
-        }
-
-        setCompact(false)
-        setWidthValue(compactDragWidth)
-        return
-      }
-
       const pointerWidth = dragState.startWidth + (clientX - dragState.startX)
       const clampedPointerWidth = clampWidth(
         pointerWidth,
@@ -180,6 +162,7 @@ export function Sidebar({
         return
       }
 
+      setCompact(false)
       setWidthValue(clampedPointerWidth)
     },
     [compactThreshold, compactWidth, maxWidth, setCompact, setWidthValue],
