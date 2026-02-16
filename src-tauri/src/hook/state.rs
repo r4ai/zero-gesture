@@ -393,12 +393,11 @@ pub(super) fn process_event_pure(
             used_hold_wheel_action,
             ..
         } => {
-            *travel_distance_px += segment_distance(*last_point, pt);
-            *last_point = pt;
-
             match event {
                 MouseEvent::MouseMove => {
                     trace!("Gesturing mouse move at ({}, {})", pt.0, pt.1);
+                    *travel_distance_px += segment_distance(*last_point, pt);
+                    *last_point = pt;
                     recognizer.add_point(pt.0, pt.1);
                     effect
                         .overlay_commands
@@ -414,26 +413,30 @@ pub(super) fn process_event_pure(
                 }
                 MouseEvent::WheelUp(steps) => {
                     process_wheel_input(
-                        &mut effect,
-                        config,
-                        *trigger,
-                        recognizer,
-                        gesture_app.as_deref(),
-                        last_label,
-                        used_hold_wheel_action,
+                        WheelInputContext {
+                            effect: &mut effect,
+                            config,
+                            trigger: *trigger,
+                            recognizer,
+                            matched_app: gesture_app.as_deref(),
+                            last_label,
+                            used_hold_wheel_action,
+                        },
                         GestureStep::WheelUp,
                         steps,
                     );
                 }
                 MouseEvent::WheelDown(steps) => {
                     process_wheel_input(
-                        &mut effect,
-                        config,
-                        *trigger,
-                        recognizer,
-                        gesture_app.as_deref(),
-                        last_label,
-                        used_hold_wheel_action,
+                        WheelInputContext {
+                            effect: &mut effect,
+                            config,
+                            trigger: *trigger,
+                            recognizer,
+                            matched_app: gesture_app.as_deref(),
+                            last_label,
+                            used_hold_wheel_action,
+                        },
                         GestureStep::WheelDown,
                         steps,
                     );
@@ -502,40 +505,48 @@ fn segment_distance(a: (i32, i32), b: (i32, i32)) -> f64 {
     dx.hypot(dy)
 }
 
-fn process_wheel_input(
-    effect: &mut EventEffect,
-    config: &HookConfig,
+struct WheelInputContext<'a> {
+    effect: &'a mut EventEffect,
+    config: &'a HookConfig,
     trigger: TriggerButton,
-    recognizer: &mut GestureRecognizer,
-    matched_app: Option<&str>,
-    last_label: &mut Option<String>,
-    used_hold_wheel_action: &mut bool,
-    step: GestureStep,
-    steps: u16,
-) {
+    recognizer: &'a mut GestureRecognizer,
+    matched_app: Option<&'a str>,
+    last_label: &'a mut Option<String>,
+    used_hold_wheel_action: &'a mut bool,
+}
+
+fn process_wheel_input(ctx: WheelInputContext<'_>, step: GestureStep, steps: u16) {
     if steps == 0 {
         return;
     }
 
-    let current_sequence = recognizer.current_sequence().unwrap_or_default();
+    let current_sequence = ctx.recognizer.current_sequence().unwrap_or_default();
     if let Some(binding) =
-        config.resolve_hold_binding(trigger, &current_sequence, step, matched_app)
+        ctx.config
+            .resolve_hold_binding(ctx.trigger, &current_sequence, step, ctx.matched_app)
     {
-        effect.suppress = true;
-        *used_hold_wheel_action = true;
-        effect.request_execute = Some(ExecuteRequest {
+        ctx.effect.suppress = true;
+        *ctx.used_hold_wheel_action = true;
+        ctx.effect.request_execute = Some(ExecuteRequest {
             action: binding.action.clone(),
             repeat: steps,
         });
-        update_label_direct(effect, last_label, Some(binding.label.clone()));
+        update_label_direct(ctx.effect, ctx.last_label, Some(binding.label.clone()));
         return;
     }
 
     for _ in 0..usize::from(steps) {
-        recognizer.add_input_step(step);
+        ctx.recognizer.add_input_step(step);
     }
-    effect.suppress = true;
-    update_label_if_needed(effect, config, trigger, recognizer, matched_app, last_label);
+    ctx.effect.suppress = true;
+    update_label_if_needed(
+        ctx.effect,
+        ctx.config,
+        ctx.trigger,
+        ctx.recognizer,
+        ctx.matched_app,
+        ctx.last_label,
+    );
 }
 
 fn resolve_hold_from_set<'a>(
@@ -1024,6 +1035,14 @@ mod tests {
             MouseEvent::ButtonDown(TriggerButton::Right),
             (100, 100),
             1000,
+            None,
+        );
+        process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::MouseMove,
+            (107, 100),
+            1005,
             None,
         );
         let effect = process_event_pure(
