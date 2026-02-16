@@ -36,7 +36,7 @@ mod trigger;
 #[cfg(windows)]
 mod win32;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
@@ -154,6 +154,71 @@ fn resolve_safety_timeout_ms(value: u32) -> u32 {
     }
 }
 
+/// Compile and validate one app's raw gesture bindings.
+///
+/// Validation rules:
+/// - sequence must not be empty
+/// - sequence length must be `<= AppConfig::MAX_GESTURE_STEPS`
+/// - sequence must not include the trigger click step itself
+/// - duplicate `(trigger, sequence)` entries are ignored after the first
+fn compile_bindings_for_app(
+    app_id: &str,
+    app_bindings: &[crate::config::GestureBinding],
+) -> Vec<CompiledGestureBinding> {
+    let mut bindings: Vec<CompiledGestureBinding> = Vec::new();
+    let mut seen: HashSet<(TriggerButton, Vec<crate::config::GestureStep>)> = HashSet::new();
+
+    for binding in app_bindings {
+        if binding.gesture.sequence.is_empty() {
+            warn!(
+                "Empty gesture sequence in bindings for app {:?}, skipping",
+                app_id
+            );
+            continue;
+        }
+        if binding.gesture.sequence.len() > AppConfig::MAX_GESTURE_STEPS {
+            warn!(
+                "Gesture sequence too long ({} > {}) in app {:?}, skipping",
+                binding.gesture.sequence.len(),
+                AppConfig::MAX_GESTURE_STEPS,
+                app_id
+            );
+            continue;
+        }
+
+        let trigger = TriggerButton::from_config(&binding.gesture.trigger);
+        let trigger_step = trigger.to_step();
+        if binding.gesture.sequence.contains(&trigger_step) {
+            warn!(
+                "Gesture sequence contains its own trigger step {:?} in app {:?}, skipping",
+                trigger_step, app_id
+            );
+            continue;
+        }
+
+        let sequence = binding.gesture.sequence.clone();
+        if !seen.insert((trigger, sequence.clone())) {
+            warn!(
+                "Duplicate gesture binding for trigger={:?}, sequence={:?} in app {:?}, skipping",
+                trigger, sequence, app_id
+            );
+            continue;
+        }
+
+        bindings.push(CompiledGestureBinding {
+            trigger,
+            sequence,
+            action: binding.action.clone(),
+            label: binding
+                .label
+                .clone()
+                .unwrap_or_else(|| generate_label(&binding.action)),
+        });
+    }
+
+    bindings
+}
+
 // ---------------------------------------------------------------------------
 // spawn
 // ---------------------------------------------------------------------------
@@ -233,37 +298,7 @@ pub fn spawn(
                 continue;
             }
 
-            let bindings: Vec<CompiledGestureBinding> = app_bindings
-                .iter()
-                .filter_map(|binding| {
-                    if binding.gesture.sequence.is_empty() {
-                        warn!(
-                            "Empty gesture sequence in bindings for app {:?}, skipping",
-                            app_id
-                        );
-                        return None;
-                    }
-                    if binding.gesture.sequence.len() > AppConfig::MAX_GESTURE_STEPS {
-                        warn!(
-                            "Gesture sequence too long ({} > {}) in app {:?}, skipping",
-                            binding.gesture.sequence.len(),
-                            AppConfig::MAX_GESTURE_STEPS,
-                            app_id
-                        );
-                        return None;
-                    }
-
-                    Some(CompiledGestureBinding {
-                        trigger: TriggerButton::from_config(&binding.gesture.trigger),
-                        sequence: binding.gesture.sequence.clone(),
-                        action: binding.action.clone(),
-                        label: binding
-                            .label
-                            .clone()
-                            .unwrap_or_else(|| generate_label(&binding.action)),
-                    })
-                })
-                .collect();
+            let bindings = compile_bindings_for_app(app_id, app_bindings);
 
             total_bindings += bindings.len();
             binding_sets.insert(app_id.clone(), AppBindingSet { bindings });
@@ -326,4 +361,64 @@ pub fn spawn(
     info!("hook thread spawned");
 
     (control_tx, tid, handle)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn keyboard_action(key: &str) -> crate::executor::Action {
+        crate::executor::Action::Keyboard {
+            keys: vec![key.to_string()],
+        }
+    }
+
+    fn binding(
+        trigger: crate::config::TriggerButton,
+        sequence: Vec<crate::config::GestureStep>,
+        key: &str,
+        label: Option<&str>,
+    ) -> crate::config::GestureBinding {
+        crate::config::GestureBinding {
+            label: label.map(ToString::to_string),
+            gesture: crate::config::GesturePattern { trigger, sequence },
+            action: keyboard_action(key),
+        }
+    }
+
+    #[test]
+    fn compile_bindings_for_app_skips_duplicate_trigger_and_sequence() {
+        let raw = vec![
+            binding(
+                crate::config::TriggerButton::RightClick,
+                vec![crate::config::GestureStep::Up],
+                "a",
+                Some("First"),
+            ),
+            binding(
+                crate::config::TriggerButton::RightClick,
+                vec![crate::config::GestureStep::Up],
+                "b",
+                Some("Second"),
+            ),
+        ];
+
+        let compiled = compile_bindings_for_app("default", &raw);
+        assert_eq!(compiled.len(), 1);
+        assert_eq!(compiled[0].label, "First");
+        assert_eq!(compiled[0].action, keyboard_action("a"));
+    }
+
+    #[test]
+    fn compile_bindings_for_app_skips_sequence_containing_trigger_step() {
+        let raw = vec![binding(
+            crate::config::TriggerButton::RightClick,
+            vec![crate::config::GestureStep::RightClick],
+            "a",
+            Some("Invalid"),
+        )];
+
+        let compiled = compile_bindings_for_app("default", &raw);
+        assert!(compiled.is_empty());
+    }
 }
