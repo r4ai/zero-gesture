@@ -1,17 +1,35 @@
-use std::collections::HashMap;
-
 use log::warn;
 
-use crate::config::{MatchMethod, MatchTarget};
+use crate::config::{GestureStep, MatchMethod, MatchTarget};
 use crate::executor::Action;
-use crate::gesture::GestureKind;
 use crate::window_info::ForegroundWindowInfo;
 
-/// Pre-parsed bindings and labels for one app (or the "default" set).
+use super::trigger::TriggerButton;
+
+/// A compiled gesture binding used by the hook thread.
+#[derive(Debug, Clone)]
+pub(super) struct CompiledGestureBinding {
+    pub(super) trigger: TriggerButton,
+    pub(super) sequence: Vec<GestureStep>,
+    pub(super) action: Action,
+    pub(super) label: String,
+}
+
+/// A compiled hold binding used by the hook thread.
+#[derive(Debug, Clone)]
+pub(super) struct CompiledHoldBinding {
+    pub(super) trigger: TriggerButton,
+    pub(super) sequence: Vec<GestureStep>,
+    pub(super) step: GestureStep,
+    pub(super) action: Action,
+    pub(super) label: String,
+}
+
+/// Pre-parsed bindings for one app (or the `"default"` set).
 #[derive(Debug, Clone)]
 pub(super) struct AppBindingSet {
-    pub(super) bindings: HashMap<GestureKind, Action>,
-    pub(super) labels: HashMap<GestureKind, String>,
+    pub(super) release_bindings: Vec<CompiledGestureBinding>,
+    pub(super) hold_bindings: Vec<CompiledHoldBinding>,
 }
 
 /// Compiled matching logic for a single [`AppMatcher`](crate::config::AppMatcher).

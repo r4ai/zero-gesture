@@ -1,85 +1,69 @@
 //! Low-level mouse hook thread.
 //!
 //! Installs a [`WH_MOUSE_LL`] hook and runs a Win32 message loop on a
-//! dedicated thread. A state machine distinguishes "click" (no movement)
-//! from "gesture" (movement past a pixel threshold) for the configured
-//! trigger button, replaying the original click when no gesture is detected.
+//! dedicated thread.
+//!
+//! The hook starts a gesture immediately when a configured trigger button is
+//! pressed, captures directional movement plus mouse-input steps, and executes
+//! the bound action when the trigger button is released.
 //!
 //! # Architecture
 //!
-//! This module is the **"Sensor"** layer described in `docs/architecture.md`.
-//! It runs on a dedicated OS thread so that the hook callback
-//! ([`low_level_mouse_proc`]) never blocks the Tauri main thread or the
-//! overlay renderer.
+//! This module is the **Sensor** layer described in `docs/architecture.md`.
+//! It runs on a dedicated OS thread so the low-level callback never blocks the
+//! Tauri main thread or the overlay renderer.
 //!
 //! ## State Machine
 //!
-//! The core logic is a three-state machine driven by [`process_event`]:
+//! The runtime state machine has two states (`Idle`, `Gesturing`) with all
+//! transitions defined by [`state::process_event_pure`] plus the safety timer
+//! handler in `win32`.
 //!
 //! ```text
-//! Idle ──[trigger DOWN]──► ButtonDown { origin }
-//!                          │                    │
-//!           [move > 10px]  │                    │ [trigger UP, no move]
-//!                          ▼                    ▼
-//!                     Gesturing            Idle + replay click
-//!                          │
-//!            [trigger UP]  │
-//!                          ▼
-//!                     Idle + EndGesture
+//! Initial: Idle
+//!
+//! Idle
+//!   ├─ ButtonDown(trigger) and binding exists for (matched app or default)
+//!   │    -> Gesturing
+//!   │       side effects: suppress=true, StartGesture, TrackPoint(origin)
+//!   └─ any other event
+//!        -> Idle (no transition)
+//!
+//! Gesturing
+//!   ├─ MouseMove
+//!   │    -> Gesturing
+//!   │       side effects: TrackPoint, optional UpdateLabel, suppress=false
+//!   ├─ WheelUp / WheelDown
+//!   │    -> Gesturing
+//!   │       side effects:
+//!   │       - if hold binding exists: request_execute immediately, suppress=true
+//!   │       - else: add input step, optional UpdateLabel, suppress=true
+//!   ├─ ButtonDown(any button)
+//!   │    -> Gesturing
+//!   │       side effects: add input step, optional UpdateLabel, suppress=true
+//!   ├─ ButtonUp(non-trigger button)
+//!   │    -> Gesturing
+//!   │       side effects: suppress=true
+//!   ├─ ButtonUp(same trigger that started gesture)
+//!   │    -> Idle
+//!   │       side effects: suppress=true, EndGesture,
+//!   │       - if sequence matched: request_execute
+//!   │       - else if hold wheel action fired in this session: no replay
+//!   │       - else if unmatched and travel distance <= replay threshold:
+//!   │         request_replay
+//!   ├─ Other
+//!   │    -> Gesturing (no transition, suppress=false)
+//!   └─ safety timeout elapsed (`WM_TIMER`)
+//!        -> Idle
+//!           side effects: EndGesture (cleanup)
 //! ```
 //!
-//! | From | Event | Condition | To | Side Effects |
-//! |---|---|---|---|---|
-//! | `Idle` | trigger DOWN | — | `ButtonDown` | Record origin; **suppress event** |
-//! | `ButtonDown` | `WM_MOUSEMOVE` | dist > configured threshold | `Gesturing` | Send `StartGesture` + `TrackPoint`s; **pass through** |
-//! | `ButtonDown` | `WM_MOUSEMOVE` | dist ≤ threshold | `ButtonDown` | **pass through** |
-//! | `ButtonDown` | trigger UP | — | `Idle` | Post [`WM_REPLAY_CLICK`]; **suppress event** |
-//! | `Gesturing` | `WM_MOUSEMOVE` | — | `Gesturing` | Send `TrackPoint`; **pass through** |
-//! | `Gesturing` | trigger UP | — | `Idle` | Send `EndGesture`; **suppress event** |
+//! During `Gesturing`, directional movement and input steps are accumulated
+//! into one sequence and resolved against app-specific bindings first, then
+//! `"default"` fallback bindings.
 //!
-//! **Key invariant:** `WM_MOUSEMOVE` is **never** suppressed — the mouse
-//! pointer always tracks normally regardless of gesture state.
-//!
-//! ## Click Replay
-//!
-//! When the user presses and releases the trigger button without moving past
-//! the threshold, no gesture has occurred and the original click must be
-//! delivered to the target application. Because calling [`SendInput`] from
-//! inside the hook callback would cause re-entrancy, we instead:
-//!
-//! 1. Store the click origin in [`HookThreadState::pending_replay`].
-//! 2. Post [`WM_REPLAY_CLICK`] (a custom `WM_APP + 1` message) to our own
-//!    message loop via [`PostThreadMessageW`].
-//! 3. The message loop handler [`handle_replay_click`] calls [`SendInput`]
-//!    with `MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK` at the original
-//!    screen coordinates.
-//! 4. The injected events carry [`LLMHF_INJECTED`] and are passed through
-//!    by our hook, avoiding infinite loops.
-//!
-//! ## Thread-Local State
-//!
-//! A `WH_MOUSE_LL` callback is a C-style function pointer (`extern "system"`)
-//! with no user-data parameter. To access our state we use a [`thread_local!`]
-//! [`RefCell`] ([`HOOK_STATE`]). This is safe because:
-//!
-//! - The hook callback is always invoked on the thread that installed it.
-//! - The message loop is single-threaded, so no concurrent access occurs.
-//! - Configuration is snapshotted once at startup ([`HookConfig`]) — no
-//!   locks are taken inside the callback.
-//!
-//! ## Shutdown
-//!
-//! A watchdog thread blocks on the [`HookControl`] channel. When
-//! [`HookControl::Shutdown`] is received (or the channel disconnects), it
-//! posts `WM_QUIT` to the hook thread, which breaks the [`GetMessageW`] loop
-//! and triggers orderly cleanup (unhook, kill timer, drop thread-local state).
-//!
-//! ## Safety Timer
-//!
-//! A [`SetTimer`]-based timer fires at a configured interval. If the state
-//! machine has been stuck in `ButtonDown` or `Gesturing` for longer than that,
-//! it is conservatively reset to `Idle` to recover from edge cases such as a
-//! lost button-up event.
+//! **Key invariant:** `WM_MOUSEMOVE` is never suppressed, so pointer tracking
+//! stays natural while a gesture session is active.
 
 mod app_match;
 mod state;
@@ -87,7 +71,7 @@ mod trigger;
 #[cfg(windows)]
 mod win32;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
@@ -97,11 +81,13 @@ use log::{info, warn};
 
 use crate::config::AppConfig;
 use crate::executor::generate_label;
-use crate::gesture::GestureKind;
 use crate::overlay::OverlayCommand;
 use crate::SharedConfig;
 
-use app_match::{compile_matcher, AppBindingSet, CompiledApp, CompiledMatcher};
+use app_match::{
+    compile_matcher, AppBindingSet, CompiledApp, CompiledGestureBinding, CompiledHoldBinding,
+    CompiledMatcher,
+};
 use state::HookConfig;
 use trigger::TriggerButton;
 
@@ -118,23 +104,6 @@ pub enum HookControl {
 // ---------------------------------------------------------------------------
 // Config resolution helpers
 // ---------------------------------------------------------------------------
-
-/// Resolves `gesture_threshold` from config with a safe fallback.
-///
-/// Values less than or equal to zero are invalid and replaced by
-/// [`AppConfig::DEFAULT_GESTURE_THRESHOLD`].
-fn resolve_gesture_threshold(value: i32) -> i32 {
-    if value > 0 {
-        value
-    } else {
-        warn!(
-            "Invalid gesture_threshold={} in config, falling back to {}",
-            value,
-            AppConfig::DEFAULT_GESTURE_THRESHOLD
-        );
-        AppConfig::DEFAULT_GESTURE_THRESHOLD
-    }
-}
 
 /// Resolves `min_segment_px` from config with a safe fallback.
 ///
@@ -187,6 +156,23 @@ fn resolve_axis_ambiguity_deadzone_px(value: i32) -> i32 {
     }
 }
 
+/// Resolves `replay_distance_threshold_px` from config with a safe fallback.
+///
+/// Values less than or equal to zero are invalid and replaced by
+/// [`AppConfig::DEFAULT_REPLAY_DISTANCE_THRESHOLD_PX`].
+fn resolve_replay_distance_threshold_px(value: i32) -> i32 {
+    if value > 0 {
+        value
+    } else {
+        warn!(
+            "Invalid replay_distance_threshold_px={} in config, falling back to {}",
+            value,
+            AppConfig::DEFAULT_REPLAY_DISTANCE_THRESHOLD_PX
+        );
+        AppConfig::DEFAULT_REPLAY_DISTANCE_THRESHOLD_PX
+    }
+}
+
 /// Resolves `safety_timeout_ms` from config with a safe fallback.
 ///
 /// A value of zero is invalid and replaced by
@@ -204,15 +190,176 @@ fn resolve_safety_timeout_ms(value: u32) -> u32 {
     }
 }
 
-/// Parse a gesture kind name (e.g. `"Left"`, `"DownRight"`) into a [`GestureKind`].
+/// Compile and validate one app's raw gesture bindings.
 ///
-/// Uses serde deserialization of the enum variant name for consistency with
-/// the config format.
-fn parse_gesture_kind(name: &str) -> Option<GestureKind> {
-    // GestureKind derives Deserialize, so we can deserialize directly from a JSON string value
-    // without manually formatting JSON.
-    let value = serde_json::Value::String(name.to_owned());
-    serde_json::from_value(value).ok()
+/// Validation rules:
+/// - `release` mode:
+///   - sequence must not be empty
+///   - sequence length must be `<= AppConfig::MAX_GESTURE_STEPS`
+///   - sequence must not include the trigger click step itself
+///   - sequence must not contain consecutive identical directional move steps
+///   - duplicate `(trigger, sequence)` entries are ignored after the first
+/// - `hold` mode:
+///   - step must be present
+///   - only `wheel_up` / `wheel_down` are currently supported
+///   - sequence length must be `<= AppConfig::MAX_GESTURE_STEPS`
+///   - sequence must not include the trigger click step itself
+///   - sequence must not contain consecutive identical directional move steps
+///   - duplicate `(trigger, sequence, step)` entries are ignored after the first
+///   - sequence can be empty (wildcard) or specific (state-scoped hold)
+fn has_consecutive_same_move_steps(sequence: &[crate::config::GestureStep]) -> bool {
+    sequence.windows(2).any(|pair| {
+        pair[0] == pair[1]
+            && matches!(
+                pair[0],
+                crate::config::GestureStep::Up
+                    | crate::config::GestureStep::Down
+                    | crate::config::GestureStep::Left
+                    | crate::config::GestureStep::Right
+            )
+    })
+}
+
+fn is_supported_hold_step(step: crate::config::GestureStep) -> bool {
+    matches!(
+        step,
+        crate::config::GestureStep::WheelUp | crate::config::GestureStep::WheelDown
+    )
+}
+
+fn compile_bindings_for_app(
+    app_id: &str,
+    app_bindings: &[crate::config::GestureBinding],
+) -> AppBindingSet {
+    let mut release_bindings: Vec<CompiledGestureBinding> = Vec::new();
+    let mut hold_bindings: Vec<CompiledHoldBinding> = Vec::new();
+    let mut seen_release: HashSet<(TriggerButton, Vec<crate::config::GestureStep>)> =
+        HashSet::new();
+    let mut seen_hold: HashSet<(
+        TriggerButton,
+        Vec<crate::config::GestureStep>,
+        crate::config::GestureStep,
+    )> = HashSet::new();
+
+    for binding in app_bindings {
+        let trigger = TriggerButton::from_config(&binding.gesture.trigger);
+        let label = binding
+            .label
+            .clone()
+            .unwrap_or_else(|| generate_label(&binding.action));
+
+        match binding.gesture.mode {
+            crate::config::GestureMode::Release => {
+                if binding.gesture.sequence.is_empty() {
+                    warn!(
+                        "Empty release gesture sequence in bindings for app {:?}, skipping",
+                        app_id
+                    );
+                    continue;
+                }
+                if binding.gesture.sequence.len() > AppConfig::MAX_GESTURE_STEPS {
+                    warn!(
+                        "Release gesture sequence too long ({} > {}) in app {:?}, skipping",
+                        binding.gesture.sequence.len(),
+                        AppConfig::MAX_GESTURE_STEPS,
+                        app_id
+                    );
+                    continue;
+                }
+                if has_consecutive_same_move_steps(&binding.gesture.sequence) {
+                    warn!(
+                        "Release gesture sequence contains consecutive identical directional moves {:?} in app {:?}, skipping",
+                        binding.gesture.sequence, app_id
+                    );
+                    continue;
+                }
+
+                let trigger_step = trigger.to_step();
+                if binding.gesture.sequence.contains(&trigger_step) {
+                    warn!(
+                        "Release gesture sequence contains its own trigger step {:?} in app {:?}, skipping",
+                        trigger_step, app_id
+                    );
+                    continue;
+                }
+
+                let sequence = binding.gesture.sequence.clone();
+                if !seen_release.insert((trigger, sequence.clone())) {
+                    warn!(
+                        "Duplicate release gesture binding for trigger={:?}, sequence={:?} in app {:?}, skipping",
+                        trigger, sequence, app_id
+                    );
+                    continue;
+                }
+
+                release_bindings.push(CompiledGestureBinding {
+                    trigger,
+                    sequence,
+                    action: binding.action.clone(),
+                    label,
+                });
+            }
+            crate::config::GestureMode::Hold => {
+                if binding.gesture.sequence.len() > AppConfig::MAX_GESTURE_STEPS {
+                    warn!(
+                        "Hold gesture sequence too long ({} > {}) in app {:?}, skipping",
+                        binding.gesture.sequence.len(),
+                        AppConfig::MAX_GESTURE_STEPS,
+                        app_id
+                    );
+                    continue;
+                }
+                if has_consecutive_same_move_steps(&binding.gesture.sequence) {
+                    warn!(
+                        "Hold gesture sequence contains consecutive identical directional moves {:?} in app {:?}, skipping",
+                        binding.gesture.sequence, app_id
+                    );
+                    continue;
+                }
+                let trigger_step = trigger.to_step();
+                if binding.gesture.sequence.contains(&trigger_step) {
+                    warn!(
+                        "Hold gesture sequence contains its own trigger step {:?} in app {:?}, skipping",
+                        trigger_step, app_id
+                    );
+                    continue;
+                }
+
+                let Some(step) = binding.gesture.step else {
+                    warn!("Hold gesture is missing step in app {:?}, skipping", app_id);
+                    continue;
+                };
+                if !is_supported_hold_step(step) {
+                    warn!(
+                        "Unsupported hold step {:?} in app {:?}, skipping",
+                        step, app_id
+                    );
+                    continue;
+                }
+                let sequence = binding.gesture.sequence.clone();
+                if !seen_hold.insert((trigger, sequence.clone(), step)) {
+                    warn!(
+                        "Duplicate hold gesture binding for trigger={:?}, sequence={:?}, step={:?} in app {:?}, skipping",
+                        trigger, sequence, step, app_id
+                    );
+                    continue;
+                }
+
+                hold_bindings.push(CompiledHoldBinding {
+                    trigger,
+                    sequence,
+                    step,
+                    action: binding.action.clone(),
+                    label,
+                });
+            }
+        }
+    }
+
+    AppBindingSet {
+        release_bindings,
+        hold_bindings,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -285,7 +432,7 @@ pub fn spawn(
         let mut binding_sets: HashMap<String, AppBindingSet> = HashMap::new();
         let mut total_bindings = 0;
 
-        for (app_id, gesture_map) in &cfg.bindings {
+        for (app_id, app_bindings) in &cfg.bindings {
             if app_id != "default" && !cfg.apps.contains_key(app_id) {
                 warn!(
                     "Bindings reference app {:?} which is not defined in apps, skipping",
@@ -294,33 +441,11 @@ pub fn spawn(
                 continue;
             }
 
-            let parsed: Vec<(GestureKind, &crate::config::GestureBinding)> = gesture_map
-                .iter()
-                .filter_map(|(name, binding)| {
-                    let kind = parse_gesture_kind(name);
-                    if kind.is_none() {
-                        warn!(
-                            "Unknown gesture name {:?} in bindings for app {:?}",
-                            name, app_id
-                        );
-                    }
-                    kind.map(|k| (k, binding))
-                })
-                .collect();
+            let binding_set = compile_bindings_for_app(app_id, app_bindings);
 
-            let bindings: HashMap<GestureKind, crate::executor::Action> =
-                parsed.iter().map(|(k, b)| (*k, b.action.clone())).collect();
-
-            let labels: HashMap<GestureKind, String> = parsed
-                .iter()
-                .map(|(k, b)| {
-                    let label = b.label.clone().unwrap_or_else(|| generate_label(&b.action));
-                    (*k, label)
-                })
-                .collect();
-
-            total_bindings += bindings.len();
-            binding_sets.insert(app_id.clone(), AppBindingSet { bindings, labels });
+            total_bindings += binding_set.release_bindings.len();
+            total_bindings += binding_set.hold_bindings.len();
+            binding_sets.insert(app_id.clone(), binding_set);
         }
 
         // Ensure a "default" binding set is always present, since resolution
@@ -331,8 +456,8 @@ pub fn spawn(
             binding_sets.insert(
                 "default".to_string(),
                 AppBindingSet {
-                    bindings: HashMap::new(),
-                    labels: HashMap::new(),
+                    release_bindings: Vec::new(),
+                    hold_bindings: Vec::new(),
                 },
             );
         }
@@ -349,8 +474,6 @@ pub fn spawn(
         }
 
         HookConfig {
-            trigger: TriggerButton::from_config(&cfg.gesture_trigger_button),
-            gesture_threshold: resolve_gesture_threshold(cfg.gesture_threshold),
             safety_timeout_ms: resolve_safety_timeout_ms(cfg.safety_timeout_ms),
             min_segment_px: resolve_min_segment_px(cfg.min_segment_px),
             direction_switch_confirm_px: resolve_direction_switch_confirm_px(
@@ -359,6 +482,10 @@ pub fn spawn(
             axis_ambiguity_deadzone_px: resolve_axis_ambiguity_deadzone_px(
                 cfg.axis_ambiguity_deadzone_px,
             ),
+            replay_distance_threshold_px: resolve_replay_distance_threshold_px(
+                cfg.replay_distance_threshold_px,
+            ),
+            max_gesture_steps: AppConfig::MAX_GESTURE_STEPS,
             apps,
             binding_sets,
         }
@@ -379,4 +506,192 @@ pub fn spawn(
     info!("hook thread spawned");
 
     (control_tx, tid, handle)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn keyboard_action(key: &str) -> crate::executor::Action {
+        crate::executor::Action::Keyboard {
+            keys: vec![key.to_string()],
+        }
+    }
+
+    fn binding(
+        trigger: crate::config::TriggerButton,
+        sequence: Vec<crate::config::GestureStep>,
+        key: &str,
+        label: Option<&str>,
+    ) -> crate::config::GestureBinding {
+        crate::config::GestureBinding {
+            label: label.map(ToString::to_string),
+            gesture: crate::config::GesturePattern {
+                trigger,
+                mode: crate::config::GestureMode::Release,
+                sequence,
+                step: None,
+            },
+            action: keyboard_action(key),
+        }
+    }
+
+    fn hold_binding(
+        trigger: crate::config::TriggerButton,
+        sequence: Vec<crate::config::GestureStep>,
+        step: crate::config::GestureStep,
+        key: &str,
+        label: Option<&str>,
+    ) -> crate::config::GestureBinding {
+        crate::config::GestureBinding {
+            label: label.map(ToString::to_string),
+            gesture: crate::config::GesturePattern {
+                trigger,
+                mode: crate::config::GestureMode::Hold,
+                sequence,
+                step: Some(step),
+            },
+            action: keyboard_action(key),
+        }
+    }
+
+    #[test]
+    fn compile_bindings_for_app_skips_duplicate_trigger_and_sequence() {
+        let raw = vec![
+            binding(
+                crate::config::TriggerButton::RightClick,
+                vec![crate::config::GestureStep::Up],
+                "a",
+                Some("First"),
+            ),
+            binding(
+                crate::config::TriggerButton::RightClick,
+                vec![crate::config::GestureStep::Up],
+                "b",
+                Some("Second"),
+            ),
+        ];
+
+        let compiled = compile_bindings_for_app("default", &raw);
+        assert_eq!(compiled.release_bindings.len(), 1);
+        assert_eq!(compiled.release_bindings[0].label, "First");
+        assert_eq!(compiled.release_bindings[0].action, keyboard_action("a"));
+    }
+
+    #[test]
+    fn compile_bindings_for_app_skips_sequence_containing_trigger_step() {
+        let raw = vec![binding(
+            crate::config::TriggerButton::RightClick,
+            vec![crate::config::GestureStep::RightClick],
+            "a",
+            Some("Invalid"),
+        )];
+
+        let compiled = compile_bindings_for_app("default", &raw);
+        assert!(compiled.release_bindings.is_empty());
+    }
+
+    #[test]
+    fn compile_bindings_for_app_skips_sequence_with_consecutive_same_mouse_move() {
+        let raw = vec![
+            binding(
+                crate::config::TriggerButton::RightClick,
+                vec![
+                    crate::config::GestureStep::Left,
+                    crate::config::GestureStep::Left,
+                ],
+                "a",
+                Some("Invalid"),
+            ),
+            binding(
+                crate::config::TriggerButton::RightClick,
+                vec![
+                    crate::config::GestureStep::Left,
+                    crate::config::GestureStep::Up,
+                ],
+                "b",
+                Some("Valid"),
+            ),
+        ];
+
+        let compiled = compile_bindings_for_app("default", &raw);
+        assert_eq!(compiled.release_bindings.len(), 1);
+        assert_eq!(compiled.release_bindings[0].label, "Valid");
+    }
+
+    #[test]
+    fn compile_bindings_for_app_compiles_hold_bindings() {
+        let raw = vec![
+            hold_binding(
+                crate::config::TriggerButton::RightClick,
+                Vec::new(),
+                crate::config::GestureStep::WheelUp,
+                "pageup",
+                Some("Scroll Up"),
+            ),
+            hold_binding(
+                crate::config::TriggerButton::RightClick,
+                vec![crate::config::GestureStep::Right],
+                crate::config::GestureStep::WheelDown,
+                "pagedown",
+                Some("Scroll Down"),
+            ),
+        ];
+
+        let compiled = compile_bindings_for_app("default", &raw);
+        assert!(compiled.release_bindings.is_empty());
+        assert_eq!(compiled.hold_bindings.len(), 2);
+    }
+
+    #[test]
+    fn compile_bindings_for_app_skips_duplicate_hold_trigger_and_step() {
+        let raw = vec![
+            hold_binding(
+                crate::config::TriggerButton::RightClick,
+                Vec::new(),
+                crate::config::GestureStep::WheelUp,
+                "a",
+                Some("First"),
+            ),
+            hold_binding(
+                crate::config::TriggerButton::RightClick,
+                Vec::new(),
+                crate::config::GestureStep::WheelUp,
+                "b",
+                Some("Second"),
+            ),
+        ];
+
+        let compiled = compile_bindings_for_app("default", &raw);
+        assert_eq!(compiled.hold_bindings.len(), 1);
+        assert_eq!(compiled.hold_bindings[0].label, "First");
+    }
+
+    #[test]
+    fn compile_bindings_for_app_skips_hold_binding_with_non_wheel_step() {
+        let raw = vec![hold_binding(
+            crate::config::TriggerButton::RightClick,
+            Vec::new(),
+            crate::config::GestureStep::LeftClick,
+            "a",
+            Some("Invalid"),
+        )];
+
+        let compiled = compile_bindings_for_app("default", &raw);
+        assert!(compiled.hold_bindings.is_empty());
+    }
+
+    #[test]
+    fn compile_bindings_for_app_skips_hold_sequence_containing_trigger_step() {
+        let raw = vec![hold_binding(
+            crate::config::TriggerButton::RightClick,
+            vec![crate::config::GestureStep::RightClick],
+            crate::config::GestureStep::WheelUp,
+            "a",
+            Some("Invalid"),
+        )];
+
+        let compiled = compile_bindings_for_app("default", &raw);
+        assert!(compiled.hold_bindings.is_empty());
+    }
 }
