@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { createRootRoute, redirect } from "@tanstack/react-router"
+import { createRootRoute, Outlet, redirect } from "@tanstack/react-router"
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools"
 import { Toaster } from "sonner"
 import { ThemeProvider } from "@/components/theme-provider"
@@ -16,6 +16,7 @@ const RootLayout = () => (
   <QueryClientProvider client={queryClient}>
     <ThemeProvider defaultTheme="system" storageKey="zero-gesture-theme">
       <ConfigEventBridge />
+      <Outlet />
       <TanStackRouterDevtools position="top-right" />
       <Toaster />
     </ThemeProvider>

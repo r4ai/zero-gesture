@@ -2,12 +2,12 @@ import { tv } from "tailwind-variants"
 
 const panel = tv({
   slots: {
-    root: "flex h-full flex-col overflow-hidden bg-background text-foreground",
+    root: "flex h-full flex-1 flex-col overflow-hidden bg-background text-foreground",
     header:
-      "flex items-center justify-between border-border border-b px-6 py-4",
-    body: "flex-1 overflow-y-auto p-6",
+      "flex h-16 items-center justify-between border-border border-b px-6",
+    body: "flex-1 overflow-y-auto px-6 py-6",
     footer:
-      "flex items-center justify-end border-border border-t bg-background-muted px-6 py-4",
+      "flex h-16 items-center justify-end gap-3 border-border border-t bg-background px-6",
   },
 })
 
