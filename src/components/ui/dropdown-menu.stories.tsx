@@ -4,6 +4,7 @@ import { useState } from "react"
 import { DropdownMenu, MenuItem } from "./dropdown-menu"
 
 const meta: Meta<typeof DropdownMenu> = {
+  title: "UI/DropdownMenu",
   component: DropdownMenu,
   parameters: {
     layout: "centered",
