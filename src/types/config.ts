@@ -35,24 +35,48 @@ export type GestureStep =
   | "right_click"
   | "middle_click"
 
+/** Valid step values for `hold`-mode bindings (backend-supported only). */
+export type HoldStep = "wheel_up" | "wheel_down"
+
 /** Timing mode for a gesture binding. */
 export type GestureMode = "release" | "hold"
 
-/** Gesture pattern definition. */
-export interface GesturePattern {
+/** Base properties shared by all gesture patterns. */
+interface GesturePatternBase {
   /** Button that starts this gesture. */
   trigger: TriggerButton
-  /** Whether this gesture runs on trigger release or while holding trigger. */
-  mode?: GestureMode
   /**
    * Ordered sequence of movement/input steps.
    * - `release` mode: the full sequence to match on trigger release.
    * - `hold` mode: current recognized sequence required before `step` fires.
    */
-  sequence?: GestureStep[]
-  /** Single non-movement input step for `hold` mode. */
-  step?: GestureStep
+  sequence: GestureStep[]
 }
+
+/**
+ * Gesture pattern definition for `release`-mode bindings.
+ * `mode` defaults to `"release"` when omitted, and `step` is not used.
+ */
+interface ReleaseGesturePattern extends GesturePatternBase {
+  /** Whether this gesture runs on trigger release (default) or while holding trigger. */
+  mode: "release"
+  /** `step` is not applicable for release-mode bindings. */
+  step?: never
+}
+
+/**
+ * Gesture pattern definition for `hold`-mode bindings.
+ * Backend only supports `wheel_up` / `wheel_down` for `step`.
+ */
+interface HoldGesturePattern extends GesturePatternBase {
+  /** Whether this gesture runs while holding the trigger. */
+  mode: "hold"
+  /** Single non-movement input step for `hold` mode (wheel only). */
+  step: HoldStep
+}
+
+/** Gesture pattern definition. */
+export type GesturePattern = ReleaseGesturePattern | HoldGesturePattern
 
 /** An action that can be triggered by a gesture. */
 export type Action = { type: "keyboard"; keys: string[] }
@@ -234,4 +258,4 @@ export const DEFAULTS = {
   bindings: {
     default: DEFAULT_BINDINGS,
   },
-} as const
+} satisfies AppConfig
