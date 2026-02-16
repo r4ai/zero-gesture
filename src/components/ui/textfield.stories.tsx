@@ -51,9 +51,15 @@ export const Disabled: Story = {
 }
 
 export const WithIcon: Story = {
+  render: (args) => (
+    <TextField {...args}>
+      <TextField.Icon slot="start">
+        <Search />
+      </TextField.Icon>
+    </TextField>
+  ),
   args: {
     placeholder: "Search...",
-    startIcon: <Search />,
     "aria-label": "Search",
   },
 }

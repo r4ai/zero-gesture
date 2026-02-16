@@ -9,16 +9,34 @@ import {
 
 import { tv } from "tailwind-variants"
 
-const input = tv({
-  base: "flex h-10 w-full rounded-md border border-border bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:font-medium file:text-sm placeholder:text-foreground-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50",
+const textfield = tv({
+  slots: {
+    label: "mb-1.5 block font-medium text-foreground text-sm",
+    inputGroup: "group relative flex items-center",
+    input:
+      "flex h-10 w-full rounded-md border border-border bg-background px-3 py-2 text-foreground text-sm transition-colors file:border-0 file:bg-transparent file:font-medium file:text-sm placeholder:text-foreground-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-foreground focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:bg-background-muted disabled:opacity-50 group-has-[[slot=end]]:pr-9 group-has-[[slot=start]]:pl-9",
+    icon: "pointer-events-none absolute top-1/2 size-5 shrink-0 -translate-y-1/2 text-foreground-muted *:size-full",
+    description: "mt-1.5 text-foreground-muted text-sm",
+    error: "mt-1.5 font-medium text-destructive text-sm",
+  },
+  variants: {
+    iconPosition: {
+      start: {
+        icon: "left-3",
+      },
+      end: {
+        icon: "right-3",
+      },
+    },
+  },
 })
 
-export interface TextFieldProps extends RATextFieldProps {
+export interface TextFieldProps extends Omit<RATextFieldProps, "children"> {
   label?: string
   description?: string
   errorMessage?: string | ((validation: ValidationResult) => string)
   placeholder?: string
-  startIcon?: React.ReactNode
+  children?: React.ReactNode
 }
 
 export function TextField({
@@ -26,32 +44,44 @@ export function TextField({
   description,
   errorMessage,
   placeholder,
-  startIcon,
   className,
+  children,
   ...props
 }: TextFieldProps) {
+  const {
+    label: labelClass,
+    inputGroup: inputGroupClass,
+    input: inputClass,
+    description: descriptionClass,
+    error: errorClass,
+  } = textfield()
+
   return (
     <RATextField className={className} {...props}>
-      {label && <RALabel>{label}</RALabel>}
-      <div className="relative">
-        {startIcon && (
-          <div className="absolute top-2.5 left-2.5 h-4 w-4 text-foreground-muted">
-            {startIcon}
-          </div>
-        )}
-        <RAInput
-          className={input({ className: startIcon ? "pl-9" : "" })}
-          placeholder={placeholder}
-        />
+      {label && <RALabel className={labelClass()}>{label}</RALabel>}
+      <div className={inputGroupClass()}>
+        {children}
+        <RAInput className={inputClass()} placeholder={placeholder} />
       </div>
-      {description && (
-        <p className="text-foreground-muted text-sm">{description}</p>
-      )}
+      {description && <p className={descriptionClass()}>{description}</p>}
       {errorMessage && (
-        <FieldError className="font-medium text-destructive text-sm">
-          {errorMessage}
-        </FieldError>
+        <FieldError className={errorClass()}>{errorMessage}</FieldError>
       )}
     </RATextField>
+  )
+}
+
+TextField.Icon = ({
+  slot = "start",
+  className: userClassName,
+  ...props
+}: React.ComponentProps<"div"> & { slot?: "start" | "end" }) => {
+  const { icon: iconClass } = textfield({ iconPosition: slot })
+  return (
+    <div
+      {...props}
+      slot={slot}
+      className={iconClass({ className: userClassName })}
+    />
   )
 }
