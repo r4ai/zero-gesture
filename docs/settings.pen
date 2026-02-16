@@ -4899,15 +4899,6 @@
               ]
             }
           ]
-        },
-        {
-          "type": "text",
-          "id": "Y0110",
-          "fill": "#000000",
-          "content": "Component/Nav Sidebar Compact",
-          "fontFamily": "Inter",
-          "fontSize": 12,
-          "fontWeight": "normal"
         }
       ]
     },
