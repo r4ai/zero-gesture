@@ -122,6 +122,100 @@ export interface AppConfig {
 /** Hard maximum number of steps inside one gesture sequence. */
 export const MAX_GESTURE_STEPS = 8
 
+/** Default gesture bindings matching the Rust backend. */
+export const DEFAULT_BINDINGS: GestureBinding[] = [
+  {
+    label: "Back",
+    gesture: {
+      trigger: "right_click",
+      mode: "release",
+      sequence: ["left"],
+    },
+    action: { type: "keyboard", keys: ["alt", "left"] },
+  },
+  {
+    label: "Forward",
+    gesture: {
+      trigger: "right_click",
+      mode: "release",
+      sequence: ["right"],
+    },
+    action: { type: "keyboard", keys: ["alt", "right"] },
+  },
+  {
+    label: "Scroll Up",
+    gesture: {
+      trigger: "right_click",
+      mode: "release",
+      sequence: ["up"],
+    },
+    action: { type: "keyboard", keys: ["pageup"] },
+  },
+  {
+    label: "Scroll Down",
+    gesture: {
+      trigger: "right_click",
+      mode: "release",
+      sequence: ["down"],
+    },
+    action: { type: "keyboard", keys: ["pagedown"] },
+  },
+  {
+    label: "Top of Page",
+    gesture: {
+      trigger: "right_click",
+      mode: "release",
+      sequence: ["down", "up"],
+    },
+    action: { type: "keyboard", keys: ["ctrl", "home"] },
+  },
+  {
+    label: "Bottom of Page",
+    gesture: {
+      trigger: "right_click",
+      mode: "release",
+      sequence: ["up", "down"],
+    },
+    action: { type: "keyboard", keys: ["ctrl", "end"] },
+  },
+  {
+    label: "Next Tab",
+    gesture: {
+      trigger: "right_click",
+      mode: "release",
+      sequence: ["up", "right"],
+    },
+    action: { type: "keyboard", keys: ["ctrl", "tab"] },
+  },
+  {
+    label: "Previous Tab",
+    gesture: {
+      trigger: "right_click",
+      mode: "release",
+      sequence: ["up", "left"],
+    },
+    action: { type: "keyboard", keys: ["ctrl", "shift", "tab"] },
+  },
+  {
+    label: "Reload",
+    gesture: {
+      trigger: "right_click",
+      mode: "release",
+      sequence: ["right", "down"],
+    },
+    action: { type: "keyboard", keys: ["ctrl", "r"] },
+  },
+  {
+    label: "Close Tab",
+    gesture: {
+      trigger: "right_click",
+      mode: "release",
+      sequence: ["down", "right"],
+    },
+    action: { type: "keyboard", keys: ["ctrl", "w"] },
+  },
+]
+
 /** Default configuration values matching the Rust backend. */
 export const DEFAULTS = {
   enabled: true,
@@ -137,5 +231,7 @@ export const DEFAULTS = {
   label_font_weight: 400,
   label_padding: 24.0,
   apps: {},
-  bindings: {},
+  bindings: {
+    default: DEFAULT_BINDINGS,
+  },
 } as const
