@@ -160,7 +160,21 @@ fn resolve_safety_timeout_ms(value: u32) -> u32 {
 /// - sequence must not be empty
 /// - sequence length must be `<= AppConfig::MAX_GESTURE_STEPS`
 /// - sequence must not include the trigger click step itself
+/// - sequence must not contain consecutive identical directional move steps
 /// - duplicate `(trigger, sequence)` entries are ignored after the first
+fn has_consecutive_same_move_steps(sequence: &[crate::config::GestureStep]) -> bool {
+    sequence.windows(2).any(|pair| {
+        pair[0] == pair[1]
+            && matches!(
+                pair[0],
+                crate::config::GestureStep::Up
+                    | crate::config::GestureStep::Down
+                    | crate::config::GestureStep::Left
+                    | crate::config::GestureStep::Right
+            )
+    })
+}
+
 fn compile_bindings_for_app(
     app_id: &str,
     app_bindings: &[crate::config::GestureBinding],
@@ -182,6 +196,13 @@ fn compile_bindings_for_app(
                 binding.gesture.sequence.len(),
                 AppConfig::MAX_GESTURE_STEPS,
                 app_id
+            );
+            continue;
+        }
+        if has_consecutive_same_move_steps(&binding.gesture.sequence) {
+            warn!(
+                "Gesture sequence contains consecutive identical directional moves {:?} in app {:?}, skipping",
+                binding.gesture.sequence, app_id
             );
             continue;
         }
@@ -420,5 +441,33 @@ mod tests {
 
         let compiled = compile_bindings_for_app("default", &raw);
         assert!(compiled.is_empty());
+    }
+
+    #[test]
+    fn compile_bindings_for_app_skips_sequence_with_consecutive_same_mouse_move() {
+        let raw = vec![
+            binding(
+                crate::config::TriggerButton::RightClick,
+                vec![
+                    crate::config::GestureStep::Left,
+                    crate::config::GestureStep::Left,
+                ],
+                "a",
+                Some("Invalid"),
+            ),
+            binding(
+                crate::config::TriggerButton::RightClick,
+                vec![
+                    crate::config::GestureStep::Left,
+                    crate::config::GestureStep::Up,
+                ],
+                "b",
+                Some("Valid"),
+            ),
+        ];
+
+        let compiled = compile_bindings_for_app("default", &raw);
+        assert_eq!(compiled.len(), 1);
+        assert_eq!(compiled[0].label, "Valid");
     }
 }
