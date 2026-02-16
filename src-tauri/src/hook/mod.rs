@@ -35,7 +35,9 @@
 //!   │       side effects: TrackPoint, optional UpdateLabel, suppress=false
 //!   ├─ WheelUp / WheelDown
 //!   │    -> Gesturing
-//!   │       side effects: add input step, optional UpdateLabel, suppress=true
+//!   │       side effects:
+//!   │       - if hold binding exists: request_execute immediately, suppress=true
+//!   │       - else: add input step, optional UpdateLabel, suppress=true
 //!   ├─ ButtonDown(any button)
 //!   │    -> Gesturing
 //!   │       side effects: add input step, optional UpdateLabel, suppress=true
@@ -46,6 +48,7 @@
 //!   │    -> Idle
 //!   │       side effects: suppress=true, EndGesture,
 //!   │       - if sequence matched: request_execute
+//!   │       - else if hold wheel action fired in this session: no replay
 //!   │       - else if unmatched and travel distance <= replay threshold:
 //!   │         request_replay
 //!   ├─ Other
@@ -82,7 +85,8 @@ use crate::overlay::OverlayCommand;
 use crate::SharedConfig;
 
 use app_match::{
-    compile_matcher, AppBindingSet, CompiledApp, CompiledGestureBinding, CompiledMatcher,
+    compile_matcher, AppBindingSet, CompiledApp, CompiledGestureBinding, CompiledHoldBinding,
+    CompiledMatcher,
 };
 use state::HookConfig;
 use trigger::TriggerButton;
@@ -189,11 +193,20 @@ fn resolve_safety_timeout_ms(value: u32) -> u32 {
 /// Compile and validate one app's raw gesture bindings.
 ///
 /// Validation rules:
-/// - sequence must not be empty
-/// - sequence length must be `<= AppConfig::MAX_GESTURE_STEPS`
-/// - sequence must not include the trigger click step itself
-/// - sequence must not contain consecutive identical directional move steps
-/// - duplicate `(trigger, sequence)` entries are ignored after the first
+/// - `release` mode:
+///   - sequence must not be empty
+///   - sequence length must be `<= AppConfig::MAX_GESTURE_STEPS`
+///   - sequence must not include the trigger click step itself
+///   - sequence must not contain consecutive identical directional move steps
+///   - duplicate `(trigger, sequence)` entries are ignored after the first
+/// - `hold` mode:
+///   - step must be present
+///   - only `wheel_up` / `wheel_down` are currently supported
+///   - sequence length must be `<= AppConfig::MAX_GESTURE_STEPS`
+///   - sequence must not include the trigger click step itself
+///   - sequence must not contain consecutive identical directional move steps
+///   - duplicate `(trigger, sequence, step)` entries are ignored after the first
+///   - sequence can be empty (wildcard) or specific (state-scoped hold)
 fn has_consecutive_same_move_steps(sequence: &[crate::config::GestureStep]) -> bool {
     sequence.windows(2).any(|pair| {
         pair[0] == pair[1]
@@ -207,69 +220,146 @@ fn has_consecutive_same_move_steps(sequence: &[crate::config::GestureStep]) -> b
     })
 }
 
+fn is_supported_hold_step(step: crate::config::GestureStep) -> bool {
+    matches!(
+        step,
+        crate::config::GestureStep::WheelUp | crate::config::GestureStep::WheelDown
+    )
+}
+
 fn compile_bindings_for_app(
     app_id: &str,
     app_bindings: &[crate::config::GestureBinding],
-) -> Vec<CompiledGestureBinding> {
-    let mut bindings: Vec<CompiledGestureBinding> = Vec::new();
-    let mut seen: HashSet<(TriggerButton, Vec<crate::config::GestureStep>)> = HashSet::new();
+) -> AppBindingSet {
+    let mut release_bindings: Vec<CompiledGestureBinding> = Vec::new();
+    let mut hold_bindings: Vec<CompiledHoldBinding> = Vec::new();
+    let mut seen_release: HashSet<(TriggerButton, Vec<crate::config::GestureStep>)> =
+        HashSet::new();
+    let mut seen_hold: HashSet<(
+        TriggerButton,
+        Vec<crate::config::GestureStep>,
+        crate::config::GestureStep,
+    )> = HashSet::new();
 
     for binding in app_bindings {
-        if binding.gesture.sequence.is_empty() {
-            warn!(
-                "Empty gesture sequence in bindings for app {:?}, skipping",
-                app_id
-            );
-            continue;
-        }
-        if binding.gesture.sequence.len() > AppConfig::MAX_GESTURE_STEPS {
-            warn!(
-                "Gesture sequence too long ({} > {}) in app {:?}, skipping",
-                binding.gesture.sequence.len(),
-                AppConfig::MAX_GESTURE_STEPS,
-                app_id
-            );
-            continue;
-        }
-        if has_consecutive_same_move_steps(&binding.gesture.sequence) {
-            warn!(
-                "Gesture sequence contains consecutive identical directional moves {:?} in app {:?}, skipping",
-                binding.gesture.sequence, app_id
-            );
-            continue;
-        }
-
         let trigger = TriggerButton::from_config(&binding.gesture.trigger);
-        let trigger_step = trigger.to_step();
-        if binding.gesture.sequence.contains(&trigger_step) {
-            warn!(
-                "Gesture sequence contains its own trigger step {:?} in app {:?}, skipping",
-                trigger_step, app_id
-            );
-            continue;
-        }
+        let label = binding
+            .label
+            .clone()
+            .unwrap_or_else(|| generate_label(&binding.action));
 
-        let sequence = binding.gesture.sequence.clone();
-        if !seen.insert((trigger, sequence.clone())) {
-            warn!(
-                "Duplicate gesture binding for trigger={:?}, sequence={:?} in app {:?}, skipping",
-                trigger, sequence, app_id
-            );
-            continue;
-        }
+        match binding.gesture.mode {
+            crate::config::GestureMode::Release => {
+                if binding.gesture.sequence.is_empty() {
+                    warn!(
+                        "Empty release gesture sequence in bindings for app {:?}, skipping",
+                        app_id
+                    );
+                    continue;
+                }
+                if binding.gesture.sequence.len() > AppConfig::MAX_GESTURE_STEPS {
+                    warn!(
+                        "Release gesture sequence too long ({} > {}) in app {:?}, skipping",
+                        binding.gesture.sequence.len(),
+                        AppConfig::MAX_GESTURE_STEPS,
+                        app_id
+                    );
+                    continue;
+                }
+                if has_consecutive_same_move_steps(&binding.gesture.sequence) {
+                    warn!(
+                        "Release gesture sequence contains consecutive identical directional moves {:?} in app {:?}, skipping",
+                        binding.gesture.sequence, app_id
+                    );
+                    continue;
+                }
 
-        bindings.push(CompiledGestureBinding {
-            trigger,
-            sequence,
-            action: binding.action.clone(),
-            label: binding
-                .label
-                .clone()
-                .unwrap_or_else(|| generate_label(&binding.action)),
-        });
+                let trigger_step = trigger.to_step();
+                if binding.gesture.sequence.contains(&trigger_step) {
+                    warn!(
+                        "Release gesture sequence contains its own trigger step {:?} in app {:?}, skipping",
+                        trigger_step, app_id
+                    );
+                    continue;
+                }
+
+                let sequence = binding.gesture.sequence.clone();
+                if !seen_release.insert((trigger, sequence.clone())) {
+                    warn!(
+                        "Duplicate release gesture binding for trigger={:?}, sequence={:?} in app {:?}, skipping",
+                        trigger, sequence, app_id
+                    );
+                    continue;
+                }
+
+                release_bindings.push(CompiledGestureBinding {
+                    trigger,
+                    sequence,
+                    action: binding.action.clone(),
+                    label,
+                });
+            }
+            crate::config::GestureMode::Hold => {
+                if binding.gesture.sequence.len() > AppConfig::MAX_GESTURE_STEPS {
+                    warn!(
+                        "Hold gesture sequence too long ({} > {}) in app {:?}, skipping",
+                        binding.gesture.sequence.len(),
+                        AppConfig::MAX_GESTURE_STEPS,
+                        app_id
+                    );
+                    continue;
+                }
+                if has_consecutive_same_move_steps(&binding.gesture.sequence) {
+                    warn!(
+                        "Hold gesture sequence contains consecutive identical directional moves {:?} in app {:?}, skipping",
+                        binding.gesture.sequence, app_id
+                    );
+                    continue;
+                }
+                let trigger_step = trigger.to_step();
+                if binding.gesture.sequence.contains(&trigger_step) {
+                    warn!(
+                        "Hold gesture sequence contains its own trigger step {:?} in app {:?}, skipping",
+                        trigger_step, app_id
+                    );
+                    continue;
+                }
+
+                let Some(step) = binding.gesture.step else {
+                    warn!("Hold gesture is missing step in app {:?}, skipping", app_id);
+                    continue;
+                };
+                if !is_supported_hold_step(step) {
+                    warn!(
+                        "Unsupported hold step {:?} in app {:?}, skipping",
+                        step, app_id
+                    );
+                    continue;
+                }
+                let sequence = binding.gesture.sequence.clone();
+                if !seen_hold.insert((trigger, sequence.clone(), step)) {
+                    warn!(
+                        "Duplicate hold gesture binding for trigger={:?}, sequence={:?}, step={:?} in app {:?}, skipping",
+                        trigger, sequence, step, app_id
+                    );
+                    continue;
+                }
+
+                hold_bindings.push(CompiledHoldBinding {
+                    trigger,
+                    sequence,
+                    step,
+                    action: binding.action.clone(),
+                    label,
+                });
+            }
+        }
     }
 
-    bindings
+    AppBindingSet {
+        release_bindings,
+        hold_bindings,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -351,10 +441,11 @@ pub fn spawn(
                 continue;
             }
 
-            let bindings = compile_bindings_for_app(app_id, app_bindings);
+            let binding_set = compile_bindings_for_app(app_id, app_bindings);
 
-            total_bindings += bindings.len();
-            binding_sets.insert(app_id.clone(), AppBindingSet { bindings });
+            total_bindings += binding_set.release_bindings.len();
+            total_bindings += binding_set.hold_bindings.len();
+            binding_sets.insert(app_id.clone(), binding_set);
         }
 
         // Ensure a "default" binding set is always present, since resolution
@@ -365,7 +456,8 @@ pub fn spawn(
             binding_sets.insert(
                 "default".to_string(),
                 AppBindingSet {
-                    bindings: Vec::new(),
+                    release_bindings: Vec::new(),
+                    hold_bindings: Vec::new(),
                 },
             );
         }
@@ -434,7 +526,31 @@ mod tests {
     ) -> crate::config::GestureBinding {
         crate::config::GestureBinding {
             label: label.map(ToString::to_string),
-            gesture: crate::config::GesturePattern { trigger, sequence },
+            gesture: crate::config::GesturePattern {
+                trigger,
+                mode: crate::config::GestureMode::Release,
+                sequence,
+                step: None,
+            },
+            action: keyboard_action(key),
+        }
+    }
+
+    fn hold_binding(
+        trigger: crate::config::TriggerButton,
+        sequence: Vec<crate::config::GestureStep>,
+        step: crate::config::GestureStep,
+        key: &str,
+        label: Option<&str>,
+    ) -> crate::config::GestureBinding {
+        crate::config::GestureBinding {
+            label: label.map(ToString::to_string),
+            gesture: crate::config::GesturePattern {
+                trigger,
+                mode: crate::config::GestureMode::Hold,
+                sequence,
+                step: Some(step),
+            },
             action: keyboard_action(key),
         }
     }
@@ -457,9 +573,9 @@ mod tests {
         ];
 
         let compiled = compile_bindings_for_app("default", &raw);
-        assert_eq!(compiled.len(), 1);
-        assert_eq!(compiled[0].label, "First");
-        assert_eq!(compiled[0].action, keyboard_action("a"));
+        assert_eq!(compiled.release_bindings.len(), 1);
+        assert_eq!(compiled.release_bindings[0].label, "First");
+        assert_eq!(compiled.release_bindings[0].action, keyboard_action("a"));
     }
 
     #[test]
@@ -472,7 +588,7 @@ mod tests {
         )];
 
         let compiled = compile_bindings_for_app("default", &raw);
-        assert!(compiled.is_empty());
+        assert!(compiled.release_bindings.is_empty());
     }
 
     #[test]
@@ -499,7 +615,83 @@ mod tests {
         ];
 
         let compiled = compile_bindings_for_app("default", &raw);
-        assert_eq!(compiled.len(), 1);
-        assert_eq!(compiled[0].label, "Valid");
+        assert_eq!(compiled.release_bindings.len(), 1);
+        assert_eq!(compiled.release_bindings[0].label, "Valid");
+    }
+
+    #[test]
+    fn compile_bindings_for_app_compiles_hold_bindings() {
+        let raw = vec![
+            hold_binding(
+                crate::config::TriggerButton::RightClick,
+                Vec::new(),
+                crate::config::GestureStep::WheelUp,
+                "pageup",
+                Some("Scroll Up"),
+            ),
+            hold_binding(
+                crate::config::TriggerButton::RightClick,
+                vec![crate::config::GestureStep::Right],
+                crate::config::GestureStep::WheelDown,
+                "pagedown",
+                Some("Scroll Down"),
+            ),
+        ];
+
+        let compiled = compile_bindings_for_app("default", &raw);
+        assert!(compiled.release_bindings.is_empty());
+        assert_eq!(compiled.hold_bindings.len(), 2);
+    }
+
+    #[test]
+    fn compile_bindings_for_app_skips_duplicate_hold_trigger_and_step() {
+        let raw = vec![
+            hold_binding(
+                crate::config::TriggerButton::RightClick,
+                Vec::new(),
+                crate::config::GestureStep::WheelUp,
+                "a",
+                Some("First"),
+            ),
+            hold_binding(
+                crate::config::TriggerButton::RightClick,
+                Vec::new(),
+                crate::config::GestureStep::WheelUp,
+                "b",
+                Some("Second"),
+            ),
+        ];
+
+        let compiled = compile_bindings_for_app("default", &raw);
+        assert_eq!(compiled.hold_bindings.len(), 1);
+        assert_eq!(compiled.hold_bindings[0].label, "First");
+    }
+
+    #[test]
+    fn compile_bindings_for_app_skips_hold_binding_with_non_wheel_step() {
+        let raw = vec![hold_binding(
+            crate::config::TriggerButton::RightClick,
+            Vec::new(),
+            crate::config::GestureStep::LeftClick,
+            "a",
+            Some("Invalid"),
+        )];
+
+        let compiled = compile_bindings_for_app("default", &raw);
+        assert!(compiled.hold_bindings.is_empty());
+    }
+
+    #[test]
+    fn compile_bindings_for_app_skips_hold_sequence_containing_trigger_step() {
+        let raw = vec![hold_binding(
+            crate::config::TriggerButton::RightClick,
+            vec![crate::config::GestureStep::RightClick],
+            crate::config::GestureStep::WheelUp,
+            "a",
+            Some("Invalid"),
+        )];
+
+        let compiled = compile_bindings_for_app("default", &raw);
+        assert!(compiled.hold_bindings.is_empty());
     }
 }

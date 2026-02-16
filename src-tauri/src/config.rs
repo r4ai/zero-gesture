@@ -76,13 +76,34 @@ pub enum GestureStep {
     MiddleClick,
 }
 
+/// Timing mode for a gesture binding.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum GestureMode {
+    /// Execute action when trigger button is released and sequence matches.
+    #[default]
+    Release,
+    /// Execute action immediately while trigger button is held.
+    Hold,
+}
+
 /// Gesture pattern definition.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GesturePattern {
     /// Button that starts this gesture.
     pub trigger: TriggerButton,
+    /// Whether this gesture runs on trigger release or while holding trigger.
+    #[serde(default)]
+    pub mode: GestureMode,
     /// Ordered sequence of movement/input steps.
+    ///
+    /// - `release` mode: the full sequence to match on trigger release.
+    /// - `hold` mode: current recognized sequence required before `step` fires.
+    #[serde(default)]
     pub sequence: Vec<GestureStep>,
+    /// Single non-movement input step for `hold` mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<GestureStep>,
 }
 
 /// A single gesture binding.
@@ -94,6 +115,7 @@ pub struct GesturePattern {
 ///   "label": "Reload",
 ///   "gesture": {
 ///     "trigger": "right_click",
+///     "mode": "release",
 ///     "sequence": ["right", "down"]
 ///   },
 ///   "action": {
@@ -222,7 +244,9 @@ impl AppConfig {
             GestureBinding {
                 gesture: GesturePattern {
                     trigger: TriggerButton::RightClick,
+                    mode: GestureMode::Release,
                     sequence: vec![GestureStep::Left],
+                    step: None,
                 },
                 action: Action::Keyboard {
                     keys: vec!["alt".to_string(), "left".to_string()],
@@ -232,7 +256,9 @@ impl AppConfig {
             GestureBinding {
                 gesture: GesturePattern {
                     trigger: TriggerButton::RightClick,
+                    mode: GestureMode::Release,
                     sequence: vec![GestureStep::Right],
+                    step: None,
                 },
                 action: Action::Keyboard {
                     keys: vec!["alt".to_string(), "right".to_string()],
@@ -242,7 +268,9 @@ impl AppConfig {
             GestureBinding {
                 gesture: GesturePattern {
                     trigger: TriggerButton::RightClick,
+                    mode: GestureMode::Release,
                     sequence: vec![GestureStep::Up],
+                    step: None,
                 },
                 action: Action::Keyboard {
                     keys: vec!["pageup".to_string()],
@@ -252,7 +280,9 @@ impl AppConfig {
             GestureBinding {
                 gesture: GesturePattern {
                     trigger: TriggerButton::RightClick,
+                    mode: GestureMode::Release,
                     sequence: vec![GestureStep::Down],
+                    step: None,
                 },
                 action: Action::Keyboard {
                     keys: vec!["pagedown".to_string()],
@@ -262,7 +292,9 @@ impl AppConfig {
             GestureBinding {
                 gesture: GesturePattern {
                     trigger: TriggerButton::RightClick,
+                    mode: GestureMode::Release,
                     sequence: vec![GestureStep::Down, GestureStep::Up],
+                    step: None,
                 },
                 action: Action::Keyboard {
                     keys: vec!["ctrl".to_string(), "home".to_string()],
@@ -272,7 +304,9 @@ impl AppConfig {
             GestureBinding {
                 gesture: GesturePattern {
                     trigger: TriggerButton::RightClick,
+                    mode: GestureMode::Release,
                     sequence: vec![GestureStep::Up, GestureStep::Down],
+                    step: None,
                 },
                 action: Action::Keyboard {
                     keys: vec!["ctrl".to_string(), "end".to_string()],
@@ -282,7 +316,9 @@ impl AppConfig {
             GestureBinding {
                 gesture: GesturePattern {
                     trigger: TriggerButton::RightClick,
+                    mode: GestureMode::Release,
                     sequence: vec![GestureStep::Up, GestureStep::Right],
+                    step: None,
                 },
                 action: Action::Keyboard {
                     keys: vec!["ctrl".to_string(), "tab".to_string()],
@@ -292,7 +328,9 @@ impl AppConfig {
             GestureBinding {
                 gesture: GesturePattern {
                     trigger: TriggerButton::RightClick,
+                    mode: GestureMode::Release,
                     sequence: vec![GestureStep::Up, GestureStep::Left],
+                    step: None,
                 },
                 action: Action::Keyboard {
                     keys: vec!["ctrl".to_string(), "shift".to_string(), "tab".to_string()],
@@ -302,7 +340,9 @@ impl AppConfig {
             GestureBinding {
                 gesture: GesturePattern {
                     trigger: TriggerButton::RightClick,
+                    mode: GestureMode::Release,
                     sequence: vec![GestureStep::Right, GestureStep::Down],
+                    step: None,
                 },
                 action: Action::Keyboard {
                     keys: vec!["ctrl".to_string(), "r".to_string()],
@@ -312,7 +352,9 @@ impl AppConfig {
             GestureBinding {
                 gesture: GesturePattern {
                     trigger: TriggerButton::RightClick,
+                    mode: GestureMode::Release,
                     sequence: vec![GestureStep::Down, GestureStep::Right],
+                    step: None,
                 },
                 action: Action::Keyboard {
                     keys: vec!["ctrl".to_string(), "w".to_string()],
@@ -535,6 +577,66 @@ mod tests {
         );
         assert_eq!(defaults[0].label, Some("Reload".to_string()));
         assert_eq!(defaults[1].label, None);
+    }
+
+    #[test]
+    fn deserialize_config_with_hold_binding() {
+        let raw = r##"{
+            "bindings": {
+                "default": [
+                    {
+                        "label": "Scroll Up While Hold",
+                        "gesture": {
+                            "trigger": "right_click",
+                            "mode": "hold",
+                            "step": "wheel_up"
+                        },
+                        "action": {
+                            "type": "keyboard",
+                            "keys": ["pageup"]
+                        }
+                    }
+                ]
+            }
+        }"##;
+
+        let cfg: AppConfig = serde_json::from_str(raw).expect("hold binding config must parse");
+        let defaults = get_default_bindings(&cfg);
+        assert_eq!(defaults.len(), 1);
+        assert_eq!(defaults[0].gesture.mode, GestureMode::Hold);
+        assert_eq!(defaults[0].gesture.step, Some(GestureStep::WheelUp));
+        assert!(defaults[0].gesture.sequence.is_empty());
+    }
+
+    #[test]
+    fn deserialize_config_with_sequence_scoped_hold_binding() {
+        let raw = r##"{
+            "bindings": {
+                "default": [
+                    {
+                        "label": "Right then WheelDown",
+                        "gesture": {
+                            "trigger": "right_click",
+                            "mode": "hold",
+                            "sequence": ["right"],
+                            "step": "wheel_down"
+                        },
+                        "action": {
+                            "type": "keyboard",
+                            "keys": ["pagedown"]
+                        }
+                    }
+                ]
+            }
+        }"##;
+
+        let cfg: AppConfig =
+            serde_json::from_str(raw).expect("sequence-scoped hold binding must parse");
+        let defaults = get_default_bindings(&cfg);
+        assert_eq!(defaults.len(), 1);
+        assert_eq!(defaults[0].gesture.mode, GestureMode::Hold);
+        assert_eq!(defaults[0].gesture.sequence, vec![GestureStep::Right]);
+        assert_eq!(defaults[0].gesture.step, Some(GestureStep::WheelDown));
     }
 
     #[test]

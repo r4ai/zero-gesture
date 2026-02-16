@@ -7,7 +7,7 @@ use crate::executor::Action;
 use crate::gesture::GestureRecognizer;
 use crate::overlay::OverlayCommand;
 
-use super::app_match::{AppBindingSet, CompiledGestureBinding};
+use super::app_match::{AppBindingSet, CompiledGestureBinding, CompiledHoldBinding};
 use super::trigger::TriggerButton;
 
 /// Snapshot of configuration relevant to the hook, taken once at startup.
@@ -33,9 +33,13 @@ impl HookConfig {
     /// Returns `true` when any binding (default or app-specific) can start with `trigger`.
     pub(super) fn has_any_binding_for_trigger(&self, trigger: TriggerButton) -> bool {
         self.binding_sets.values().any(|set| {
-            set.bindings
+            set.release_bindings
                 .iter()
                 .any(|binding| binding.trigger == trigger)
+                || set
+                    .hold_bindings
+                    .iter()
+                    .any(|binding| binding.trigger == trigger)
         })
     }
 
@@ -49,18 +53,26 @@ impl HookConfig {
         if let Some(app_id) = matched_app {
             if let Some(set) = self.binding_sets.get(app_id) {
                 if set
-                    .bindings
+                    .release_bindings
                     .iter()
                     .any(|binding| binding.trigger == trigger)
+                    || set
+                        .hold_bindings
+                        .iter()
+                        .any(|binding| binding.trigger == trigger)
                 {
                     return true;
                 }
             }
         }
         self.binding_sets.get("default").is_some_and(|set| {
-            set.bindings
+            set.release_bindings
                 .iter()
                 .any(|binding| binding.trigger == trigger)
+                || set
+                    .hold_bindings
+                    .iter()
+                    .any(|binding| binding.trigger == trigger)
         })
     }
 
@@ -74,7 +86,7 @@ impl HookConfig {
         if let Some(app_id) = matched_app {
             if let Some(set) = self.binding_sets.get(app_id) {
                 if let Some(binding) = set
-                    .bindings
+                    .release_bindings
                     .iter()
                     .find(|binding| binding.trigger == trigger && binding.sequence == sequence)
                 {
@@ -84,10 +96,30 @@ impl HookConfig {
         }
 
         self.binding_sets.get("default").and_then(|set| {
-            set.bindings
+            set.release_bindings
                 .iter()
                 .find(|binding| binding.trigger == trigger && binding.sequence == sequence)
         })
+    }
+
+    /// Resolve exact hold binding using app-specific set first, then `"default"`.
+    pub(super) fn resolve_hold_binding(
+        &self,
+        trigger: TriggerButton,
+        sequence: &[GestureStep],
+        step: GestureStep,
+        matched_app: Option<&str>,
+    ) -> Option<&CompiledHoldBinding> {
+        if let Some(binding) = resolve_hold_from_set(
+            matched_app.and_then(|app_id| self.binding_sets.get(app_id)),
+            trigger,
+            sequence,
+            step,
+        ) {
+            return Some(binding);
+        }
+
+        resolve_hold_from_set(self.binding_sets.get("default"), trigger, sequence, step)
     }
 
     /// Resolve label for the current sequence, respecting app-specific precedence.
@@ -128,6 +160,8 @@ pub(super) enum GestureState {
         last_label: Option<String>,
         /// Matched app ID for per-app bindings, if any.
         matched_app: Option<String>,
+        /// Whether a hold wheel action fired in this session.
+        used_hold_wheel_action: bool,
     },
 }
 
@@ -140,10 +174,10 @@ pub(super) enum MouseEvent {
     ButtonUp(TriggerButton),
     /// Pointer movement.
     MouseMove,
-    /// Mouse wheel delta > 0.
-    WheelUp,
-    /// Mouse wheel delta < 0.
-    WheelDown,
+    /// Mouse wheel delta > 0 with notch count.
+    WheelUp(u16),
+    /// Mouse wheel delta < 0 with notch count.
+    WheelDown(u16),
     /// Any event ignored by the state machine.
     Other,
 }
@@ -264,7 +298,7 @@ pub(super) struct EventEffect {
     /// If set, replay the original trigger-button operation.
     pub(super) request_replay: Option<ReplayRequest>,
     /// If set, the given action should be executed.
-    pub(super) request_execute: Option<Action>,
+    pub(super) request_execute: Option<ExecuteRequest>,
 }
 
 /// Mouse operation to replay when gesture matching fails.
@@ -276,6 +310,15 @@ pub(super) struct ReplayRequest {
     pub(super) down_at: (i32, i32),
     /// Cursor position where the trigger was released.
     pub(super) up_at: (i32, i32),
+}
+
+/// Action execution request produced by the state machine.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ExecuteRequest {
+    /// Action to execute.
+    pub(super) action: Action,
+    /// Number of times to execute the action.
+    pub(super) repeat: u16,
 }
 
 /// Pure-logic core of the gesture state machine.
@@ -334,6 +377,7 @@ pub(super) fn process_event_pure(
                         travel_distance_px: 0.0,
                         last_label: None,
                         matched_app,
+                        used_hold_wheel_action: false,
                     };
                 }
             }
@@ -346,6 +390,7 @@ pub(super) fn process_event_pure(
             travel_distance_px,
             last_label,
             matched_app: gesture_app,
+            used_hold_wheel_action,
             ..
         } => {
             *travel_distance_px += segment_distance(*last_point, pt);
@@ -367,28 +412,30 @@ pub(super) fn process_event_pure(
                         last_label,
                     );
                 }
-                MouseEvent::WheelUp => {
-                    recognizer.add_input_step(GestureStep::WheelUp);
-                    effect.suppress = true;
-                    update_label_if_needed(
+                MouseEvent::WheelUp(steps) => {
+                    process_wheel_input(
                         &mut effect,
                         config,
                         *trigger,
                         recognizer,
                         gesture_app.as_deref(),
                         last_label,
+                        used_hold_wheel_action,
+                        GestureStep::WheelUp,
+                        steps,
                     );
                 }
-                MouseEvent::WheelDown => {
-                    recognizer.add_input_step(GestureStep::WheelDown);
-                    effect.suppress = true;
-                    update_label_if_needed(
+                MouseEvent::WheelDown(steps) => {
+                    process_wheel_input(
                         &mut effect,
                         config,
                         *trigger,
                         recognizer,
                         gesture_app.as_deref(),
                         last_label,
+                        used_hold_wheel_action,
+                        GestureStep::WheelDown,
+                        steps,
                     );
                 }
                 MouseEvent::ButtonDown(button) => {
@@ -416,10 +463,16 @@ pub(super) fn process_event_pure(
                             {
                                 info!("Gesture matched sequence: {:?}", sequence);
                                 matched = true;
-                                effect.request_execute = Some(binding.action.clone());
+                                effect.request_execute = Some(ExecuteRequest {
+                                    action: binding.action.clone(),
+                                    repeat: 1,
+                                });
                             }
                         }
-                        if !matched && should_replay_unmatched(*travel_distance_px, config) {
+                        if !matched
+                            && !*used_hold_wheel_action
+                            && should_replay_unmatched(*travel_distance_px, config)
+                        {
                             effect.request_replay = Some(ReplayRequest {
                                 trigger: *trigger,
                                 down_at: *origin,
@@ -449,6 +502,60 @@ fn segment_distance(a: (i32, i32), b: (i32, i32)) -> f64 {
     dx.hypot(dy)
 }
 
+fn process_wheel_input(
+    effect: &mut EventEffect,
+    config: &HookConfig,
+    trigger: TriggerButton,
+    recognizer: &mut GestureRecognizer,
+    matched_app: Option<&str>,
+    last_label: &mut Option<String>,
+    used_hold_wheel_action: &mut bool,
+    step: GestureStep,
+    steps: u16,
+) {
+    if steps == 0 {
+        return;
+    }
+
+    let current_sequence = recognizer.current_sequence().unwrap_or_default();
+    if let Some(binding) =
+        config.resolve_hold_binding(trigger, &current_sequence, step, matched_app)
+    {
+        effect.suppress = true;
+        *used_hold_wheel_action = true;
+        effect.request_execute = Some(ExecuteRequest {
+            action: binding.action.clone(),
+            repeat: steps,
+        });
+        update_label_direct(effect, last_label, Some(binding.label.clone()));
+        return;
+    }
+
+    for _ in 0..usize::from(steps) {
+        recognizer.add_input_step(step);
+    }
+    effect.suppress = true;
+    update_label_if_needed(effect, config, trigger, recognizer, matched_app, last_label);
+}
+
+fn resolve_hold_from_set<'a>(
+    set: Option<&'a AppBindingSet>,
+    trigger: TriggerButton,
+    sequence: &[GestureStep],
+    step: GestureStep,
+) -> Option<&'a CompiledHoldBinding> {
+    let set = set?;
+    if let Some(exact) = set.hold_bindings.iter().find(|binding| {
+        binding.trigger == trigger && binding.step == step && binding.sequence == sequence
+    }) {
+        return Some(exact);
+    }
+
+    set.hold_bindings.iter().find(|binding| {
+        binding.trigger == trigger && binding.step == step && binding.sequence.is_empty()
+    })
+}
+
 fn update_label_if_needed(
     effect: &mut EventEffect,
     config: &HookConfig,
@@ -463,6 +570,19 @@ fn update_label_if_needed(
             .cloned()
     });
 
+    if *last_label != next_label {
+        effect
+            .overlay_commands
+            .push(OverlayCommand::UpdateLabel(next_label.clone()));
+        *last_label = next_label;
+    }
+}
+
+fn update_label_direct(
+    effect: &mut EventEffect,
+    last_label: &mut Option<String>,
+    next_label: Option<String>,
+) {
     if *last_label != next_label {
         effect
             .overlay_commands
@@ -488,7 +608,7 @@ pub(super) fn check_safety_timeout(state: &GestureState, tick: u32, timeout_ms: 
 mod tests {
     use super::*;
     use crate::executor::Action;
-    use crate::hook::app_match::CompiledApp;
+    use crate::hook::app_match::{CompiledApp, CompiledHoldBinding};
 
     fn key_action(key: &str) -> Action {
         Action::Keyboard {
@@ -510,7 +630,30 @@ mod tests {
         }
     }
 
+    fn hold_binding(
+        trigger: TriggerButton,
+        sequence: Vec<GestureStep>,
+        step: GestureStep,
+        action: Action,
+        label: &str,
+    ) -> CompiledHoldBinding {
+        CompiledHoldBinding {
+            trigger,
+            sequence,
+            step,
+            action,
+            label: label.to_string(),
+        }
+    }
+
     fn test_config(default_bindings: Vec<CompiledGestureBinding>) -> HookConfig {
+        test_config_with_hold(default_bindings, Vec::new())
+    }
+
+    fn test_config_with_hold(
+        default_bindings: Vec<CompiledGestureBinding>,
+        hold_bindings: Vec<CompiledHoldBinding>,
+    ) -> HookConfig {
         HookConfig {
             safety_timeout_ms: 2000,
             min_segment_px: 1,
@@ -522,7 +665,8 @@ mod tests {
             binding_sets: HashMap::from([(
                 "default".to_string(),
                 AppBindingSet {
-                    bindings: default_bindings,
+                    release_bindings: default_bindings,
+                    hold_bindings,
                 },
             )]),
         }
@@ -628,7 +772,10 @@ mod tests {
 
         assert!(effect.suppress);
         assert!(effect.request_replay.is_none());
-        assert_eq!(effect.request_execute, Some(action));
+        assert_eq!(
+            effect.request_execute,
+            Some(ExecuteRequest { action, repeat: 1 })
+        );
         assert!(matches!(state, GestureState::Idle));
         assert!(matches!(
             effect.overlay_commands.last(),
@@ -912,7 +1059,14 @@ mod tests {
             100,
             None,
         );
-        process_event_pure(&mut state, &config, MouseEvent::WheelUp, (0, 0), 110, None);
+        process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::WheelUp(1),
+            (0, 0),
+            110,
+            None,
+        );
         let effect = process_event_pure(
             &mut state,
             &config,
@@ -922,7 +1076,200 @@ mod tests {
             None,
         );
 
-        assert_eq!(effect.request_execute, Some(action));
+        assert_eq!(
+            effect.request_execute,
+            Some(ExecuteRequest { action, repeat: 1 })
+        );
+    }
+
+    #[test]
+    fn hold_wheel_executes_immediately_with_repeat_count() {
+        let action = key_action("pageup");
+        let config = test_config_with_hold(
+            Vec::new(),
+            vec![hold_binding(
+                TriggerButton::Right,
+                Vec::new(),
+                GestureStep::WheelUp,
+                action.clone(),
+                "PageUp",
+            )],
+        );
+        let mut state = GestureState::Idle;
+
+        process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::ButtonDown(TriggerButton::Right),
+            (0, 0),
+            100,
+            None,
+        );
+        let effect = process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::WheelUp(2),
+            (0, 0),
+            110,
+            None,
+        );
+
+        assert!(effect.suppress);
+        assert_eq!(
+            effect.request_execute,
+            Some(ExecuteRequest { action, repeat: 2 })
+        );
+    }
+
+    #[test]
+    fn hold_wheel_usage_disables_unmatched_trigger_replay() {
+        let config = test_config_with_hold(
+            Vec::new(),
+            vec![hold_binding(
+                TriggerButton::Right,
+                Vec::new(),
+                GestureStep::WheelDown,
+                key_action("pagedown"),
+                "PageDown",
+            )],
+        );
+        let mut state = GestureState::Idle;
+
+        process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::ButtonDown(TriggerButton::Right),
+            (100, 100),
+            1000,
+            None,
+        );
+        process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::WheelDown(1),
+            (100, 100),
+            1010,
+            None,
+        );
+        let effect = process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::ButtonUp(TriggerButton::Right),
+            (100, 100),
+            1020,
+            None,
+        );
+
+        assert!(effect.suppress);
+        assert!(effect.request_execute.is_none());
+        assert!(effect.request_replay.is_none());
+    }
+
+    #[test]
+    fn hold_wheel_can_require_specific_sequence_state() {
+        let action = key_action("pagedown");
+        let config = test_config_with_hold(
+            Vec::new(),
+            vec![hold_binding(
+                TriggerButton::Right,
+                vec![GestureStep::Right],
+                GestureStep::WheelDown,
+                action.clone(),
+                "Right + WheelDown",
+            )],
+        );
+        let mut state = GestureState::Idle;
+
+        process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::ButtonDown(TriggerButton::Right),
+            (100, 100),
+            1000,
+            None,
+        );
+        process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::MouseMove,
+            (150, 100),
+            1010,
+            None,
+        );
+        let effect = process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::WheelDown(1),
+            (150, 100),
+            1020,
+            None,
+        );
+
+        assert!(effect.suppress);
+        assert_eq!(
+            effect.request_execute,
+            Some(ExecuteRequest { action, repeat: 1 })
+        );
+    }
+
+    #[test]
+    fn hold_wheel_specific_sequence_overrides_wildcard_binding() {
+        let wildcard_action = key_action("a");
+        let specific_action = key_action("b");
+        let config = test_config_with_hold(
+            Vec::new(),
+            vec![
+                hold_binding(
+                    TriggerButton::Right,
+                    Vec::new(),
+                    GestureStep::WheelDown,
+                    wildcard_action,
+                    "Any WheelDown",
+                ),
+                hold_binding(
+                    TriggerButton::Right,
+                    vec![GestureStep::Right],
+                    GestureStep::WheelDown,
+                    specific_action.clone(),
+                    "Right WheelDown",
+                ),
+            ],
+        );
+        let mut state = GestureState::Idle;
+
+        process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::ButtonDown(TriggerButton::Right),
+            (100, 100),
+            1000,
+            None,
+        );
+        process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::MouseMove,
+            (150, 100),
+            1010,
+            None,
+        );
+        let effect = process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::WheelDown(1),
+            (150, 100),
+            1020,
+            None,
+        );
+
+        assert!(effect.suppress);
+        assert_eq!(
+            effect.request_execute,
+            Some(ExecuteRequest {
+                action: specific_action,
+                repeat: 1
+            })
+        );
     }
 
     #[test]
@@ -972,23 +1319,25 @@ mod tests {
                 (
                     "default".to_string(),
                     AppBindingSet {
-                        bindings: vec![binding(
+                        release_bindings: vec![binding(
                             TriggerButton::Right,
                             vec![GestureStep::Right],
                             default_action.clone(),
                             "Default",
                         )],
+                        hold_bindings: Vec::new(),
                     },
                 ),
                 (
                     "explorer".to_string(),
                     AppBindingSet {
-                        bindings: vec![binding(
+                        release_bindings: vec![binding(
                             TriggerButton::Right,
                             vec![GestureStep::Right],
                             app_action.clone(),
                             "App",
                         )],
+                        hold_bindings: Vec::new(),
                     },
                 ),
             ]),

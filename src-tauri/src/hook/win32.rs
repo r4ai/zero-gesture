@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -60,7 +61,7 @@ struct HookThreadState {
     /// Deferred trigger-button replay request from hook callback.
     pending_replay: Option<ReplayRequest>,
     /// Deferred action to execute from the message loop.
-    pending_action: Option<Action>,
+    pending_actions: VecDeque<Action>,
 }
 
 // Thread-local storage is required because `WH_MOUSE_LL` callback signature
@@ -115,7 +116,7 @@ pub(super) fn run_loop_win32(
                 config: hook_config,
                 overlay_tx,
                 pending_replay: None,
-                pending_action: None,
+                pending_actions: VecDeque::new(),
             });
         });
 
@@ -247,10 +248,15 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
         }
     }
 
-    if let Some(action) = effect.request_execute {
-        hs.pending_action = Some(action);
-        unsafe {
-            PostThreadMessageW(GetCurrentThreadId(), WM_EXECUTE_ACTION, 0, 0);
+    if let Some(execute_request) = effect.request_execute {
+        let should_post = hs.pending_actions.is_empty();
+        for _ in 0..usize::from(execute_request.repeat) {
+            hs.pending_actions.push_back(execute_request.action.clone());
+        }
+        if should_post {
+            unsafe {
+                PostThreadMessageW(GetCurrentThreadId(), WM_EXECUTE_ACTION, 0, 0);
+            }
         }
     }
 
@@ -269,10 +275,11 @@ fn to_mouse_event(msg: u32, info: &MSLLHOOKSTRUCT) -> MouseEvent {
         WM_MOUSEMOVE => MouseEvent::MouseMove,
         WM_MOUSEWHEEL => {
             let delta = wheel_delta(info.mouseData);
+            let steps = wheel_steps(delta);
             if delta > 0 {
-                MouseEvent::WheelUp
+                MouseEvent::WheelUp(steps)
             } else if delta < 0 {
-                MouseEvent::WheelDown
+                MouseEvent::WheelDown(steps)
             } else {
                 MouseEvent::Other
             }
@@ -284,6 +291,17 @@ fn to_mouse_event(msg: u32, info: &MSLLHOOKSTRUCT) -> MouseEvent {
 /// Extract signed wheel delta from `MSLLHOOKSTRUCT::mouseData`.
 fn wheel_delta(mouse_data: u32) -> i16 {
     ((mouse_data >> 16) & 0xFFFF) as i16
+}
+
+/// Convert wheel delta into positive notch count (`>= 1` when delta != 0).
+fn wheel_steps(delta: i16) -> u16 {
+    const WHEEL_DELTA: u16 = 120;
+    if delta == 0 {
+        return 0;
+    }
+    let raw = delta.unsigned_abs();
+    let steps = raw / WHEEL_DELTA;
+    steps.max(1)
 }
 
 /// Safety timer handler.
@@ -313,12 +331,15 @@ fn handle_safety_timer() {
 
 /// Execute pending action from `WM_EXECUTE_ACTION`.
 fn handle_execute_action() {
-    let action = HOOK_STATE.with(|cell| {
+    let actions = HOOK_STATE.with(|cell| {
         let mut borrow = cell.borrow_mut();
-        borrow.as_mut().and_then(|hs| hs.pending_action.take())
+        let Some(hs) = borrow.as_mut() else {
+            return Vec::new();
+        };
+        hs.pending_actions.drain(..).collect::<Vec<_>>()
     });
 
-    if let Some(action) = action {
+    for action in actions {
         debug!("Executing bound action: {:?}", action);
         executor::execute(&action);
     }

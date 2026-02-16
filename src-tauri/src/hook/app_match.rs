@@ -15,10 +15,21 @@ pub(super) struct CompiledGestureBinding {
     pub(super) label: String,
 }
 
+/// A compiled hold binding used by the hook thread.
+#[derive(Debug, Clone)]
+pub(super) struct CompiledHoldBinding {
+    pub(super) trigger: TriggerButton,
+    pub(super) sequence: Vec<GestureStep>,
+    pub(super) step: GestureStep,
+    pub(super) action: Action,
+    pub(super) label: String,
+}
+
 /// Pre-parsed bindings for one app (or the `"default"` set).
 #[derive(Debug, Clone)]
 pub(super) struct AppBindingSet {
-    pub(super) bindings: Vec<CompiledGestureBinding>,
+    pub(super) release_bindings: Vec<CompiledGestureBinding>,
+    pub(super) hold_bindings: Vec<CompiledHoldBinding>,
 }
 
 /// Compiled matching logic for a single [`AppMatcher`](crate::config::AppMatcher).
