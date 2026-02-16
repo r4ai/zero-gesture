@@ -46,7 +46,7 @@
 //!   │    -> Idle
 //!   │       side effects: suppress=true, EndGesture,
 //!   │       - if sequence matched: request_execute
-//!   │       - else if unmatched and release distance <= replay threshold:
+//!   │       - else if unmatched and travel distance <= replay threshold:
 //!   │         request_replay
 //!   ├─ Other
 //!   │    -> Gesturing (no transition, suppress=false)
