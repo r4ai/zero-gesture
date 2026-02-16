@@ -2018,65 +2018,11 @@
                       "fontWeight": "600"
                     },
                     {
-                      "type": "frame",
-                      "id": "QwRhd",
-                      "name": "Action Type Select",
-                      "width": "fill_container",
-                      "height": 40,
-                      "fill": "$background-card",
-                      "cornerRadius": 8,
-                      "stroke": {
-                        "align": "inside",
-                        "thickness": 1,
-                        "fill": "$border"
-                      },
-                      "padding": [
-                        0,
-                        14
-                      ],
-                      "justifyContent": "space_between",
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "frame",
-                          "id": "Ej0Dv",
-                          "name": "actionTypeLeft",
-                          "gap": 8,
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "icon_font",
-                              "id": "M1mWl",
-                              "name": "actionTypeIcon",
-                              "width": 15,
-                              "height": 15,
-                              "iconFontName": "keyboard",
-                              "iconFontFamily": "lucide",
-                              "fill": "$foreground-muted"
-                            },
-                            {
-                              "type": "text",
-                              "id": "EkdGt",
-                              "name": "actionTypeText",
-                              "fill": "$foreground",
-                              "content": "Keyboard Shortcut",
-                              "fontFamily": "DM Sans",
-                              "fontSize": 13,
-                              "fontWeight": "500"
-                            }
-                          ]
-                        },
-                        {
-                          "type": "icon_font",
-                          "id": "qgmVc",
-                          "name": "actionTypeChevron",
-                          "width": 14,
-                          "height": 14,
-                          "iconFontName": "chevron-down",
-                          "iconFontFamily": "lucide",
-                          "fill": "$foreground-subtle"
-                        }
-                      ]
+                      "id": "mJkvU",
+                      "type": "ref",
+                      "ref": "QwRhd",
+                      "x": 0,
+                      "y": 26
                     }
                   ]
                 },
@@ -3745,43 +3691,11 @@
           "alignItems": "center",
           "children": [
             {
-              "type": "frame",
-              "id": "B5M3Y",
-              "name": "Add App Btn",
-              "width": "fill_container",
-              "height": 32,
-              "fill": "$transparent",
-              "cornerRadius": 6,
-              "stroke": {
-                "align": "inside",
-                "thickness": 1,
-                "fill": "$border-muted"
-              },
-              "gap": 6,
-              "justifyContent": "center",
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "icon_font",
-                  "id": "Ul8Ph",
-                  "name": "addAppIcon",
-                  "width": 13,
-                  "height": 13,
-                  "iconFontName": "plus",
-                  "iconFontFamily": "lucide",
-                  "fill": "$foreground-subtle"
-                },
-                {
-                  "type": "text",
-                  "id": "3rEl4",
-                  "name": "addAppLabel",
-                  "fill": "$foreground-muted",
-                  "content": "Add Application",
-                  "fontFamily": "DM Sans",
-                  "fontSize": 12,
-                  "fontWeight": "500"
-                }
-              ]
+              "id": "YJtyo",
+              "type": "ref",
+              "ref": "YJCAp",
+              "x": 8,
+              "y": 8
             }
           ]
         }
@@ -4534,7 +4448,7 @@
                       "type": "text",
                       "id": "MGQoJ",
                       "name": "Trigger Label",
-                      "fill": "#71717a",
+                      "fill": "$foreground-subtle",
                       "content": "Trigger Button",
                       "fontFamily": "DM Sans",
                       "fontSize": 12,
@@ -4542,81 +4456,38 @@
                     },
                     {
                       "type": "frame",
-                      "id": "fixZ7",
+                      "id": "JjH31",
                       "name": "Trigger Row",
                       "width": "fill_container",
                       "gap": 8,
                       "alignItems": "center",
                       "children": [
                         {
-                          "type": "frame",
-                          "id": "5udFf",
-                          "name": "Trigger Select",
+                          "id": "ZCFfO",
+                          "type": "ref",
+                          "ref": "QwRhd",
+                          "x": 0,
+                          "y": 0,
                           "width": "fill_container",
                           "height": 40,
-                          "fill": "#1c1c1f",
-                          "cornerRadius": 8,
-                          "stroke": {
-                            "align": "inside",
-                            "thickness": 1,
-                            "fill": "#27272a"
-                          },
-                          "padding": [
-                            0,
-                            14
-                          ],
-                          "justifyContent": "space_between",
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "kqB58",
-                              "name": "Trigger Select Text",
-                              "fill": "#fafaf9",
-                              "content": "Right Click",
-                              "fontFamily": "DM Sans",
-                              "fontSize": 13,
-                              "fontWeight": "500"
+                          "flipX": false,
+                          "flipY": false,
+                          "layout": "horizontal",
+                          "descendants": {
+                            "M1mWl": {
+                              "enabled": false
                             },
-                            {
-                              "type": "icon_font",
-                              "id": "oDvjk",
-                              "name": "Trigger Select Chevron",
-                              "width": 14,
-                              "height": 14,
-                              "iconFontName": "chevron-down",
-                              "iconFontFamily": "lucide",
-                              "fill": "#71717a"
+                            "EkdGt": {
+                              "content": "Right Click"
                             }
-                          ]
+                          }
                         },
                         {
-                          "type": "frame",
-                          "id": "ncbnC",
-                          "name": "Pick From Input",
-                          "width": 40,
-                          "height": 40,
-                          "fill": "#00000000",
-                          "cornerRadius": 8,
-                          "stroke": {
-                            "align": "inside",
-                            "thickness": 1,
-                            "fill": "#3f3f46"
-                          },
-                          "justifyContent": "center",
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "icon_font",
-                              "id": "isdkB",
-                              "name": "Pick Input Icon",
-                              "width": 16,
-                              "height": 16,
-                              "iconFontName": "keyboard",
-                              "iconFontFamily": "lucide",
-                              "fill": "#a1a1aa"
-                            }
-                          ]
+                          "id": "TxDKL",
+                          "type": "ref",
+                          "ref": "1IZUB",
+                          "x": 531,
+                          "y": 0
                         }
                       ]
                     },
@@ -4624,7 +4495,7 @@
                       "type": "text",
                       "id": "0pNA5",
                       "name": "Trigger Hint",
-                      "fill": "#52525b",
+                      "fill": "$foreground-faint",
                       "content": "Use the keyboard icon to capture from live input.",
                       "fontFamily": "DM Sans",
                       "fontSize": 11,
@@ -4650,7 +4521,7 @@
                           "type": "text",
                           "id": "a68Vz",
                           "name": "Mode Label",
-                          "fill": "#71717a",
+                          "fill": "$foreground-subtle",
                           "content": "Gesture Mode",
                           "fontFamily": "DM Sans",
                           "fontSize": 12,
@@ -4694,7 +4565,7 @@
                       "type": "text",
                       "id": "zlyaF",
                       "name": "Mode Hint",
-                      "fill": "#52525b",
+                      "fill": "$foreground-faint",
                       "content": "Hold: fires while the trigger is held. Release: fires on trigger release.",
                       "fontFamily": "DM Sans",
                       "fontSize": 11,
@@ -4714,7 +4585,7 @@
                       "type": "text",
                       "id": "VdmPx",
                       "name": "Builder Title",
-                      "fill": "#71717a",
+                      "fill": "$foreground-subtle",
                       "content": "Sequence",
                       "fontFamily": "DM Sans",
                       "fontSize": 12,
@@ -4724,7 +4595,7 @@
                       "type": "text",
                       "id": "pFULf",
                       "name": "Builder Hint",
-                      "fill": "#52525b",
+                      "fill": "$foreground-faint",
                       "content": "Ordered steps recognized before the final step fires. Up to 8 steps.",
                       "fontFamily": "DM Sans",
                       "fontSize": 11,
@@ -4732,363 +4603,63 @@
                     },
                     {
                       "type": "frame",
-                      "id": "q3e5j",
+                      "id": "o7fdS",
                       "name": "Sequence List",
                       "width": "fill_container",
                       "layout": "vertical",
                       "gap": 8,
                       "children": [
                         {
-                          "type": "frame",
-                          "id": "Punxo",
-                          "name": "Step 1",
-                          "width": "fill_container",
-                          "height": 40,
-                          "gap": 8,
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "8bhnU",
-                              "name": "Step 1 Index",
-                              "fill": "#71717a",
-                              "textGrowth": "fixed-width",
-                              "width": 16,
-                              "content": "1",
-                              "textAlign": "center",
-                              "fontFamily": "DM Sans",
-                              "fontSize": 12,
-                              "fontWeight": "600"
+                          "id": "Ttg89",
+                          "type": "ref",
+                          "ref": "hnDAi",
+                          "x": 0,
+                          "y": 0,
+                          "descendants": {
+                            "yxJkq": {
+                              "enabled": false
                             },
-                            {
-                              "type": "frame",
-                              "id": "dKWxr",
-                              "name": "Step 1 Type",
-                              "width": 160,
-                              "height": 40,
-                              "fill": "#1c1c1f",
-                              "cornerRadius": 8,
-                              "stroke": {
-                                "align": "inside",
-                                "thickness": 1,
-                                "fill": "#27272a"
-                              },
-                              "padding": [
-                                0,
-                                12
-                              ],
-                              "justifyContent": "space_between",
-                              "alignItems": "center",
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "J3CRZ",
-                                  "name": "Step 1 Type Text",
-                                  "fill": "#fafaf9",
-                                  "content": "Mouse Move",
-                                  "fontFamily": "DM Sans",
-                                  "fontSize": 13,
-                                  "fontWeight": "500"
-                                },
-                                {
-                                  "type": "icon_font",
-                                  "id": "pi8Pj",
-                                  "name": "Type 1 Chevron",
-                                  "width": 14,
-                                  "height": 14,
-                                  "iconFontName": "chevron-down",
-                                  "iconFontFamily": "lucide",
-                                  "fill": "#71717a"
-                                }
-                              ]
-                            },
-                            {
-                              "type": "frame",
-                              "id": "dbB0W",
-                              "name": "Step 1 Value",
-                              "width": "fill_container",
-                              "height": 40,
-                              "fill": "#1c1c1f",
-                              "cornerRadius": 8,
-                              "stroke": {
-                                "align": "inside",
-                                "thickness": 1,
-                                "fill": "#27272a"
-                              },
-                              "padding": [
-                                0,
-                                12
-                              ],
-                              "justifyContent": "space_between",
-                              "alignItems": "center",
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "kreLq",
-                                  "name": "Step 1 Value Text",
-                                  "fill": "#fafaf9",
-                                  "content": "Left",
-                                  "fontFamily": "DM Sans",
-                                  "fontSize": 13,
-                                  "fontWeight": "500"
-                                },
-                                {
-                                  "type": "icon_font",
-                                  "id": "Y9YjX",
-                                  "name": "Value 1 Chevron",
-                                  "width": 14,
-                                  "height": 14,
-                                  "iconFontName": "chevron-down",
-                                  "iconFontFamily": "lucide",
-                                  "fill": "#71717a"
-                                }
-                              ]
+                            "yxJkq/SQgBj": {
+                              "x": 12,
+                              "y": 12
                             }
-                          ]
+                          }
                         },
                         {
-                          "type": "frame",
-                          "id": "BNnfQ",
-                          "name": "Step 2",
-                          "width": "fill_container",
-                          "height": 40,
-                          "gap": 8,
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "akNl1",
-                              "name": "Step 2 Index",
-                              "fill": "#71717a",
-                              "textGrowth": "fixed-width",
-                              "width": 16,
-                              "content": "2",
-                              "textAlign": "center",
-                              "fontFamily": "DM Sans",
-                              "fontSize": 12,
-                              "fontWeight": "600"
+                          "id": "Ig2eL",
+                          "type": "ref",
+                          "ref": "hnDAi",
+                          "x": 0,
+                          "y": 48,
+                          "descendants": {
+                            "3ZMdB": {
+                              "content": "2"
                             },
-                            {
-                              "type": "frame",
-                              "id": "lh884",
-                              "name": "Step 2 Type",
-                              "width": 160,
-                              "height": 40,
-                              "fill": "#1c1c1f",
-                              "cornerRadius": 8,
-                              "stroke": {
-                                "align": "inside",
-                                "thickness": 1,
-                                "fill": "#27272a"
-                              },
-                              "padding": [
-                                0,
-                                12
-                              ],
-                              "justifyContent": "space_between",
-                              "alignItems": "center",
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "VzXLb",
-                                  "name": "Step 2 Type Text",
-                                  "fill": "#fafaf9",
-                                  "content": "Mouse Move",
-                                  "fontFamily": "DM Sans",
-                                  "fontSize": 13,
-                                  "fontWeight": "500"
-                                },
-                                {
-                                  "type": "icon_font",
-                                  "id": "KNDkl",
-                                  "name": "Type 2 Chevron",
-                                  "width": 14,
-                                  "height": 14,
-                                  "iconFontName": "chevron-down",
-                                  "iconFontFamily": "lucide",
-                                  "fill": "#71717a"
-                                }
-                              ]
+                            "K6yGL/EkdGt": {
+                              "content": "Right"
                             },
-                            {
-                              "type": "frame",
-                              "id": "x0vIU",
-                              "name": "Step 2 Value",
-                              "width": "fill_container",
-                              "height": 40,
-                              "fill": "#1c1c1f",
-                              "cornerRadius": 8,
-                              "stroke": {
-                                "align": "inside",
-                                "thickness": 1,
-                                "fill": "#27272a"
-                              },
-                              "padding": [
-                                0,
-                                12
-                              ],
-                              "justifyContent": "space_between",
-                              "alignItems": "center",
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "dcuyg",
-                                  "name": "Step 2 Value Text",
-                                  "fill": "#fafaf9",
-                                  "content": "Right",
-                                  "fontFamily": "DM Sans",
-                                  "fontSize": 13,
-                                  "fontWeight": "500"
-                                },
-                                {
-                                  "type": "icon_font",
-                                  "id": "tkKcw",
-                                  "name": "Value 2 Chevron",
-                                  "width": 14,
-                                  "height": 14,
-                                  "iconFontName": "chevron-down",
-                                  "iconFontFamily": "lucide",
-                                  "fill": "#71717a"
-                                }
-                              ]
+                            "yxJkq": {
+                              "enabled": false
                             }
-                          ]
+                          }
                         },
                         {
-                          "type": "frame",
-                          "id": "TpJy5",
-                          "name": "Step 4",
-                          "width": "fill_container",
-                          "height": 40,
-                          "gap": 8,
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "H3nNo",
-                              "name": "Step 4 Index",
-                              "fill": "#71717a",
-                              "textGrowth": "fixed-width",
-                              "width": 16,
-                              "content": "3",
-                              "textAlign": "center",
-                              "fontFamily": "DM Sans",
-                              "fontSize": 12,
-                              "fontWeight": "600"
+                          "id": "Y4qyk",
+                          "type": "ref",
+                          "ref": "hnDAi",
+                          "x": 0,
+                          "y": 96,
+                          "descendants": {
+                            "3ZMdB": {
+                              "content": "3"
                             },
-                            {
-                              "type": "frame",
-                              "id": "IuQjJ",
-                              "name": "Step 4 Type",
-                              "width": 160,
-                              "height": 40,
-                              "fill": "#1c1c1f",
-                              "cornerRadius": 8,
-                              "stroke": {
-                                "align": "inside",
-                                "thickness": 1,
-                                "fill": "#27272a"
-                              },
-                              "padding": [
-                                0,
-                                12
-                              ],
-                              "justifyContent": "space_between",
-                              "alignItems": "center",
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "J67eH",
-                                  "name": "Step 4 Type Text",
-                                  "fill": "#fafaf9",
-                                  "content": "Mouse Input",
-                                  "fontFamily": "DM Sans",
-                                  "fontSize": 13,
-                                  "fontWeight": "500"
-                                },
-                                {
-                                  "type": "icon_font",
-                                  "id": "OwGKi",
-                                  "name": "Type 4 Chevron",
-                                  "width": 14,
-                                  "height": 14,
-                                  "iconFontName": "chevron-down",
-                                  "iconFontFamily": "lucide",
-                                  "fill": "#71717a"
-                                }
-                              ]
+                            "UOSeB/EkdGt": {
+                              "content": "Muse Input"
                             },
-                            {
-                              "type": "frame",
-                              "id": "QxxWP",
-                              "name": "Step 4 Value",
-                              "width": "fill_container",
-                              "height": 40,
-                              "fill": "#1c1c1f",
-                              "cornerRadius": 8,
-                              "stroke": {
-                                "align": "inside",
-                                "thickness": 1,
-                                "fill": "#27272a"
-                              },
-                              "padding": [
-                                0,
-                                12
-                              ],
-                              "justifyContent": "space_between",
-                              "alignItems": "center",
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "haT5t",
-                                  "name": "Step 4 Value Text",
-                                  "fill": "#fafaf9",
-                                  "content": "Wheel Up",
-                                  "fontFamily": "DM Sans",
-                                  "fontSize": 13,
-                                  "fontWeight": "500"
-                                },
-                                {
-                                  "type": "icon_font",
-                                  "id": "IGTTI",
-                                  "name": "Value 4 Chevron",
-                                  "width": 14,
-                                  "height": 14,
-                                  "iconFontName": "chevron-down",
-                                  "iconFontFamily": "lucide",
-                                  "fill": "#71717a"
-                                }
-                              ]
-                            },
-                            {
-                              "type": "frame",
-                              "id": "5ImDz",
-                              "name": "Step 4 Pick From Input",
-                              "width": 40,
-                              "height": 40,
-                              "fill": "#00000000",
-                              "cornerRadius": 8,
-                              "stroke": {
-                                "align": "inside",
-                                "thickness": 1,
-                                "fill": "#3f3f46"
-                              },
-                              "justifyContent": "center",
-                              "alignItems": "center",
-                              "children": [
-                                {
-                                  "type": "icon_font",
-                                  "id": "L2WWJ",
-                                  "name": "Pick Input Icon",
-                                  "width": 16,
-                                  "height": 16,
-                                  "iconFontName": "keyboard",
-                                  "iconFontFamily": "lucide",
-                                  "fill": "#a1a1aa"
-                                }
-                              ]
+                            "K6yGL/EkdGt": {
+                              "content": "Wheel Up"
                             }
-                          ]
+                          }
                         }
                       ]
                     },
@@ -5109,12 +4680,12 @@
                           "id": "EyqhM",
                           "name": "Step Count",
                           "height": 28,
-                          "fill": "#1c1c1f",
+                          "fill": "$background-card",
                           "cornerRadius": 6,
                           "stroke": {
                             "align": "inside",
                             "thickness": 1,
-                            "fill": "#27272a"
+                            "fill": "$border"
                           },
                           "padding": [
                             0,
@@ -5135,45 +4706,17 @@
                           ]
                         },
                         {
-                          "type": "frame",
-                          "id": "T5cfv",
-                          "name": "Add Step",
-                          "height": 32,
-                          "fill": "#00000000",
-                          "cornerRadius": 6,
-                          "stroke": {
-                            "align": "inside",
-                            "thickness": 1,
-                            "fill": "#3f3f46"
-                          },
-                          "gap": 6,
-                          "padding": [
-                            0,
-                            12
-                          ],
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "icon_font",
-                              "id": "H4X3j",
-                              "name": "Add Step Icon",
-                              "width": 13,
-                              "height": 13,
-                              "iconFontName": "plus",
-                              "iconFontFamily": "lucide",
-                              "fill": "$foreground-muted"
-                            },
-                            {
-                              "type": "text",
-                              "id": "89O5I",
-                              "name": "Add Step Text",
-                              "fill": "$foreground-muted",
-                              "content": "Add Step",
-                              "fontFamily": "DM Sans",
-                              "fontSize": 12,
-                              "fontWeight": "500"
+                          "id": "9KIJN",
+                          "type": "ref",
+                          "ref": "YJCAp",
+                          "x": 475,
+                          "y": 2,
+                          "width": 96,
+                          "descendants": {
+                            "YcAJc": {
+                              "content": "Add Step"
                             }
-                          ]
+                          }
                         }
                       ]
                     },
@@ -5181,7 +4724,11 @@
                       "type": "text",
                       "id": "5j30S",
                       "name": "Limit Note",
+                      "flipY": true,
                       "fill": "#52525b",
+                      "textGrowth": "fixed-width-height",
+                      "width": 540,
+                      "height": 234,
                       "content": "Supported steps: Left / Right / Up / Down / Wheel Up / Wheel Down / Left Click / Right Click / Middle Click",
                       "fontFamily": "DM Sans",
                       "fontSize": 11,
@@ -5199,7 +4746,7 @@
                           "type": "text",
                           "id": "Vqy2X",
                           "name": "Step Section Label",
-                          "fill": "#71717a",
+                          "fill": "$foreground-subtle",
                           "content": "Step",
                           "fontFamily": "DM Sans",
                           "fontSize": 12,
@@ -6524,43 +6071,11 @@
           "alignItems": "center",
           "children": [
             {
-              "type": "frame",
-              "id": "AAUMf",
-              "name": "Add Gesture Btn",
-              "width": "fill_container",
-              "height": 32,
-              "fill": "$transparent",
-              "cornerRadius": 6,
-              "stroke": {
-                "align": "inside",
-                "thickness": 1,
-                "fill": "$border-muted"
-              },
-              "gap": 6,
-              "justifyContent": "center",
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "icon_font",
-                  "id": "VQMU9",
-                  "name": "addGestureIcon",
-                  "width": 13,
-                  "height": 13,
-                  "iconFontName": "plus",
-                  "iconFontFamily": "lucide",
-                  "fill": "$foreground-subtle"
-                },
-                {
-                  "type": "text",
-                  "id": "ItATP",
-                  "name": "addGestureText",
-                  "fill": "$foreground-muted",
-                  "content": "Add Gesture",
-                  "fontFamily": "DM Sans",
-                  "fontSize": 12,
-                  "fontWeight": "500"
-                }
-              ]
+              "id": "kEZYz",
+              "type": "ref",
+              "ref": "YJCAp",
+              "x": 8,
+              "y": 8
             }
           ]
         }
@@ -7987,6 +7502,212 @@
               "fontWeight": "500"
             }
           ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "QwRhd",
+      "x": 1382,
+      "y": -130,
+      "name": "Select",
+      "reusable": true,
+      "width": "fill_container(571)",
+      "height": 40,
+      "fill": "$background-card",
+      "cornerRadius": 8,
+      "stroke": {
+        "align": "inside",
+        "thickness": 1,
+        "fill": "$border"
+      },
+      "padding": [
+        0,
+        14
+      ],
+      "justifyContent": "space_between",
+      "alignItems": "center",
+      "children": [
+        {
+          "type": "frame",
+          "id": "Ej0Dv",
+          "name": "actionTypeLeft",
+          "gap": 8,
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon_font",
+              "id": "M1mWl",
+              "name": "actionTypeIcon",
+              "width": 15,
+              "height": 15,
+              "iconFontName": "keyboard",
+              "iconFontFamily": "lucide",
+              "fill": "$foreground-muted"
+            },
+            {
+              "type": "text",
+              "id": "EkdGt",
+              "name": "actionTypeText",
+              "fill": "$foreground",
+              "content": "Keyboard Shortcut",
+              "fontFamily": "DM Sans",
+              "fontSize": 13,
+              "fontWeight": "500"
+            }
+          ]
+        },
+        {
+          "type": "icon_font",
+          "id": "qgmVc",
+          "name": "actionTypeChevron",
+          "width": 14,
+          "height": 14,
+          "iconFontName": "chevron-down",
+          "iconFontFamily": "lucide",
+          "fill": "$foreground-subtle"
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "1IZUB",
+      "x": 2071,
+      "y": -201,
+      "name": "Pick From Input",
+      "reusable": true,
+      "width": 40,
+      "height": 40,
+      "fill": "$background-card",
+      "cornerRadius": 8,
+      "stroke": {
+        "align": "inside",
+        "thickness": 1,
+        "fill": "$border"
+      },
+      "justifyContent": "center",
+      "alignItems": "center",
+      "children": [
+        {
+          "type": "icon_font",
+          "id": "SQgBj",
+          "name": "Pick Input Icon",
+          "width": 16,
+          "height": 16,
+          "iconFontName": "keyboard",
+          "iconFontFamily": "lucide",
+          "fill": "$foreground-muted"
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "hnDAi",
+      "x": 2071,
+      "y": -130,
+      "name": "Step",
+      "reusable": true,
+      "width": "fill_container(571)",
+      "height": 40,
+      "gap": 8,
+      "alignItems": "center",
+      "children": [
+        {
+          "type": "text",
+          "id": "3ZMdB",
+          "name": "Step 1 Index",
+          "fill": "$foreground-subtle",
+          "textGrowth": "fixed-width",
+          "width": 16,
+          "content": "1",
+          "textAlign": "center",
+          "fontFamily": "DM Sans",
+          "fontSize": 12,
+          "fontWeight": "600"
+        },
+        {
+          "id": "UOSeB",
+          "type": "ref",
+          "ref": "QwRhd",
+          "x": 24,
+          "y": 0,
+          "flipX": false,
+          "flipY": false,
+          "width": 160,
+          "height": 40,
+          "textGrowth": "auto",
+          "descendants": {
+            "M1mWl": {
+              "enabled": false
+            },
+            "EkdGt": {
+              "content": "Mouse Move"
+            }
+          }
+        },
+        {
+          "id": "K6yGL",
+          "type": "ref",
+          "ref": "QwRhd",
+          "x": 192,
+          "y": 0,
+          "descendants": {
+            "M1mWl": {
+              "enabled": false
+            },
+            "EkdGt": {
+              "content": "Left"
+            }
+          }
+        },
+        {
+          "id": "yxJkq",
+          "type": "ref",
+          "ref": "1IZUB",
+          "x": 531,
+          "y": 0
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "YJCAp",
+      "x": 1382,
+      "y": -236,
+      "name": "Button Outline",
+      "reusable": true,
+      "width": "fill_container(160)",
+      "height": 32,
+      "fill": "$transparent",
+      "cornerRadius": 6,
+      "stroke": {
+        "align": "inside",
+        "thickness": 1,
+        "fill": "$border-muted"
+      },
+      "gap": 6,
+      "justifyContent": "center",
+      "alignItems": "center",
+      "children": [
+        {
+          "type": "icon_font",
+          "id": "lwaWE",
+          "name": "addAppIcon",
+          "width": 13,
+          "height": 13,
+          "iconFontName": "plus",
+          "iconFontFamily": "lucide",
+          "fill": "$foreground-subtle"
+        },
+        {
+          "type": "text",
+          "id": "YcAJc",
+          "name": "addAppLabel",
+          "fill": "$foreground-muted",
+          "content": "Add Application",
+          "fontFamily": "DM Sans",
+          "fontSize": 12,
+          "fontWeight": "500"
         }
       ]
     }
