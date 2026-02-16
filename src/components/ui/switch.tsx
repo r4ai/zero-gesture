@@ -4,12 +4,56 @@ import {
 } from "react-aria-components"
 import { tv } from "tailwind-variants"
 
-const switchTrack = tv({
-  base: "group inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent bg-background-muted shadow-sm transition-colors hover:bg-background-muted/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50 data-[selected]:bg-foreground data-[selected]:text-background data-[selected]:hover:bg-foreground/90",
+const switchStyles = tv({
+  base: "group flex items-center gap-2 text-foreground text-sm transition [-webkit-tap-highlight-color:transparent] disabled:text-foreground-muted",
 })
 
-const switchThumb = tv({
-  base: "pointer-events-none block h-5 w-5 rounded-full bg-background shadow-lg ring-0 transition-transform group-active:translate-x-1 data-[selected]:translate-x-5 group-active:data-[selected]:translate-x-4",
+const trackStyles = tv({
+  base: "flex h-[22px] w-[38px] shrink-0 cursor-pointer items-center rounded-full px-0.5 shadow-inner transition-all duration-200",
+  variants: {
+    isSelected: {
+      true: "bg-foreground",
+      false: "bg-background-muted",
+    },
+    isFocusVisible: {
+      true: "outline outline-2 outline-foreground outline-offset-2",
+    },
+    isDisabled: {
+      true: "cursor-not-allowed opacity-50",
+    },
+  },
+  compoundVariants: [
+    {
+      isSelected: false,
+      isDisabled: false,
+      class: "bg-background-subtle hover:bg-background-subtle",
+    },
+    {
+      isSelected: true,
+      isDisabled: false,
+      class: "hover:bg-foreground/90",
+    },
+  ],
+})
+
+const thumbStyles = tv({
+  base: "block h-[18px] w-[18px] rounded-full shadow-sm transition-transform duration-200 ease-in-out",
+  variants: {
+    isSelected: {
+      true: "translate-x-4 bg-background",
+      false: "translate-x-0 bg-foreground",
+    },
+    isDisabled: {
+      true: "bg-foreground-faint",
+    },
+  },
+  compoundVariants: [
+    {
+      isSelected: true,
+      isDisabled: true,
+      class: "bg-foreground-faint",
+    },
+  ],
 })
 
 export interface SwitchProps extends RASwitchProps {
@@ -18,9 +62,15 @@ export interface SwitchProps extends RASwitchProps {
 
 export function Switch({ className, children, ...props }: SwitchProps) {
   return (
-    <RASwitch className={switchTrack({ className })} {...props}>
-      <span className={switchThumb()} />
-      {children}
+    <RASwitch {...props} className={switchStyles({ className })}>
+      {(renderProps) => (
+        <>
+          <div className={trackStyles(renderProps)}>
+            <span className={thumbStyles(renderProps)} />
+          </div>
+          {typeof children === "function" ? children(renderProps) : children}
+        </>
+      )}
     </RASwitch>
   )
 }
