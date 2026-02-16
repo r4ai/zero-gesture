@@ -10,7 +10,7 @@ import {
 import { tv } from "tailwind-variants"
 
 const input = tv({
-  base: "flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:font-medium file:text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50",
+  base: "flex h-10 w-full rounded-md border border-border bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:font-medium file:text-sm placeholder:text-foreground-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50",
 })
 
 export interface TextFieldProps extends RATextFieldProps {
@@ -35,7 +35,7 @@ export function TextField({
       {label && <RALabel>{label}</RALabel>}
       <div className="relative">
         {startIcon && (
-          <div className="absolute top-2.5 left-2.5 h-4 w-4 text-muted-foreground">
+          <div className="absolute top-2.5 left-2.5 h-4 w-4 text-foreground-muted">
             {startIcon}
           </div>
         )}
@@ -45,7 +45,7 @@ export function TextField({
         />
       </div>
       {description && (
-        <p className="text-muted-foreground text-sm">{description}</p>
+        <p className="text-foreground-muted text-sm">{description}</p>
       )}
       {errorMessage && (
         <FieldError className="font-medium text-destructive text-sm">

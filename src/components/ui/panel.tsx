@@ -5,7 +5,7 @@ export const panel = tv({
 })
 
 export const panelHeader = tv({
-  base: "flex items-center justify-between border-b px-6 py-4",
+  base: "flex items-center justify-between border-border border-b px-6 py-4",
 })
 
 export const panelBody = tv({
@@ -13,7 +13,7 @@ export const panelBody = tv({
 })
 
 export const panelFooter = tv({
-  base: "flex items-center justify-end border-t bg-muted/40 px-6 py-4",
+  base: "flex items-center justify-end border-border border-t bg-background-muted px-6 py-4",
 })
 
 export function Panel({

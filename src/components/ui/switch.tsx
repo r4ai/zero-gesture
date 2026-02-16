@@ -5,7 +5,7 @@ import {
 import { tv } from "tailwind-variants"
 
 const switchTrack = tv({
-  base: "group inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent bg-input shadow-sm transition-colors hover:bg-input/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50 data-[selected]:bg-primary data-[selected]:text-primary-foreground data-[selected]:hover:bg-primary/90",
+  base: "group inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent bg-background-muted shadow-sm transition-colors hover:bg-background-muted/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50 data-[selected]:bg-foreground data-[selected]:text-background data-[selected]:hover:bg-foreground/90",
 })
 
 const switchThumb = tv({

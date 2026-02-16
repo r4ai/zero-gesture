@@ -22,13 +22,13 @@ export const Default: Story = {
           <h2 className="font-semibold text-lg">Settings</h2>
         </PanelHeader>
         <PanelBody>
-          <p className="text-muted-foreground">
+          <p className="text-foreground-muted">
             Manage your account settings and preferences here.
           </p>
           <div className="mt-4 h-96 space-y-4">
-            <div className="h-20 rounded bg-muted/20" />
-            <div className="h-20 rounded bg-muted/20" />
-            <div className="h-20 rounded bg-muted/20" />
+            <div className="h-20 rounded bg-background-muted/20" />
+            <div className="h-20 rounded bg-background-muted/20" />
+            <div className="h-20 rounded bg-background-muted/20" />
           </div>
         </PanelBody>
         <PanelFooter>

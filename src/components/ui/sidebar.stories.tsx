@@ -44,8 +44,8 @@ export const Default: Story = {
           </div>
         </SidebarBody>
         <SidebarFooter>
-          <div className="flex items-center gap-2 text-muted-foreground text-sm">
-            <div className="h-8 w-8 rounded-full bg-muted" />
+          <div className="flex items-center gap-2 text-foreground-muted text-sm">
+            <div className="h-8 w-8 rounded-full bg-background-muted" />
             <span>User Name</span>
           </div>
         </SidebarFooter>
@@ -75,7 +75,7 @@ export const Collapsed: Story = {
           </div>
         </SidebarBody>
         <SidebarFooter className="justify-center px-0">
-          <div className="h-8 w-8 rounded-full bg-muted" />
+          <div className="h-8 w-8 rounded-full bg-background-muted" />
         </SidebarFooter>
       </Sidebar>
     </div>
