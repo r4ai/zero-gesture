@@ -2,6 +2,7 @@ import { withThemeByClassName } from "@storybook/addon-themes"
 import type { Preview, ReactRenderer } from "@storybook/react-vite"
 
 import "../src/global.css"
+import "./preview.css"
 
 const preview: Preview = {
   parameters: {

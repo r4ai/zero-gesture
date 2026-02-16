@@ -1,0 +1,5 @@
+@reference "../src/global.css";
+
+.docs-story {
+  @apply bg-background text-foreground;
+}
