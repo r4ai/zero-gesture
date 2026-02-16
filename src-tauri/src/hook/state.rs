@@ -426,10 +426,7 @@ pub(super) fn process_event_pure(
 }
 
 fn should_replay_unmatched(origin: (i32, i32), release: (i32, i32), config: &HookConfig) -> bool {
-    let threshold = config
-        .min_segment_px
-        .max(config.direction_switch_confirm_px)
-        .max(config.replay_distance_threshold_px);
+    let threshold = config.replay_distance_threshold_px;
     squared_distance(origin, release) <= i64::from(threshold) * i64::from(threshold)
 }
 
@@ -798,6 +795,41 @@ mod tests {
                 up_at: (120, 100),
             })
         );
+    }
+
+    #[test]
+    fn replay_threshold_is_not_coupled_to_recognition_thresholds() {
+        let mut config = test_config(vec![binding(
+            TriggerButton::Right,
+            vec![GestureStep::Down],
+            key_action("a"),
+            "A",
+        )]);
+        config.min_segment_px = 30;
+        config.direction_switch_confirm_px = 24;
+        config.replay_distance_threshold_px = 6;
+        let mut state = GestureState::Idle;
+
+        process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::ButtonDown(TriggerButton::Right),
+            (100, 100),
+            1000,
+            None,
+        );
+        let effect = process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::ButtonUp(TriggerButton::Right),
+            (107, 100),
+            1010,
+            None,
+        );
+
+        assert!(effect.suppress);
+        assert!(effect.request_execute.is_none());
+        assert!(effect.request_replay.is_none());
     }
 
     #[test]
