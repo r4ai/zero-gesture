@@ -9,8 +9,14 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as GeneralIndexRouteImport } from './routes/general/index'
 
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const GeneralIndexRoute = GeneralIndexRouteImport.update({
   id: '/general/',
   path: '/general/',
@@ -18,29 +24,40 @@ const GeneralIndexRoute = GeneralIndexRouteImport.update({
 } as any)
 
 export interface FileRoutesByFullPath {
+  '/settings': typeof SettingsRoute
   '/general/': typeof GeneralIndexRoute
 }
 export interface FileRoutesByTo {
+  '/settings': typeof SettingsRoute
   '/general': typeof GeneralIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
+  '/settings': typeof SettingsRoute
   '/general/': typeof GeneralIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/general/'
+  fullPaths: '/settings' | '/general/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/general'
-  id: '__root__' | '/general/'
+  to: '/settings' | '/general'
+  id: '__root__' | '/settings' | '/general/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
+  SettingsRoute: typeof SettingsRoute
   GeneralIndexRoute: typeof GeneralIndexRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/general/': {
       id: '/general/'
       path: '/general'
@@ -52,6 +69,7 @@ declare module '@tanstack/react-router' {
 }
 
 const rootRouteChildren: RootRouteChildren = {
+  SettingsRoute: SettingsRoute,
   GeneralIndexRoute: GeneralIndexRoute,
 }
 export const routeTree = rootRouteImport
