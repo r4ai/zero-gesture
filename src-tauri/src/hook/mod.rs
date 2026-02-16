@@ -15,20 +15,52 @@
 //!
 //! ## State Machine
 //!
-//! The core logic in [`state::process_event_pure`] is a two-state machine:
+//! The runtime state machine has two states (`Idle`, `Gesturing`) with all
+//! transitions defined by [`state::process_event_pure`] plus the safety timer
+//! handler in `win32`.
 //!
 //! ```text
-//! Idle ──[configured trigger DOWN]──► Gesturing
-//!  ▲                                    │
-//!  └──────[same trigger UP]─────────────┘
+//! Initial: Idle
+//!
+//! Idle
+//!   ├─ ButtonDown(trigger) and binding exists for (matched app or default)
+//!   │    -> Gesturing
+//!   │       side effects: suppress=true, StartGesture, TrackPoint(origin)
+//!   └─ any other event
+//!        -> Idle (no transition)
+//!
+//! Gesturing
+//!   ├─ MouseMove
+//!   │    -> Gesturing
+//!   │       side effects: TrackPoint, optional UpdateLabel, suppress=false
+//!   ├─ WheelUp / WheelDown
+//!   │    -> Gesturing
+//!   │       side effects: add input step, optional UpdateLabel, suppress=true
+//!   ├─ ButtonDown(any button)
+//!   │    -> Gesturing
+//!   │       side effects: add input step, optional UpdateLabel, suppress=true
+//!   ├─ ButtonUp(non-trigger button)
+//!   │    -> Gesturing
+//!   │       side effects: suppress=true
+//!   ├─ ButtonUp(same trigger that started gesture)
+//!   │    -> Idle
+//!   │       side effects: suppress=true, EndGesture,
+//!   │       - if sequence matched: request_execute
+//!   │       - else if unmatched and release distance <= replay threshold:
+//!   │         request_replay
+//!   ├─ Other
+//!   │    -> Gesturing (no transition, suppress=false)
+//!   └─ safety timeout elapsed (`WM_TIMER`)
+//!        -> Idle
+//!           side effects: EndGesture (cleanup)
 //! ```
 //!
-//! During `Gesturing`, mouse movement, wheel input, and button events are
-//! converted into a gesture-step sequence and matched against app-aware
-//! bindings.
+//! During `Gesturing`, directional movement and input steps are accumulated
+//! into one sequence and resolved against app-specific bindings first, then
+//! `"default"` fallback bindings.
 //!
 //! **Key invariant:** `WM_MOUSEMOVE` is never suppressed, so pointer tracking
-//! remains natural while gestures are recorded.
+//! stays natural while a gesture session is active.
 
 mod app_match;
 mod state;
