@@ -40,19 +40,6 @@
 
     --warning: #f59e0b;
     --warning-subtle: #f59e0b20;
-
-    --white: #000000; /* Inverted for light mode? Or typically keeps meaning white. 
-                        However, 'white' token usually implies 'pure base color'. 
-                        If the design uses 'white' for text on dark bg, in light mode it should be black?
-                        Let's keep it literal 'white' (#ffffff) if it's used for fixed elements, 
-                        BUT if it's used for 'perceived white' in dark mode, it might need inversion.
-                        Given 'foreground' exists, 'white' might be literal. 
-                        But 'border-white' was #ffffff in dark mode. 
-                        Let's assume literal for now, but inspect usage logic if possible.
-                        Actually, 'border-white' in dark mode is white. In light mode, a white border on white bg is invisible.
-                        I'll map --white to #ffffff constant, maybe? 
-                        Let's stick to variable mapping.
-                     */
   }
 
   .dark {
@@ -91,8 +78,6 @@
 
     --warning: #ffb547;
     --warning-subtle: #ffb54720;
-
-    --white: #ffffff;
   }
 }
 
@@ -131,6 +116,4 @@
 
   --color-warning: var(--warning);
   --color-warning-subtle: var(--warning-subtle);
-
-  --color-white: var(--white);
 }
