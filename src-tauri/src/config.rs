@@ -182,7 +182,6 @@ pub struct AppConfig {
     ///
     /// - `"default"` is the global fallback set.
     /// - other keys reference entries in [`Self::apps`].
-    #[serde(default)]
     pub bindings: HashMap<String, Vec<GestureBinding>>,
 }
 
@@ -588,6 +587,7 @@ mod tests {
         let raw = r##"{ "enabled": false }"##;
         let cfg: AppConfig = serde_json::from_str(raw).expect("JSON with enabled=false must parse");
         assert!(!cfg.enabled);
+        assert!(cfg.bindings.contains_key("default"));
     }
 
     #[test]
