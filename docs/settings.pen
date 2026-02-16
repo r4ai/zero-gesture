@@ -2489,6 +2489,9 @@
                 13,
                 16
               ]
+            },
+            "6d7lt": {
+              "context": "Clicking here navigates to the App Edit page."
             }
           }
         },
@@ -2890,6 +2893,7 @@
                               "type": "frame",
                               "id": "iNyWL",
                               "name": "card1PickFromScreen",
+                              "context": "Clicking here navigates to Step 1  - Pick Window",
                               "height": 34,
                               "fill": "$background-subtle",
                               "cornerRadius": 6,
@@ -3121,6 +3125,7 @@
                               "type": "frame",
                               "id": "lW7KQ",
                               "name": "card2PickFromScreen",
+                              "context": "Clicking here navigates to Step 1  - Pick Window",
                               "height": 34,
                               "fill": "$background-subtle",
                               "cornerRadius": 6,
@@ -4230,7 +4235,7 @@
       "id": "2ShxL",
       "x": 2071,
       "y": 0,
-      "name": "Applications Settings - Gesture Edit",
+      "name": "Applications Settings - Gesture Edit - Hold",
       "clip": true,
       "width": 1100,
       "height": 900,
@@ -4260,6 +4265,9 @@
                 13,
                 16
               ]
+            },
+            "6d7lt": {
+              "context": "Clicking here navigates to the App Edit page."
             }
           }
         },
@@ -4311,6 +4319,7 @@
                       "type": "text",
                       "id": "1llSe",
                       "name": "actionHeaderTitle",
+                      "context": "A transparent input field, allowing for updating label",
                       "fill": "$foreground",
                       "content": "Left",
                       "fontFamily": "DM Sans",
@@ -4322,7 +4331,7 @@
                       "id": "wc1zs",
                       "name": "actionHeaderSub",
                       "fill": "$foreground-subtle",
-                      "content": "Left → Right → Ctrl + K → WheelUp",
+                      "content": "Left → Right → WheelUp",
                       "fontFamily": "DM Sans",
                       "fontSize": 12,
                       "fontWeight": "normal"
@@ -4557,7 +4566,7 @@
                         },
                         "3HTfC": {
                           "fill": "$foreground-subtle",
-                          "content": "Action"
+                          "content": "Release"
                         }
                       }
                     },
@@ -4642,24 +4651,6 @@
                               "enabled": false
                             }
                           }
-                        },
-                        {
-                          "id": "Y4qyk",
-                          "type": "ref",
-                          "ref": "hnDAi",
-                          "x": 0,
-                          "y": 96,
-                          "descendants": {
-                            "3ZMdB": {
-                              "content": "3"
-                            },
-                            "UOSeB/EkdGt": {
-                              "content": "Muse Input"
-                            },
-                            "K6yGL/EkdGt": {
-                              "content": "Wheel Up"
-                            }
-                          }
                         }
                       ]
                     },
@@ -4698,7 +4689,7 @@
                               "id": "XFrW7",
                               "name": "Step Count Text",
                               "fill": "$foreground-muted",
-                              "content": "3 / 8 used",
+                              "content": "2 / 8 used",
                               "fontFamily": "DM Sans",
                               "fontSize": 12,
                               "fontWeight": "500"
@@ -4724,11 +4715,10 @@
                       "type": "text",
                       "id": "5j30S",
                       "name": "Limit Note",
-                      "flipY": true,
                       "fill": "#52525b",
                       "textGrowth": "fixed-width-height",
-                      "width": 540,
-                      "height": 234,
+                      "width": "fill_container",
+                      "height": 14,
                       "content": "Supported steps: Left / Right / Up / Down / Wheel Up / Wheel Down / Left Click / Right Click / Middle Click",
                       "fontFamily": "DM Sans",
                       "fontSize": 11,
@@ -4756,7 +4746,7 @@
                           "type": "text",
                           "id": "IZufu",
                           "name": "Step Hint",
-                          "fill": "#71717a",
+                          "fill": "$foreground-faint",
                           "content": "Single non-movement input that fires while the trigger is held.",
                           "fontFamily": "DM Sans",
                           "fontSize": 12,
@@ -4796,7 +4786,7 @@
                                   "id": "n9tNG",
                                   "name": "Step Select Text",
                                   "fill": "#fafaf9",
-                                  "content": "Left Click",
+                                  "content": "Wheel Up",
                                   "fontFamily": "DM Sans",
                                   "fontSize": 13,
                                   "fontWeight": "500"
@@ -7708,6 +7698,611 @@
           "fontFamily": "DM Sans",
           "fontSize": 12,
           "fontWeight": "500"
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "1oC7o",
+      "x": 2071,
+      "y": 981,
+      "name": "Applications Settings - Gesture Edit - Release",
+      "clip": true,
+      "width": 1100,
+      "height": 900,
+      "fill": "$background",
+      "children": [
+        {
+          "type": "frame",
+          "id": "r88A0",
+          "name": "nav-bindings-item-placeholder",
+          "width": 1,
+          "height": 1
+        },
+        {
+          "id": "QUTB5",
+          "type": "ref",
+          "ref": "o814N",
+          "width": 220,
+          "height": "fill_container",
+          "name": "newAppPanel1",
+          "x": 1,
+          "y": 0,
+          "descendants": {
+            "eHYAd": {
+              "padding": [
+                16,
+                16,
+                13,
+                16
+              ]
+            }
+          }
+        },
+        {
+          "id": "I70yp",
+          "type": "ref",
+          "ref": "RS5YW",
+          "name": "Gesture Panel",
+          "width": 260,
+          "height": "fill_container"
+        },
+        {
+          "type": "frame",
+          "id": "6yPEx",
+          "name": "Action Panel",
+          "width": "fill_container",
+          "height": "fill_container",
+          "fill": "$background",
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "Xrbt4",
+              "name": "gestureHeader",
+              "width": "fill_container",
+              "height": 64,
+              "stroke": {
+                "align": "inside",
+                "thickness": {
+                  "bottom": 1
+                },
+                "fill": "$border"
+              },
+              "padding": [
+                0,
+                24
+              ],
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "AwqLo",
+                  "name": "actionHeaderLeft",
+                  "layout": "vertical",
+                  "gap": 3,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "8QELw",
+                      "name": "actionHeaderTitle",
+                      "context": "A transparent input field, allowing for updating label",
+                      "fill": "$foreground",
+                      "content": "Left",
+                      "fontFamily": "DM Sans",
+                      "fontSize": 16,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "FpxUT",
+                      "name": "actionHeaderSub",
+                      "fill": "$foreground-subtle",
+                      "content": "Left → Right → WheelUp",
+                      "fontFamily": "DM Sans",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "tSYMu",
+                  "name": "actionHeaderRight",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "aiczF",
+                      "name": "Delete Btn",
+                      "height": 32,
+                      "fill": "$destructive-subtle",
+                      "cornerRadius": 6,
+                      "stroke": {
+                        "align": "inside",
+                        "thickness": 1,
+                        "fill": "$destructive-subtle"
+                      },
+                      "gap": 6,
+                      "padding": [
+                        0,
+                        12
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "7HeTW",
+                          "name": "deleteBtnIcon",
+                          "width": 13,
+                          "height": 13,
+                          "iconFontName": "trash-2",
+                          "iconFontFamily": "lucide",
+                          "fill": "$destructive"
+                        },
+                        {
+                          "type": "text",
+                          "id": "1xL3k",
+                          "name": "deleteBtnText",
+                          "fill": "$destructive",
+                          "content": "Remove Gesture",
+                          "fontFamily": "DM Sans",
+                          "fontSize": 12,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "6FteY",
+              "name": "gestureTabBar",
+              "width": "fill_container",
+              "height": 56,
+              "padding": [
+                8,
+                24
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "id": "WnY2n",
+                  "type": "ref",
+                  "ref": "g7n1e",
+                  "x": 24,
+                  "y": 8,
+                  "descendants": {
+                    "7nk8G": {
+                      "fill": "$background-subtle",
+                      "stroke": {
+                        "align": "inside",
+                        "thickness": 1,
+                        "fill": "$border-bright"
+                      }
+                    },
+                    "RDclq": {
+                      "fill": "$foreground"
+                    },
+                    "teFxn": {
+                      "fill": [],
+                      "stroke": {
+                        "align": "inside",
+                        "thickness": 1
+                      }
+                    },
+                    "3HTfC": {
+                      "fill": "$foreground-subtle"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "GtTTr",
+              "name": "Gesture Body",
+              "clip": true,
+              "width": "fill_container",
+              "height": "fill_container",
+              "layout": "vertical",
+              "gap": 20,
+              "padding": 24,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "HjIDl",
+                  "name": "Trigger Section",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 10,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "55lpW",
+                      "name": "Trigger Label",
+                      "fill": "$foreground-subtle",
+                      "content": "Trigger Button",
+                      "fontFamily": "DM Sans",
+                      "fontSize": 12,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "JZ9wy",
+                      "name": "Trigger Row",
+                      "width": "fill_container",
+                      "gap": 8,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "id": "nh587",
+                          "type": "ref",
+                          "ref": "QwRhd",
+                          "x": 0,
+                          "y": 0,
+                          "width": "fill_container",
+                          "height": 40,
+                          "flipX": false,
+                          "flipY": false,
+                          "layout": "horizontal",
+                          "descendants": {
+                            "M1mWl": {
+                              "enabled": false
+                            },
+                            "EkdGt": {
+                              "content": "Right Click"
+                            }
+                          }
+                        },
+                        {
+                          "id": "bGQDk",
+                          "type": "ref",
+                          "ref": "1IZUB",
+                          "x": 531,
+                          "y": 0
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "7Kei2",
+                      "name": "Trigger Hint",
+                      "fill": "$foreground-faint",
+                      "content": "Use the keyboard icon to capture from live input.",
+                      "fontFamily": "DM Sans",
+                      "fontSize": 11,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "ISd4G",
+                  "name": "Mode Section",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 10,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "VmnVQ",
+                      "name": "Mode Label Row",
+                      "width": "fill_container",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "9eFMo",
+                          "name": "Mode Label",
+                          "fill": "$foreground-subtle",
+                          "content": "Gesture Mode",
+                          "fontFamily": "DM Sans",
+                          "fontSize": 12,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "id": "BJSQQ",
+                      "type": "ref",
+                      "ref": "g7n1e",
+                      "x": 0,
+                      "y": 26,
+                      "flipX": false,
+                      "flipY": false,
+                      "width": "fill_container",
+                      "height": 40,
+                      "textGrowth": "auto",
+                      "descendants": {
+                        "RDclq": {
+                          "content": "Hold"
+                        },
+                        "3HTfC": {
+                          "content": "Release"
+                        }
+                      }
+                    },
+                    {
+                      "type": "text",
+                      "id": "f6GJF",
+                      "name": "Mode Hint",
+                      "fill": "$foreground-faint",
+                      "content": "Hold: fires while the trigger is held. Release: fires on trigger release.",
+                      "fontFamily": "DM Sans",
+                      "fontSize": 11,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "aOZrN",
+                  "name": "Builder Section",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 12,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "DVgYJ",
+                      "name": "Builder Title",
+                      "fill": "$foreground-subtle",
+                      "content": "Sequence",
+                      "fontFamily": "DM Sans",
+                      "fontSize": 12,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "zMmbR",
+                      "name": "Builder Hint",
+                      "fill": "$foreground-faint",
+                      "content": "Ordered steps recognized before the final step fires. Up to 8 steps.",
+                      "fontFamily": "DM Sans",
+                      "fontSize": 11,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "yJB1X",
+                      "name": "Sequence List",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 8,
+                      "children": [
+                        {
+                          "id": "U8QMt",
+                          "type": "ref",
+                          "ref": "hnDAi",
+                          "x": 0,
+                          "y": 0,
+                          "descendants": {
+                            "yxJkq": {
+                              "enabled": false
+                            },
+                            "yxJkq/SQgBj": {
+                              "x": 12,
+                              "y": 12
+                            }
+                          }
+                        },
+                        {
+                          "id": "npKUl",
+                          "type": "ref",
+                          "ref": "hnDAi",
+                          "x": 0,
+                          "y": 48,
+                          "descendants": {
+                            "3ZMdB": {
+                              "content": "2"
+                            },
+                            "K6yGL/EkdGt": {
+                              "content": "Right"
+                            },
+                            "yxJkq": {
+                              "enabled": false
+                            }
+                          }
+                        },
+                        {
+                          "id": "u4HPm",
+                          "type": "ref",
+                          "ref": "hnDAi",
+                          "x": 0,
+                          "y": 96,
+                          "descendants": {
+                            "3ZMdB": {
+                              "content": "3"
+                            },
+                            "UOSeB/EkdGt": {
+                              "content": "Muse Input"
+                            },
+                            "K6yGL/EkdGt": {
+                              "content": "Wheel Up"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Bctv4",
+                      "name": "Builder Tools",
+                      "width": "fill_container",
+                      "padding": [
+                        2,
+                        0
+                      ],
+                      "justifyContent": "space_between",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "HoOFv",
+                          "name": "Step Count",
+                          "height": 28,
+                          "fill": "$background-card",
+                          "cornerRadius": 6,
+                          "stroke": {
+                            "align": "inside",
+                            "thickness": 1,
+                            "fill": "$border"
+                          },
+                          "padding": [
+                            0,
+                            10
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "N41Ec",
+                              "name": "Step Count Text",
+                              "fill": "$foreground-muted",
+                              "content": "3 / 8 used",
+                              "fontFamily": "DM Sans",
+                              "fontSize": 12,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        },
+                        {
+                          "id": "3BdfP",
+                          "type": "ref",
+                          "ref": "YJCAp",
+                          "x": 475,
+                          "y": 2,
+                          "width": 96,
+                          "descendants": {
+                            "YcAJc": {
+                              "content": "Add Step"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "50c1Q",
+                      "name": "Limit Note",
+                      "fill": "#52525b",
+                      "textGrowth": "fixed-width-height",
+                      "width": "fill_container",
+                      "height": 14,
+                      "content": "Supported steps: Left / Right / Up / Down / Wheel Up / Wheel Down / Left Click / Right Click / Middle Click",
+                      "fontFamily": "DM Sans",
+                      "fontSize": 11,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "KYAHZ",
+              "name": "gestureFooter",
+              "width": "fill_container",
+              "height": 64,
+              "stroke": {
+                "align": "inside",
+                "thickness": {
+                  "top": 1
+                },
+                "fill": "$border"
+              },
+              "gap": 12,
+              "padding": [
+                0,
+                24
+              ],
+              "justifyContent": "end",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "olYmV",
+                  "name": "cancelBtn",
+                  "height": 36,
+                  "fill": "$transparent",
+                  "cornerRadius": 6,
+                  "stroke": {
+                    "align": "inside",
+                    "thickness": 1,
+                    "fill": "$border-muted"
+                  },
+                  "gap": 8,
+                  "padding": [
+                    0,
+                    16
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "zmLIr",
+                      "name": "cancelLabel",
+                      "fill": "$foreground",
+                      "content": "Cancel",
+                      "fontFamily": "DM Sans",
+                      "fontSize": 13,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "6LzpR",
+                  "name": "saveBtn",
+                  "height": 36,
+                  "fill": "$foreground",
+                  "cornerRadius": 6,
+                  "effect": {
+                    "type": "shadow",
+                    "shadowType": "outer",
+                    "color": "#00000033",
+                    "offset": {
+                      "x": 0,
+                      "y": 2
+                    },
+                    "blur": 8
+                  },
+                  "gap": 8,
+                  "padding": [
+                    0,
+                    16
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon_font",
+                      "id": "2Baud",
+                      "name": "saveIcon",
+                      "width": 14,
+                      "height": 14,
+                      "iconFontName": "check",
+                      "iconFontFamily": "lucide",
+                      "fill": "$background"
+                    },
+                    {
+                      "type": "text",
+                      "id": "rEcCn",
+                      "name": "saveLabel",
+                      "fill": "$background",
+                      "content": "Save Changes",
+                      "fontFamily": "DM Sans",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
         }
       ]
     }
