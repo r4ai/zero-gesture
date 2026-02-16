@@ -2,3 +2,42 @@
 @import "tw-animate-css";
 
 @custom-variant dark (&:is(.dark *));
+
+@theme {
+  --color-background: #09090b;
+  --color-background-card: #1c1c1f;
+  --color-background-elevated: #18181b;
+  --color-background-glass: #ffffff08;
+  --color-background-glass-light: #ffffff10;
+  --color-background-glass-medium: #ffffff20;
+  --color-background-muted: #3f3f46;
+  --color-background-overlay: #000000cc;
+  --color-background-overlay-light: #000000aa;
+  --color-background-subtle: #27272a;
+
+  --color-border: #27272a;
+  --color-border-bright: #ffffff40;
+  --color-border-muted: #3f3f46;
+  --color-border-white: #ffffff;
+
+  --color-destructive: #e85a4f;
+  --color-destructive-subtle: #e85a4f20;
+
+  --color-foreground: #fafaf9;
+  --color-foreground-faint: #52525b;
+  --color-foreground-inverted: #09090b;
+  --color-foreground-muted: #a1a1aa;
+  --color-foreground-subtle: #71717a;
+
+  --color-scrim: #00000033;
+
+  --color-success: #32d583;
+  --color-success-subtle: #32d58320;
+
+  --color-transparent: #00000000;
+
+  --color-warning: #ffb547;
+  --color-warning-subtle: #ffb54720;
+
+  --color-white: #ffffff;
+}
