@@ -266,8 +266,26 @@ impl AppConfig {
 
     /// Validates and normalizes configuration values in-place.
     ///
-    /// Invalid values are replaced with safe defaults and unsupported gesture
-    /// bindings are dropped.
+    /// Invalid numeric thresholds are replaced with safe defaults:
+    /// - `safety_timeout_ms`: must be `> 0`
+    /// - `min_segment_px`: must be `> 0`
+    /// - `direction_switch_confirm_px`: must be `> 0`
+    /// - `axis_ambiguity_deadzone_px`: must be `>= 0`
+    /// - `replay_distance_threshold_px`: must be `> 0`
+    ///
+    /// Binding-map validation and normalization (`self.bindings`):
+    /// - App-key integrity:
+    ///   - `default` is always allowed.
+    ///   - Any non-`default` key must exist in [`Self::apps`], otherwise
+    ///     that key and all of its bindings are removed.
+    /// - Default fallback guarantee:
+    ///   - If `default` is missing after validation, an empty
+    ///     `default: []` entry is inserted.
+    /// - Per-app binding list validation is delegated to
+    ///   [`Self::validate_bindings_for_app`].
+    ///
+    /// This method is lossy by design: unsupported bindings are dropped and a
+    /// warning is logged for each dropped/normalized case.
     ///
     /// # Examples
     ///
@@ -351,6 +369,36 @@ impl AppConfig {
         self
     }
 
+    /// Validates one app's binding list and returns the normalized bindings.
+    ///
+    /// Input order is preserved for accepted bindings.
+    /// Invalid entries are dropped.
+    ///
+    /// `release` mode rules:
+    /// - `sequence` must not be empty.
+    /// - `sequence.len()` must be `<= MAX_GESTURE_STEPS`.
+    /// - `sequence` must not contain consecutive identical directional steps
+    ///   (`up/down/left/right`).
+    /// - `sequence` must not include its own trigger click step
+    ///   (e.g. trigger=`right_click` with step=`right_click`).
+    /// - Duplicate `(trigger, sequence)` entries are de-duplicated
+    ///   (first one wins, later ones are dropped).
+    /// - `gesture.step` is ignored in this mode; if present it is normalized
+    ///   to `None`.
+    ///
+    /// `hold` mode rules:
+    /// - `sequence.len()` must be `<= MAX_GESTURE_STEPS`.
+    /// - `sequence` must not contain consecutive identical directional steps
+    ///   (`up/down/left/right`).
+    /// - `sequence` must not include its own trigger click step.
+    /// - `gesture.step` is required.
+    /// - Supported `gesture.step` values are only `wheel_up` / `wheel_down`.
+    /// - Duplicate `(trigger, sequence, step)` entries are de-duplicated
+    ///   (first one wins, later ones are dropped).
+    /// - Empty `sequence` is allowed (wildcard hold binding).
+    ///
+    /// A warning is logged for every invalid entry that gets dropped and for
+    /// every normalized field.
     fn validate_bindings_for_app(
         app_id: &str,
         app_bindings: &[GestureBinding],
