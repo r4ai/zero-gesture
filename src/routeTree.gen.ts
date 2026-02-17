@@ -13,6 +13,7 @@ import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as GeneralIndexRouteImport } from './routes/general/index'
 import { Route as ApplicationsIndexRouteImport } from './routes/applications/index'
 import { Route as AdvancedIndexRouteImport } from './routes/advanced/index'
+import { Route as ApplicationsAppIdRouteRouteImport } from './routes/applications/$appId/route'
 import { Route as ApplicationsAppIdIndexRouteImport } from './routes/applications/$appId/index'
 import { Route as ApplicationsAppIdEditRouteImport } from './routes/applications/$appId/edit'
 import { Route as ApplicationsAppIdGesturesGestureIdIndexRouteImport } from './routes/applications/$appId/gestures/$gestureId/index'
@@ -37,25 +38,31 @@ const AdvancedIndexRoute = AdvancedIndexRouteImport.update({
   path: '/advanced/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApplicationsAppIdIndexRoute = ApplicationsAppIdIndexRouteImport.update({
-  id: '/applications/$appId/',
-  path: '/applications/$appId/',
+const ApplicationsAppIdRouteRoute = ApplicationsAppIdRouteRouteImport.update({
+  id: '/applications/$appId',
+  path: '/applications/$appId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApplicationsAppIdIndexRoute = ApplicationsAppIdIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => ApplicationsAppIdRouteRoute,
+} as any)
 const ApplicationsAppIdEditRoute = ApplicationsAppIdEditRouteImport.update({
-  id: '/applications/$appId/edit',
-  path: '/applications/$appId/edit',
-  getParentRoute: () => rootRouteImport,
+  id: '/edit',
+  path: '/edit',
+  getParentRoute: () => ApplicationsAppIdRouteRoute,
 } as any)
 const ApplicationsAppIdGesturesGestureIdIndexRoute =
   ApplicationsAppIdGesturesGestureIdIndexRouteImport.update({
-    id: '/applications/$appId/gestures/$gestureId/',
-    path: '/applications/$appId/gestures/$gestureId/',
-    getParentRoute: () => rootRouteImport,
+    id: '/gestures/$gestureId/',
+    path: '/gestures/$gestureId/',
+    getParentRoute: () => ApplicationsAppIdRouteRoute,
   } as any)
 
 export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRoute
+  '/applications/$appId': typeof ApplicationsAppIdRouteRouteWithChildren
   '/advanced/': typeof AdvancedIndexRoute
   '/applications/': typeof ApplicationsIndexRoute
   '/general/': typeof GeneralIndexRoute
@@ -75,6 +82,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/settings': typeof SettingsRoute
+  '/applications/$appId': typeof ApplicationsAppIdRouteRouteWithChildren
   '/advanced/': typeof AdvancedIndexRoute
   '/applications/': typeof ApplicationsIndexRoute
   '/general/': typeof GeneralIndexRoute
@@ -86,6 +94,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/settings'
+    | '/applications/$appId'
     | '/advanced/'
     | '/applications/'
     | '/general/'
@@ -104,6 +113,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/settings'
+    | '/applications/$appId'
     | '/advanced/'
     | '/applications/'
     | '/general/'
@@ -114,12 +124,10 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRoute
+  ApplicationsAppIdRouteRoute: typeof ApplicationsAppIdRouteRouteWithChildren
   AdvancedIndexRoute: typeof AdvancedIndexRoute
   ApplicationsIndexRoute: typeof ApplicationsIndexRoute
   GeneralIndexRoute: typeof GeneralIndexRoute
-  ApplicationsAppIdEditRoute: typeof ApplicationsAppIdEditRoute
-  ApplicationsAppIdIndexRoute: typeof ApplicationsAppIdIndexRoute
-  ApplicationsAppIdGesturesGestureIdIndexRoute: typeof ApplicationsAppIdGesturesGestureIdIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -152,39 +160,62 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdvancedIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/applications/$appId': {
+      id: '/applications/$appId'
+      path: '/applications/$appId'
+      fullPath: '/applications/$appId'
+      preLoaderRoute: typeof ApplicationsAppIdRouteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/applications/$appId/': {
       id: '/applications/$appId/'
-      path: '/applications/$appId'
+      path: '/'
       fullPath: '/applications/$appId/'
       preLoaderRoute: typeof ApplicationsAppIdIndexRouteImport
-      parentRoute: typeof rootRouteImport
+      parentRoute: typeof ApplicationsAppIdRouteRoute
     }
     '/applications/$appId/edit': {
       id: '/applications/$appId/edit'
-      path: '/applications/$appId/edit'
+      path: '/edit'
       fullPath: '/applications/$appId/edit'
       preLoaderRoute: typeof ApplicationsAppIdEditRouteImport
-      parentRoute: typeof rootRouteImport
+      parentRoute: typeof ApplicationsAppIdRouteRoute
     }
     '/applications/$appId/gestures/$gestureId/': {
       id: '/applications/$appId/gestures/$gestureId/'
-      path: '/applications/$appId/gestures/$gestureId'
+      path: '/gestures/$gestureId'
       fullPath: '/applications/$appId/gestures/$gestureId/'
       preLoaderRoute: typeof ApplicationsAppIdGesturesGestureIdIndexRouteImport
-      parentRoute: typeof rootRouteImport
+      parentRoute: typeof ApplicationsAppIdRouteRoute
     }
   }
 }
 
+interface ApplicationsAppIdRouteRouteChildren {
+  ApplicationsAppIdEditRoute: typeof ApplicationsAppIdEditRoute
+  ApplicationsAppIdIndexRoute: typeof ApplicationsAppIdIndexRoute
+  ApplicationsAppIdGesturesGestureIdIndexRoute: typeof ApplicationsAppIdGesturesGestureIdIndexRoute
+}
+
+const ApplicationsAppIdRouteRouteChildren: ApplicationsAppIdRouteRouteChildren =
+  {
+    ApplicationsAppIdEditRoute: ApplicationsAppIdEditRoute,
+    ApplicationsAppIdIndexRoute: ApplicationsAppIdIndexRoute,
+    ApplicationsAppIdGesturesGestureIdIndexRoute:
+      ApplicationsAppIdGesturesGestureIdIndexRoute,
+  }
+
+const ApplicationsAppIdRouteRouteWithChildren =
+  ApplicationsAppIdRouteRoute._addFileChildren(
+    ApplicationsAppIdRouteRouteChildren,
+  )
+
 const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRoute,
+  ApplicationsAppIdRouteRoute: ApplicationsAppIdRouteRouteWithChildren,
   AdvancedIndexRoute: AdvancedIndexRoute,
   ApplicationsIndexRoute: ApplicationsIndexRoute,
   GeneralIndexRoute: GeneralIndexRoute,
-  ApplicationsAppIdEditRoute: ApplicationsAppIdEditRoute,
-  ApplicationsAppIdIndexRoute: ApplicationsAppIdIndexRoute,
-  ApplicationsAppIdGesturesGestureIdIndexRoute:
-    ApplicationsAppIdGesturesGestureIdIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
