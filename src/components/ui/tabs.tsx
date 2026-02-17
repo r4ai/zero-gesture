@@ -12,13 +12,13 @@ const tabs = tv({
     root: "flex flex-col gap-2",
     tabList:
       "flex h-[40px] items-center gap-1 rounded-[12px] border border-border bg-background-card p-1",
-    tab: "flex flex-1 cursor-pointer items-center justify-center rounded-[8px] px-3 py-1.5 font-medium text-[13px] text-foreground-subtle outline-none transition-all focus-visible:ring-2 focus-visible:ring-foreground focus-visible:ring-offset-2",
+    tab: "flex flex-1 cursor-pointer items-center justify-center rounded-[8px] px-3 py-1.5 font-medium text-[13px] text-foreground-muted outline-none transition-all focus-visible:ring-2 focus-visible:ring-foreground focus-visible:ring-offset-2",
     tabPanel: "mt-2 outline-none",
   },
   variants: {
     isSelected: {
       true: {
-        tab: "bg-background-subtle text-foreground shadow-[0_1px_8px_rgba(0,0,0,0.4)]",
+        tab: "border border-border-bright bg-background text-foreground shadow dark:bg-background-subtle",
       },
       false: {
         tab: "hover:text-foreground",
