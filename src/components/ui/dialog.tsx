@@ -257,6 +257,7 @@ export function DialogHint({
  *   isOpen={isOpen}
  *   onOpenChange={setIsOpen}
  *   onClose={() => setIsOpen(false)}
+ *   trigger={<Button>Pick From Screen</Button>}
  * />
  * ```
  */
@@ -264,15 +265,18 @@ export interface PickWindowDialogProps {
   isOpen: boolean
   onOpenChange: (isOpen: boolean) => void
   onClose?: () => void
+  trigger?: React.ReactNode
 }
 
 export function PickWindowDialog({
   isOpen,
   onOpenChange,
   onClose,
+  trigger,
 }: PickWindowDialogProps) {
   return (
     <Dialog isOpen={isOpen} onOpenChange={onOpenChange}>
+      {trigger || <div />}
       <DialogContent isDismissable>
         <DialogHeader>
           <DialogClose onPress={onClose} />
