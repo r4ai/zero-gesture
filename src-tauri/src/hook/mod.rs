@@ -290,6 +290,7 @@ mod tests {
         label: Option<&str>,
     ) -> crate::config::GestureBinding {
         crate::config::GestureBinding {
+            id: format!("release-{key}"),
             label: label.map(ToString::to_string),
             gesture: crate::config::GesturePattern {
                 trigger,
@@ -309,6 +310,7 @@ mod tests {
         label: Option<&str>,
     ) -> crate::config::GestureBinding {
         crate::config::GestureBinding {
+            id: format!("hold-{key}"),
             label: label.map(ToString::to_string),
             gesture: crate::config::GesturePattern {
                 trigger,
