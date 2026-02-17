@@ -1,5 +1,5 @@
 import { Link, useNavigate } from "@tanstack/react-router"
-import { Plus, Terminal } from "lucide-react"
+import { Pencil, Plus, Terminal } from "lucide-react"
 import type { ReactNode } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -113,32 +113,58 @@ function AppPanel({ appId }: { appId: string }) {
       </div>
 
       <div className="flex flex-1 flex-col gap-1 overflow-y-auto p-2">
-        {APPS.map((app) => (
-          <Link
-            key={app.id}
-            to="/applications/$appId/gestures/$gestureId"
-            params={{ appId: app.id, gestureId: getGestureId(GESTURES[0]) }}
-            className={`flex h-[40px] items-center gap-3 rounded-lg px-3 transition-colors ${
-              appId === app.id
-                ? "bg-background-card ring-1 ring-border-bright"
-                : "hover:bg-background-card"
-            }`}
-          >
-            <div className="flex h-6 w-6 items-center justify-center rounded-md bg-background-subtle">
-              {app.icon === "terminal" ? (
-                <Terminal className="h-3.5 w-3.5 text-foreground" />
-              ) : (
-                <div className="h-3.5 w-3.5 rounded-sm bg-foreground-subtle" />
+        {APPS.map((app) => {
+          const isActive = appId === app.id
+
+          return (
+            <div
+              key={app.id}
+              className={`flex h-[40px] items-center justify-between rounded-lg px-2.5 transition-colors ${
+                isActive
+                  ? "bg-background-card ring-1 ring-border-bright"
+                  : "hover:bg-background-card"
+              }`}
+            >
+              <Link
+                to="/applications/$appId/gestures/$gestureId"
+                params={{ appId: app.id, gestureId: getGestureId(GESTURES[0]) }}
+                className="flex min-w-0 flex-1 items-center gap-2"
+              >
+                <div className="flex h-6 w-6 items-center justify-center rounded-md bg-background-subtle">
+                  {app.icon === "terminal" ? (
+                    <Terminal className="h-3.5 w-3.5 text-foreground-subtle" />
+                  ) : (
+                    <div className="h-3.5 w-3.5 rounded-sm bg-foreground-subtle" />
+                  )}
+                </div>
+                <span
+                  className={`truncate text-left text-[13px] ${
+                    isActive
+                      ? "font-semibold text-foreground"
+                      : "font-medium text-foreground-subtle"
+                  }`}
+                >
+                  {app.name}
+                </span>
+                {app.icon === "fallback" && (
+                  <Badge className="ml-1" variant="fallback">
+                    fallback
+                  </Badge>
+                )}
+              </Link>
+              {isActive && (
+                <Link
+                  to="/applications/$appId/edit"
+                  params={{ appId: app.id }}
+                  className="flex h-7 w-7 items-center justify-center rounded-md text-foreground-subtle transition-colors hover:bg-background-subtle hover:text-foreground"
+                  aria-label={`${app.name} settings`}
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </Link>
               )}
             </div>
-            <span className="flex-1 truncate text-left text-[13px] text-foreground">
-              {app.name}
-            </span>
-            {app.icon === "fallback" && (
-              <Badge variant="fallback">fallback</Badge>
-            )}
-          </Link>
-        ))}
+          )
+        })}
       </div>
 
       <div className="flex h-12 items-center justify-center border-border border-t px-2">
@@ -172,18 +198,7 @@ function GesturePanel({
   return (
     <div className="flex h-full w-[260px] flex-col border-border border-r bg-background">
       <div className="flex flex-col gap-1 border-border border-b px-4 py-4 pb-3">
-        <div className="flex items-center justify-between">
-          <h3 className="font-semibold text-[13px] text-foreground">
-            Gestures
-          </h3>
-          <Link
-            to="/applications/$appId/edit"
-            params={{ appId }}
-            className="text-[11px] text-foreground-subtle transition-colors hover:text-foreground"
-          >
-            Edit App
-          </Link>
-        </div>
+        <h3 className="font-semibold text-[13px] text-foreground">Gestures</h3>
         <p className="text-[12px] text-foreground-subtle">
           Assign action to each gesture
         </p>
