@@ -105,7 +105,7 @@ function AppPanel({ appId }: { appId: string }) {
   return (
     <div className="flex h-full w-[220px] flex-col border-border border-r bg-background">
       <div className="flex flex-col gap-1 border-border border-b px-4 py-4 pb-3">
-        <h3 className="font-semibold text-foreground text-sm">Applications</h3>
+        <h3 className="font-semibold text-foreground">Applications</h3>
         <p className="text-foreground-muted text-xs">Select app to configure</p>
       </div>
 
@@ -198,7 +198,7 @@ function GesturePanel({
   return (
     <div className="flex h-full w-[260px] flex-col border-border border-r bg-background">
       <div className="flex flex-col gap-1 border-border border-b px-4 py-4 pb-3">
-        <h3 className="font-semibold text-foreground text-sm">Gestures</h3>
+        <h3 className="font-semibold text-foreground">Gestures</h3>
         <p className="text-foreground-muted text-xs">
           Assign action to each gesture
         </p>

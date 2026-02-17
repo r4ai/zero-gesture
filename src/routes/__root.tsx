@@ -72,11 +72,11 @@ function AppLayout() {
                     <div className="flex size-7 items-center justify-center rounded-lg bg-background-subtle">
                       <MousePointer2 className="size-3.5 text-foreground" />
                     </div>
-                    <span className="font-bold text-[15px]">Zero Gesture</span>
+                    <span className="font-bold">Zero Gesture</span>
                   </div>
                   <div className="flex h-[34px] items-center gap-2 rounded-lg border border-border bg-background-card px-2.5">
                     <Search className="size-3.5 text-foreground-subtle" />
-                    <span className="text-[13px] text-foreground-subtle">
+                    <span className="text-foreground-subtle text-sm">
                       Search...
                     </span>
                   </div>
@@ -86,7 +86,7 @@ function AppLayout() {
 
             <SidebarBody>
               {!compact ? (
-                <div className="mb-1 px-3 font-semibold text-[11px] text-foreground-subtle tracking-wider">
+                <div className="mb-1 px-3 font-semibold text-foreground-subtle text-xs tracking-wider">
                   PAGES
                 </div>
               ) : null}
@@ -162,7 +162,7 @@ function AppLayout() {
                 </DropdownMenu>
               ) : (
                 <>
-                  <div className="font-semibold text-[11px] text-foreground-subtle tracking-wider">
+                  <div className="font-semibold text-foreground-subtle text-xs tracking-wider">
                     THEME
                   </div>
                   <Select

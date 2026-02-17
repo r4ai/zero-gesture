@@ -16,7 +16,7 @@ const sidebar = tv({
     header: "flex flex-col gap-4 border-border border-b px-4 pt-5 pb-4",
     body: "flex flex-1 flex-col gap-1 overflow-y-auto p-2",
     footer: "flex flex-col gap-2 border-border border-t px-3 pt-3 pb-4",
-    item: "flex h-10 w-full items-center gap-2.5 rounded-lg border border-transparent px-3 font-medium text-[13px] transition-colors hover:bg-background-subtle",
+    item: "flex h-10 w-full items-center gap-2.5 rounded-lg border border-transparent px-3 font-medium text-sm transition-colors hover:bg-background-subtle",
     rail: "absolute top-0 -right-1 z-20 h-full w-2 cursor-col-resize touch-none bg-transparent after:absolute after:top-0 after:left-1/2 after:h-full after:w-px after:-translate-x-1/2 after:bg-transparent hover:after:bg-border data-[dragging=true]:after:bg-border-bright",
   },
   variants: {
