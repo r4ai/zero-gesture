@@ -35,7 +35,7 @@ export function KeyInput({
       <span className="font-medium text-[12px] text-foreground-subtle">
         Shortcut
       </span>
-      <div className="flex h-[40px] items-center gap-2 rounded-[8px] border border-border-bright bg-background-card px-3">
+      <div className="flex h-[40px] items-center gap-2 rounded-[8px] border bg-background-card px-3">
         {keys.length > 0 ? (
           <div className="flex flex-1 items-center gap-1.5 overflow-hidden">
             {keys.map((key, index) => (

@@ -2079,7 +2079,7 @@
                               "stroke": {
                                 "align": "inside",
                                 "thickness": 1,
-                                "fill": "$border-bright"
+                                "fill": "$border"
                               },
                               "gap": 8,
                               "padding": [
