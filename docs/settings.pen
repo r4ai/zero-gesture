@@ -2072,6 +2072,7 @@
                               "type": "frame",
                               "id": "frw2x",
                               "name": "Key Input Box",
+                              "context": "Clicking here navigates to Keyboard Input - Wait For Input",
                               "width": "fill_container",
                               "height": 40,
                               "fill": "$background-card",
@@ -2171,6 +2172,7 @@
                                   "type": "frame",
                                   "id": "EsPFI",
                                   "name": "Manual Input Btn",
+                                  "context": "Clicking here navigates to Keyboard Input - Manual Builder",
                                   "width": 24,
                                   "height": 24,
                                   "fill": "$transparent",
@@ -8342,6 +8344,770 @@
                       "fontFamily": "DM Sans",
                       "fontSize": 13,
                       "fontWeight": "600"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "i1hm3",
+      "x": 912,
+      "y": 2037,
+      "name": "Keyboard Input - Wait For Input",
+      "width": 1100,
+      "height": 820,
+      "fill": "$background",
+      "layout": "none",
+      "children": [
+        {
+          "type": "frame",
+          "id": "BIf0F",
+          "x": 0,
+          "y": 0,
+          "name": "BG Dim",
+          "width": 1100,
+          "height": 820,
+          "fill": "$background-overlay"
+        },
+        {
+          "type": "frame",
+          "id": "vTtXS",
+          "x": 290,
+          "y": 208,
+          "name": "Dialog",
+          "clip": true,
+          "width": 520,
+          "fill": "$background-elevated",
+          "cornerRadius": 14,
+          "stroke": {
+            "align": "inside",
+            "thickness": 1,
+            "fill": "$border"
+          },
+          "effect": {
+            "type": "shadow",
+            "shadowType": "outer",
+            "color": "#00000060",
+            "offset": {
+              "x": 0,
+              "y": 16
+            },
+            "blur": 48
+          },
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "gKfTr",
+              "name": "Dialog Header",
+              "width": "fill_container",
+              "padding": [
+                10,
+                10,
+                0,
+                10
+              ],
+              "justifyContent": "end",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "VOA7g",
+                  "name": "dialogClose",
+                  "width": 28,
+                  "height": 28,
+                  "fill": "$background-glass",
+                  "cornerRadius": 6,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon_font",
+                      "id": "rI7uu",
+                      "name": "dialogCloseIcon",
+                      "width": 14,
+                      "height": 14,
+                      "iconFontName": "x",
+                      "iconFontFamily": "lucide",
+                      "fill": "$foreground-subtle"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "0S8xY",
+              "name": "Dialog Body",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 20,
+              "padding": [
+                20,
+                32,
+                36,
+                32
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "i3w89",
+                  "name": "keyboardIconWrap",
+                  "width": 72,
+                  "height": 72,
+                  "fill": "$background-glass-medium",
+                  "cornerRadius": 36,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon_font",
+                      "id": "pKqT9",
+                      "name": "keyboardIcon",
+                      "width": 32,
+                      "height": 32,
+                      "iconFontName": "keyboard",
+                      "iconFontFamily": "lucide",
+                      "fill": "$white"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "caZOq",
+                  "name": "waitTitle",
+                  "fill": "$foreground",
+                  "content": "Press a Key Combination",
+                  "textAlign": "center",
+                  "fontFamily": "DM Sans",
+                  "fontSize": 18,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "text",
+                  "id": "k4Fyh",
+                  "name": "waitDesc",
+                  "fill": "$foreground-muted",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Press any key combination to assign it as a shortcut.\nHold modifier keys (⌘, ⌃, ⌥, ⇧) together with a key.",
+                  "textAlign": "center",
+                  "fontFamily": "DM Sans",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "djcUt",
+                  "name": "keyDisplay",
+                  "width": "fill_container",
+                  "height": 64,
+                  "fill": "$background-glass",
+                  "cornerRadius": 10,
+                  "stroke": {
+                    "align": "inside",
+                    "thickness": 1,
+                    "fill": "$border-muted"
+                  },
+                  "gap": 8,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "cb6IN",
+                      "name": "dot",
+                      "width": 6,
+                      "height": 6,
+                      "fill": "$foreground-faint",
+                      "cornerRadius": 3
+                    },
+                    {
+                      "type": "frame",
+                      "id": "T2qOp",
+                      "name": "dot",
+                      "width": 6,
+                      "height": 6,
+                      "fill": "$foreground-faint",
+                      "cornerRadius": 3
+                    },
+                    {
+                      "type": "frame",
+                      "id": "XtvQH",
+                      "name": "dot",
+                      "width": 6,
+                      "height": 6,
+                      "fill": "$foreground-faint",
+                      "cornerRadius": 3
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "xeNcv",
+                  "name": "escHint",
+                  "height": 32,
+                  "fill": "$background-card",
+                  "cornerRadius": 6,
+                  "stroke": {
+                    "align": "inside",
+                    "thickness": 1,
+                    "fill": "$border-muted"
+                  },
+                  "gap": 8,
+                  "padding": [
+                    0,
+                    12
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "UsAMd",
+                      "name": "escKey",
+                      "width": 28,
+                      "height": 20,
+                      "fill": "$background-subtle",
+                      "cornerRadius": 4,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "3RtsY",
+                          "name": "escKeyLabel",
+                          "fill": "$foreground-subtle",
+                          "content": "Esc",
+                          "fontFamily": "DM Sans",
+                          "fontSize": 11,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "fuMzr",
+                      "name": "escLabel",
+                      "fill": "$foreground-subtle",
+                      "content": "Press Esc to cancel",
+                      "fontFamily": "DM Sans",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "L7lC7",
+      "x": 2071,
+      "y": 2037,
+      "name": "Keyboard Input - Manual Builder",
+      "width": 1100,
+      "height": 820,
+      "fill": "$background",
+      "layout": "none",
+      "children": [
+        {
+          "type": "frame",
+          "id": "L7YSa",
+          "x": 0,
+          "y": 0,
+          "name": "BG Dim",
+          "width": 1100,
+          "height": 820,
+          "fill": "$background-overlay"
+        },
+        {
+          "type": "frame",
+          "id": "ktjvR",
+          "x": 270,
+          "y": 175,
+          "name": "Dialog",
+          "clip": true,
+          "width": 560,
+          "fill": "$background-elevated",
+          "cornerRadius": 14,
+          "stroke": {
+            "align": "inside",
+            "thickness": 1,
+            "fill": "$border"
+          },
+          "effect": {
+            "type": "shadow",
+            "shadowType": "outer",
+            "color": "#00000060",
+            "offset": {
+              "x": 0,
+              "y": 16
+            },
+            "blur": 48
+          },
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "g17FV",
+              "name": "Dialog Body",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 20,
+              "padding": [
+                16,
+                28,
+                28,
+                28
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "4Xic6",
+                  "name": "Frame 3",
+                  "clip": true,
+                  "width": "fill_container",
+                  "justifyContent": "space_between",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "zvwoe",
+                      "name": "titleRow",
+                      "width": "fill_container",
+                      "gap": 10,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "M8xk4",
+                          "name": "titleIcon",
+                          "width": 18,
+                          "height": 18,
+                          "iconFontName": "keyboard",
+                          "iconFontFamily": "lucide",
+                          "fill": "$foreground-muted"
+                        },
+                        {
+                          "type": "text",
+                          "id": "PcBpf",
+                          "name": "dialogTitle",
+                          "fill": "$foreground",
+                          "content": "Create Key Combination",
+                          "fontFamily": "DM Sans",
+                          "fontSize": 16,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "QxlGO",
+                      "name": "dialogClose",
+                      "width": 28,
+                      "height": 28,
+                      "fill": "$background-glass",
+                      "cornerRadius": 6,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "Xfk2S",
+                          "name": "dialogCloseIcon",
+                          "width": 14,
+                          "height": 14,
+                          "iconFontName": "x",
+                          "iconFontFamily": "lucide",
+                          "fill": "$foreground-subtle"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "FKTSg",
+                  "name": "divider",
+                  "width": "fill_container",
+                  "height": 1,
+                  "fill": "$border"
+                },
+                {
+                  "type": "frame",
+                  "id": "X2Le3",
+                  "name": "modifierSection",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 10,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "qb9JZ",
+                      "name": "sectionLabel",
+                      "fill": "$foreground-subtle",
+                      "content": "Modifier Keys",
+                      "fontFamily": "DM Sans",
+                      "fontSize": 12,
+                      "fontWeight": "500"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "xnd5S",
+                      "name": "modifierKeys",
+                      "width": "fill_container",
+                      "gap": 8,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "fSmyQ",
+                          "name": "modKey-cmd",
+                          "height": 36,
+                          "fill": "$background-card",
+                          "cornerRadius": 8,
+                          "stroke": {
+                            "align": "inside",
+                            "thickness": 1,
+                            "fill": "$border-bright"
+                          },
+                          "gap": 6,
+                          "padding": [
+                            0,
+                            14
+                          ],
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "N6AmG",
+                              "name": "modCmdText",
+                              "fill": "$foreground",
+                              "content": "⌘ Command",
+                              "fontFamily": "DM Sans",
+                              "fontSize": 13,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "dFNKV",
+                          "name": "modKey-ctrl",
+                          "height": 36,
+                          "fill": "$background-glass",
+                          "cornerRadius": 8,
+                          "stroke": {
+                            "align": "inside",
+                            "thickness": 1,
+                            "fill": "$border-muted"
+                          },
+                          "gap": 6,
+                          "padding": [
+                            0,
+                            14
+                          ],
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "hKPRR",
+                              "name": "modCtrlText",
+                              "fill": "$foreground-muted",
+                              "content": "⌃ Control",
+                              "fontFamily": "DM Sans",
+                              "fontSize": 13,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "Ma2Qp",
+                          "name": "modKey-option",
+                          "height": 36,
+                          "fill": "$background-glass",
+                          "cornerRadius": 8,
+                          "stroke": {
+                            "align": "inside",
+                            "thickness": 1,
+                            "fill": "$border-muted"
+                          },
+                          "gap": 6,
+                          "padding": [
+                            0,
+                            14
+                          ],
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "PRk8w",
+                              "name": "modOptText",
+                              "fill": "$foreground-muted",
+                              "content": "⌥ Option",
+                              "fontFamily": "DM Sans",
+                              "fontSize": 13,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "7bLOS",
+                          "name": "modKey-shift",
+                          "height": 36,
+                          "fill": "$background-glass",
+                          "cornerRadius": 8,
+                          "stroke": {
+                            "align": "inside",
+                            "thickness": 1,
+                            "fill": "$border-muted"
+                          },
+                          "gap": 6,
+                          "padding": [
+                            0,
+                            14
+                          ],
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "SVMLB",
+                              "name": "modShiftText",
+                              "fill": "$foreground-muted",
+                              "content": "⇧ Shift",
+                              "fontFamily": "DM Sans",
+                              "fontSize": 13,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "0Ch44",
+                  "name": "keySection",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 10,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "Rj7cp",
+                      "name": "sectionLabel",
+                      "fill": "$foreground-subtle",
+                      "content": "Key",
+                      "fontFamily": "DM Sans",
+                      "fontSize": 12,
+                      "fontWeight": "500"
+                    },
+                    {
+                      "id": "x8NHB",
+                      "type": "ref",
+                      "ref": "QwRhd",
+                      "width": "fill_container",
+                      "name": "keySelect",
+                      "descendants": {
+                        "M1mWl": {
+                          "iconFontName": "keyboard"
+                        },
+                        "EkdGt": {
+                          "content": "Select a key..."
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "qCDdm",
+                  "name": "divider",
+                  "width": "fill_container",
+                  "height": 1,
+                  "fill": "$border"
+                },
+                {
+                  "type": "frame",
+                  "id": "Oq9cH",
+                  "name": "previewSection",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 10,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "vKQAb",
+                      "name": "sectionLabel",
+                      "fill": "$foreground-subtle",
+                      "content": "Preview",
+                      "fontFamily": "DM Sans",
+                      "fontSize": 12,
+                      "fontWeight": "500"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "RsnrY",
+                      "name": "previewBox",
+                      "width": "fill_container",
+                      "height": 56,
+                      "fill": "$background-glass",
+                      "cornerRadius": 10,
+                      "stroke": {
+                        "align": "inside",
+                        "thickness": 1,
+                        "fill": "$border-muted"
+                      },
+                      "gap": 6,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "R8zap",
+                          "name": "previewKey",
+                          "height": 32,
+                          "fill": "$background-card",
+                          "cornerRadius": 6,
+                          "stroke": {
+                            "align": "inside",
+                            "thickness": 1,
+                            "fill": "$border-bright"
+                          },
+                          "padding": [
+                            0,
+                            12
+                          ],
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "ntCvl",
+                              "name": "prevKey1Text",
+                              "fill": "$foreground",
+                              "content": "⌘",
+                              "fontFamily": "DM Sans",
+                              "fontSize": 16,
+                              "fontWeight": "600"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "VgV2D",
+                          "name": "prevPlus",
+                          "fill": "$foreground-muted",
+                          "content": "+",
+                          "fontFamily": "DM Sans",
+                          "fontSize": 16
+                        },
+                        {
+                          "type": "frame",
+                          "id": "WmTmv",
+                          "name": "previewKey",
+                          "height": 32,
+                          "fill": "$background-card",
+                          "cornerRadius": 6,
+                          "stroke": {
+                            "align": "inside",
+                            "thickness": 1,
+                            "fill": "$border-bright"
+                          },
+                          "padding": [
+                            0,
+                            12
+                          ],
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "YLzkW",
+                              "name": "prevKey2Text",
+                              "fill": "$foreground",
+                              "content": "K",
+                              "fontFamily": "DM Sans",
+                              "fontSize": 16,
+                              "fontWeight": "600"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "zV5eR",
+                  "name": "actionRow",
+                  "width": "fill_container",
+                  "gap": 10,
+                  "justifyContent": "end",
+                  "children": [
+                    {
+                      "id": "LuKnN",
+                      "type": "ref",
+                      "ref": "YJCAp",
+                      "width": 100,
+                      "height": 36,
+                      "name": "cancelBtn",
+                      "descendants": {
+                        "lwaWE": {
+                          "enabled": false
+                        },
+                        "YcAJc": {
+                          "content": "Cancel"
+                        }
+                      }
+                    },
+                    {
+                      "type": "frame",
+                      "id": "fbtHl",
+                      "name": "assignBtn",
+                      "width": 120,
+                      "height": 36,
+                      "fill": "$foreground",
+                      "cornerRadius": 6,
+                      "gap": 6,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "pLSGO",
+                          "name": "assignIcon",
+                          "width": 14,
+                          "height": 14,
+                          "iconFontName": "check",
+                          "iconFontFamily": "lucide",
+                          "fill": "$foreground-inverted"
+                        },
+                        {
+                          "type": "text",
+                          "id": "p4aYq",
+                          "name": "assignText",
+                          "fill": "$foreground-inverted",
+                          "content": "Assign",
+                          "fontFamily": "DM Sans",
+                          "fontSize": 13,
+                          "fontWeight": "600"
+                        }
+                      ]
                     }
                   ]
                 }
