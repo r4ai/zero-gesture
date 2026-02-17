@@ -1,4 +1,10 @@
-import { type Key, Tabs as RATabs, Tab, TabPanel } from "react-aria-components"
+import {
+  type Key,
+  TabList as RATabList,
+  Tabs as RATabs,
+  Tab,
+  TabPanel,
+} from "react-aria-components"
 import { tv } from "tailwind-variants"
 
 const tabs = tv({
@@ -42,7 +48,7 @@ export function TabList({
   children,
 }: React.HTMLAttributes<HTMLDivElement>) {
   const { tabList } = tabs()
-  return <div className={tabList({ className })}>{children}</div>
+  return <RATabList className={tabList({ className })}>{children}</RATabList>
 }
 
 interface TabItemProps {

@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { KeyInput } from "@/components/ui/key-input"
 import { Select, SelectItem } from "@/components/ui/select"
-import { TabItem, Tabs } from "@/components/ui/tabs"
+import { TabItem, TabList, Tabs } from "@/components/ui/tabs"
 import {
   DEFAULT_BINDINGS,
   type GestureBinding,
@@ -219,10 +219,10 @@ function ApplicationsSettings() {
                 }
                 className="w-full"
               >
-                <div className="flex h-10 items-center gap-1 rounded-xl border border-border bg-background-card p-1">
+                <TabList className="flex h-10 items-center gap-1 rounded-xl border border-border bg-background-card p-1">
                   <TabItem id="gesture">Gesture</TabItem>
                   <TabItem id="action">Action</TabItem>
-                </div>
+                </TabList>
               </Tabs>
             </div>
 
