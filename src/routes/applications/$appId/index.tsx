@@ -11,8 +11,8 @@ import {
   getGestureId,
 } from "@/components/applications/app-settings-layout"
 import { Button } from "@/components/ui/button"
+import { ComboBox, ComboBoxItem } from "@/components/ui/combobox"
 import { Dialog, DialogContent } from "@/components/ui/dialog"
-import { Select, SelectItem } from "@/components/ui/select"
 
 type KeyboardInputMode = "wait" | "manual"
 
@@ -335,17 +335,17 @@ function KeyboardInputPage() {
 
             <div className="flex flex-col gap-2.5">
               <span className="text-[12px] text-foreground-subtle">Key</span>
-              <Select
+              <ComboBox
                 placeholder="Select a key..."
-                value={selectedKey || undefined}
-                onChange={(key) => setSelectedKey(String(key || ""))}
+                selectedKey={selectedKey || null}
+                onSelectionChange={(key) => setSelectedKey(String(key || ""))}
               >
                 {SHORTCUT_KEYS.map((key) => (
-                  <SelectItem key={key} id={key} textValue={key}>
+                  <ComboBoxItem key={key} id={key} textValue={key}>
                     {key}
-                  </SelectItem>
+                  </ComboBoxItem>
                 ))}
-              </Select>
+              </ComboBox>
             </div>
 
             <div className="h-px bg-border" />
