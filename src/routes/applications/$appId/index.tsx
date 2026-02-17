@@ -20,6 +20,7 @@ interface KeyboardInputSearch {
   mode?: KeyboardInputMode
   gestureId?: string
   keys?: string
+  tab?: "gesture" | "action"
 }
 
 const MODIFIER_KEYS = ["Ctrl", "Alt", "Shift", "Win"] as const
@@ -82,8 +83,12 @@ export const Route = createFileRoute("/applications/$appId/")({
       typeof search.keys === "string" && search.keys.length > 0
         ? search.keys
         : undefined
+    const tab =
+      search.tab === "gesture" || search.tab === "action"
+        ? search.tab
+        : undefined
 
-    return { mode, gestureId, keys }
+    return { mode, gestureId, keys, tab }
   },
   beforeLoad: ({ params, search }) => {
     const targetGestureId = search.gestureId || getGestureId(GESTURES[0])
@@ -191,11 +196,16 @@ function KeyboardInputPage() {
       navigate({
         to: "/applications/$appId/gestures/$gestureId",
         params: { appId, gestureId: targetGestureId },
-        search: keys && keys.length > 0 ? { shortcut: keys.join(",") } : {},
+        search:
+          keys && keys.length > 0
+            ? { shortcut: keys.join(","), tab: search.tab }
+            : search.tab
+              ? { tab: search.tab }
+              : {},
         replace: true,
       })
     },
-    [appId, navigate, targetGestureId],
+    [appId, navigate, search.tab, targetGestureId],
   )
 
   useEffect(() => {

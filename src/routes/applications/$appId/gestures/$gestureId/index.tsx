@@ -15,8 +15,356 @@ import { TabItem, TabList, Tabs } from "@/components/ui/tabs"
 export const Route = createFileRoute(
   "/applications/$appId/gestures/$gestureId/",
 )({
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { shortcut?: string; tab?: ActionEditTab } => {
+    const shortcut =
+      typeof search.shortcut === "string" && search.shortcut.length > 0
+        ? search.shortcut
+        : undefined
+    const tab =
+      search.tab === "gesture" || search.tab === "action"
+        ? search.tab
+        : undefined
+
+    return { shortcut, tab }
+  },
   component: ActionEditPage,
 })
+
+type ActionEditTab = "gesture" | "action"
+type GestureMode = "hold" | "release"
+
+type SequenceRow = {
+  id: number
+  type: string
+  step: string
+}
+
+const INITIAL_SEQUENCE_ROWS: SequenceRow[] = [
+  { id: 1, type: "mouse-move", step: "left" },
+  { id: 2, type: "mouse-move", step: "right" },
+]
+
+function ActionEditHeader({
+  title,
+  onRemoveAction,
+}: {
+  title: string
+  onRemoveAction: () => void
+}) {
+  return (
+    <div className="flex h-16 items-center justify-between border-border border-b px-6">
+      <div className="flex flex-col">
+        <h2 className="font-semibold text-foreground text-lg">{title}</h2>
+      </div>
+      <Button
+        variant="outline"
+        className="h-8 gap-2 rounded-md border-destructive-subtle bg-destructive-subtle text-[12px] text-destructive hover:bg-destructive/20"
+        onPress={onRemoveAction}
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+        <span>Remove Action</span>
+      </Button>
+    </div>
+  )
+}
+
+function ActionEditTabs({
+  selectedTab,
+  onSelectionChange,
+}: {
+  selectedTab: ActionEditTab
+  onSelectionChange: (tab: ActionEditTab) => void
+}) {
+  return (
+    <div className="flex h-14 items-center border-border px-6 py-2">
+      <Tabs
+        selectedKey={selectedTab}
+        onSelectionChange={(key: string | number) =>
+          onSelectionChange(String(key) as ActionEditTab)
+        }
+        className="w-full"
+      >
+        <TabList className="flex h-10 items-center gap-1 rounded-xl border border-border bg-background-card p-1">
+          <TabItem id="gesture">Gesture</TabItem>
+          <TabItem id="action">Action</TabItem>
+        </TabList>
+      </Tabs>
+    </div>
+  )
+}
+
+function ActionTabContent({
+  editedKeys,
+  onKeysChange,
+  onWaitMode,
+  onManualMode,
+}: {
+  editedKeys: string[]
+  onKeysChange: (keys: string[]) => void
+  onWaitMode: () => void
+  onManualMode: () => void
+}) {
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-col gap-2">
+        <span className="font-medium text-foreground text-sm">Action Type</span>
+        <Select value="keyboard" onChange={() => {}} className="w-full">
+          <SelectItem id="keyboard" textValue="Keyboard Shortcut">
+            <div className="flex items-center gap-2">
+              <div className="flex h-4 w-4 items-center justify-center">
+                <Keyboard className="h-3.5 w-3.5" />
+              </div>
+              <span className="font-medium text-[13px]">Keyboard Shortcut</span>
+            </div>
+          </SelectItem>
+        </Select>
+      </div>
+
+      <div className="h-px bg-border" />
+
+      <KeyInput
+        keys={editedKeys}
+        onChange={onKeysChange}
+        onPress={onWaitMode}
+        onKeyboardPress={onManualMode}
+      />
+    </div>
+  )
+}
+
+function GestureTabContent({
+  triggerButton,
+  gestureMode,
+  sequenceRows,
+  finalStep,
+  onTriggerButtonChange,
+  onGestureModeChange,
+  onSequenceRowChange,
+  onAddSequenceRow,
+  onRemoveSequenceRow,
+  onFinalStepChange,
+}: {
+  triggerButton: string
+  gestureMode: GestureMode
+  sequenceRows: SequenceRow[]
+  finalStep: string
+  onTriggerButtonChange: (key: string) => void
+  onGestureModeChange: (mode: GestureMode) => void
+  onSequenceRowChange: (
+    rowId: number,
+    patch: Partial<Pick<SequenceRow, "type" | "step">>,
+  ) => void
+  onAddSequenceRow: () => void
+  onRemoveSequenceRow: (rowId: number) => void
+  onFinalStepChange: (key: string) => void
+}) {
+  return (
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-2">
+        <span className="font-medium text-foreground text-sm">
+          Trigger Button
+        </span>
+        <div className="flex h-10 items-center gap-2">
+          <Select
+            value={triggerButton}
+            onChange={(key) => onTriggerButtonChange(String(key))}
+            className="flex-1"
+          >
+            <SelectItem id="right-click" textValue="Right Click">
+              Right Click
+            </SelectItem>
+            <SelectItem id="left-click" textValue="Left Click">
+              Left Click
+            </SelectItem>
+            <SelectItem id="middle-click" textValue="Middle Click">
+              Middle Click
+            </SelectItem>
+          </Select>
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-10 w-10 rounded-[8px] border-border bg-background-card hover:bg-background-subtle"
+          >
+            <Keyboard className="h-3.5 w-3.5 text-foreground" />
+          </Button>
+        </div>
+        <p className="text-foreground-muted text-xs">
+          Use the keyboard icon to capture from live input.
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <span className="font-medium text-foreground text-sm">
+          Gesture Mode
+        </span>
+        <Tabs
+          selectedKey={gestureMode}
+          onSelectionChange={(key: string | number) =>
+            onGestureModeChange(String(key) as GestureMode)
+          }
+          className="w-full"
+        >
+          <TabList className="flex h-10 items-center gap-1 rounded-xl border border-border bg-background-card p-1">
+            <TabItem id="hold">Hold</TabItem>
+            <TabItem id="release">Release</TabItem>
+          </TabList>
+        </Tabs>
+        <p className="text-foreground-muted text-xs">
+          Hold: fires while the trigger is held. Release: fires on trigger
+          release.
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-3">
+        <span className="font-medium text-foreground text-sm">Sequence</span>
+        <p className="text-foreground-muted text-xs">
+          Ordered steps recognized before the final step fires. Up to 8 steps.
+        </p>
+        <div className="flex flex-col gap-2">
+          {sequenceRows.map((row, index) => (
+            <div key={row.id} className="flex items-center gap-2">
+              <span className="w-3 text-center text-[12px] text-foreground-muted">
+                {index + 1}
+              </span>
+              <Select
+                value={row.type}
+                onChange={(key) =>
+                  onSequenceRowChange(row.id, { type: String(key) })
+                }
+                className="w-[140px]"
+              >
+                <SelectItem id="mouse-move" textValue="Mouse Move">
+                  Mouse Move
+                </SelectItem>
+                <SelectItem id="mouse-input" textValue="Mouse Input">
+                  Mouse Input
+                </SelectItem>
+              </Select>
+              <Select
+                value={row.step}
+                onChange={(key) =>
+                  onSequenceRowChange(row.id, { step: String(key) })
+                }
+                className="flex-1"
+              >
+                <SelectItem id="left" textValue="Left">
+                  Left
+                </SelectItem>
+                <SelectItem id="right" textValue="Right">
+                  Right
+                </SelectItem>
+                <SelectItem id="up" textValue="Up">
+                  Up
+                </SelectItem>
+                <SelectItem id="down" textValue="Down">
+                  Down
+                </SelectItem>
+                <SelectItem id="wheel-up" textValue="Wheel Up">
+                  Wheel Up
+                </SelectItem>
+                <SelectItem id="wheel-down" textValue="Wheel Down">
+                  Wheel Down
+                </SelectItem>
+              </Select>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-10 w-10 rounded-[8px] border-destructive-subtle bg-destructive-subtle text-destructive hover:bg-destructive/20 hover:text-destructive"
+                onPress={() => onRemoveSequenceRow(row.id)}
+                isDisabled={sequenceRows.length <= 1}
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          ))}
+        </div>
+        <div className="flex items-start justify-between">
+          <Badge
+            variant="outline"
+            className="py-3 font-medium text-foreground-muted text-sm"
+          >
+            {sequenceRows.length} / 8 used
+          </Badge>
+          <Button
+            variant="outline"
+            className="text-sm"
+            onPress={onAddSequenceRow}
+            isDisabled={sequenceRows.length >= 8}
+          >
+            <Plus className="h-3 w-3" />
+            <span>Add Step</span>
+          </Button>
+        </div>
+        <p className="text-foreground-muted text-xs">
+          Supported steps: Left / Right / Up / Down / Wheel Up / Wheel Down /
+          Left Click / Right Click / Middle Click
+        </p>
+        {gestureMode === "hold" && (
+          <div className="flex flex-col gap-2">
+            <span className="font-medium text-foreground text-sm">Step</span>
+            <p className="text-foreground-muted text-xs">
+              Single non-movement input that fires while the trigger is held.
+            </p>
+            <Select
+              value={finalStep}
+              onChange={(key) => onFinalStepChange(String(key))}
+              className="w-full"
+            >
+              <SelectItem id="wheel-up" textValue="Wheel Up">
+                Wheel Up
+              </SelectItem>
+              <SelectItem id="wheel-down" textValue="Wheel Down">
+                Wheel Down
+              </SelectItem>
+              <SelectItem id="left-click" textValue="Left Click">
+                Left Click
+              </SelectItem>
+              <SelectItem id="right-click" textValue="Right Click">
+                Right Click
+              </SelectItem>
+              <SelectItem id="middle-click" textValue="Middle Click">
+                Middle Click
+              </SelectItem>
+            </Select>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ActionEditFooter({
+  isDirty,
+  onCancel,
+  onSave,
+}: {
+  isDirty: boolean
+  onCancel: () => void
+  onSave: () => void
+}) {
+  return (
+    <div className="flex h-16 items-center justify-end gap-3 border-border border-t px-6">
+      <Button
+        variant="outline"
+        className="h-9 px-4 text-[13px]"
+        onPress={onCancel}
+        isDisabled={!isDirty}
+      >
+        Cancel
+      </Button>
+      <Button
+        className="h-9 gap-2 px-4 text-[13px]"
+        onPress={onSave}
+        isDisabled={!isDirty}
+      >
+        <Check className="h-4 w-4" />
+        <span>Save Changes</span>
+      </Button>
+    </div>
+  )
+}
 
 /**
  * Action Edit Page - Edit gesture action (right panel)
@@ -26,19 +374,16 @@ function ActionEditPage() {
   const { appId, gestureId } = useParams({
     from: "/applications/$appId/gestures/$gestureId/",
   })
-  const search = Route.useSearch() as { shortcut?: string }
+  const search = Route.useSearch()
   const navigate = useNavigate()
   const gesture = GESTURES.find((item) => getGestureId(item) === gestureId)
   const originalKeys = gesture?.action.keys ?? []
-  const [selectedTab, setSelectedTab] = useState<string>("gesture")
-  const [gestureMode, setGestureMode] = useState<"hold" | "release">("hold")
+  const selectedTab = search.tab ?? "gesture"
+  const [gestureMode, setGestureMode] = useState<GestureMode>("hold")
   const [triggerButton, setTriggerButton] = useState<string>("right-click")
-  const [sequenceRows, setSequenceRows] = useState<
-    { id: number; type: string; step: string }[]
-  >([
-    { id: 1, type: "mouse-move", step: "left" },
-    { id: 2, type: "mouse-move", step: "right" },
-  ])
+  const [sequenceRows, setSequenceRows] = useState<SequenceRow[]>(
+    INITIAL_SEQUENCE_ROWS,
+  )
   const [finalStep, setFinalStep] = useState<string>("wheel-up")
   const [editedKeys, setEditedKeys] = useState<string[]>(originalKeys)
   const [isDirty, setIsDirty] = useState(false)
@@ -53,10 +398,7 @@ function ActionEditPage() {
     setEditedKeys(originalKeys)
     setGestureMode("hold")
     setTriggerButton("right-click")
-    setSequenceRows([
-      { id: 1, type: "mouse-move", step: "left" },
-      { id: 2, type: "mouse-move", step: "right" },
-    ])
+    setSequenceRows(INITIAL_SEQUENCE_ROWS)
     setFinalStep("wheel-up")
     setIsDirty(false)
   }
@@ -73,13 +415,14 @@ function ActionEditPage() {
         mode,
         gestureId,
         keys: editedKeys.length > 0 ? editedKeys.join(",") : undefined,
+        tab: selectedTab,
       },
     })
   }
 
   const updateSequenceRow = (
     rowId: number,
-    patch: Partial<{ type: string; step: string }>,
+    patch: Partial<Pick<SequenceRow, "type" | "step">>,
   ) => {
     setSequenceRows((prev) =>
       prev.map((row) => (row.id === rowId ? { ...row, ...patch } : row)),
@@ -119,10 +462,10 @@ function ActionEditPage() {
     navigate({
       to: "/applications/$appId/gestures/$gestureId",
       params: { appId, gestureId },
-      search: {},
+      search: search.tab ? { tab: search.tab } : {},
       replace: true,
     })
-  }, [appId, gestureId, navigate, search.shortcut])
+  }, [appId, gestureId, navigate, search.shortcut, search.tab])
 
   if (!gesture) {
     return (
@@ -138,287 +481,64 @@ function ActionEditPage() {
 
   return (
     <AppSettingsLayout appId={appId} selectedGestureId={gestureId}>
-      {/* Header */}
-      <div className="flex h-16 items-center justify-between border-border border-b px-6">
-        <div className="flex flex-col">
-          <h2 className="font-semibold text-foreground text-lg">
-            {gesture.label ?? "Untitled"}
-          </h2>
-        </div>
-        <Button
-          variant="outline"
-          className="h-8 gap-2 rounded-md border-destructive-subtle bg-destructive-subtle text-[12px] text-destructive hover:bg-destructive/20"
-          onPress={handleRemoveAction}
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-          <span>Remove Action</span>
-        </Button>
-      </div>
-
-      {/* Tab Bar */}
-      <div className="flex h-14 items-center border-border px-6 py-2">
-        <Tabs
-          selectedKey={selectedTab}
-          onSelectionChange={(key: string | number) =>
-            setSelectedTab(String(key))
-          }
-          className="w-full"
-        >
-          <TabList className="flex h-10 items-center gap-1 rounded-xl border border-border bg-background-card p-1">
-            <TabItem id="gesture">Gesture</TabItem>
-            <TabItem id="action">Action</TabItem>
-          </TabList>
-        </Tabs>
-      </div>
-
-      {/* Body */}
+      <ActionEditHeader
+        title={gesture.label ?? "Untitled"}
+        onRemoveAction={handleRemoveAction}
+      />
+      <ActionEditTabs
+        selectedTab={selectedTab}
+        onSelectionChange={(tab) => {
+          navigate({
+            to: "/applications/$appId/gestures/$gestureId",
+            params: { appId, gestureId },
+            search: { tab },
+            replace: true,
+          })
+        }}
+      />
       <div className="flex-1 overflow-y-auto p-6">
         {selectedTab === "action" && (
-          <div className="flex flex-col gap-6">
-            {/* Action Type */}
-            <div className="flex flex-col gap-2">
-              <span className="font-medium text-foreground text-sm">
-                Action Type
-              </span>
-              <Select value="keyboard" onChange={() => {}} className="w-full">
-                <SelectItem id="keyboard" textValue="Keyboard Shortcut">
-                  <div className="flex items-center gap-2">
-                    <div className="flex h-4 w-4 items-center justify-center">
-                      <Keyboard className="h-3.5 w-3.5" />
-                    </div>
-                    <span className="font-medium text-[13px]">
-                      Keyboard Shortcut
-                    </span>
-                  </div>
-                </SelectItem>
-              </Select>
-            </div>
-
-            {/* Divider */}
-            <div className="h-px bg-border" />
-
-            {/* Keyboard Shortcut */}
-            <KeyInput
-              keys={editedKeys}
-              onChange={(keys) => {
-                setEditedKeys(keys)
-                setIsDirty(true)
-              }}
-              onPress={() => openKeyboardInput("wait")}
-              onKeyboardPress={() => openKeyboardInput("manual")}
-            />
-          </div>
+          <ActionTabContent
+            editedKeys={editedKeys}
+            onKeysChange={(keys) => {
+              setEditedKeys(keys)
+              setIsDirty(true)
+            }}
+            onWaitMode={() => openKeyboardInput("wait")}
+            onManualMode={() => openKeyboardInput("manual")}
+          />
         )}
 
         {selectedTab === "gesture" && (
-          <div className="flex flex-col gap-5">
-            <div className="flex flex-col gap-2">
-              <span className="font-medium text-foreground text-sm">
-                Trigger Button
-              </span>
-              <div className="flex h-10 items-center gap-2">
-                <Select
-                  value={triggerButton}
-                  onChange={(key) => {
-                    setTriggerButton(String(key))
-                    setIsDirty(true)
-                  }}
-                  className="flex-1"
-                >
-                  <SelectItem id="right-click" textValue="Right Click">
-                    Right Click
-                  </SelectItem>
-                  <SelectItem id="left-click" textValue="Left Click">
-                    Left Click
-                  </SelectItem>
-                  <SelectItem id="middle-click" textValue="Middle Click">
-                    Middle Click
-                  </SelectItem>
-                </Select>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-10 w-10 rounded-[8px] border-border bg-background-card hover:bg-background-subtle"
-                >
-                  <Keyboard className="h-3.5 w-3.5 text-foreground" />
-                </Button>
-              </div>
-              <p className="text-foreground-muted text-xs">
-                Use the keyboard icon to capture from live input.
-              </p>
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center justify-between">
-                <span className="font-medium text-foreground text-sm">
-                  Gesture Mode
-                </span>
-              </div>
-              <Tabs
-                selectedKey={gestureMode}
-                onSelectionChange={(key: string | number) => {
-                  setGestureMode(String(key) as "hold" | "release")
-                  setIsDirty(true)
-                }}
-                className="w-full"
-              >
-                <TabList className="flex h-10 items-center gap-1 rounded-xl border border-border bg-background-card p-1">
-                  <TabItem id="hold">Hold</TabItem>
-                  <TabItem id="release">Release</TabItem>
-                </TabList>
-              </Tabs>
-              <p className="text-foreground-muted text-xs">
-                Hold: fires while the trigger is held. Release: fires on trigger
-                release.
-              </p>
-            </div>
-
-            <div className="flex flex-col gap-3">
-              <span className="font-medium text-foreground text-sm">
-                Sequence
-              </span>
-              <p className="text-foreground-muted text-xs">
-                Ordered steps recognized before the final step fires. Up to 8
-                steps.
-              </p>
-              <div className="flex flex-col gap-2">
-                {sequenceRows.map((row, index) => (
-                  <div key={row.id} className="flex items-center gap-2">
-                    <span className="w-3 text-center text-[12px] text-foreground-muted">
-                      {index + 1}
-                    </span>
-                    <Select
-                      value={row.type}
-                      onChange={(key) =>
-                        updateSequenceRow(row.id, { type: String(key) })
-                      }
-                      className="w-[140px]"
-                    >
-                      <SelectItem id="mouse-move" textValue="Mouse Move">
-                        Mouse Move
-                      </SelectItem>
-                      <SelectItem id="mouse-input" textValue="Mouse Input">
-                        Mouse Input
-                      </SelectItem>
-                    </Select>
-                    <Select
-                      value={row.step}
-                      onChange={(key) =>
-                        updateSequenceRow(row.id, { step: String(key) })
-                      }
-                      className="flex-1"
-                    >
-                      <SelectItem id="left" textValue="Left">
-                        Left
-                      </SelectItem>
-                      <SelectItem id="right" textValue="Right">
-                        Right
-                      </SelectItem>
-                      <SelectItem id="up" textValue="Up">
-                        Up
-                      </SelectItem>
-                      <SelectItem id="down" textValue="Down">
-                        Down
-                      </SelectItem>
-                      <SelectItem id="wheel-up" textValue="Wheel Up">
-                        Wheel Up
-                      </SelectItem>
-                      <SelectItem id="wheel-down" textValue="Wheel Down">
-                        Wheel Down
-                      </SelectItem>
-                    </Select>
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      className="h-10 w-10 rounded-[8px] border-destructive-subtle bg-destructive-subtle text-destructive hover:bg-destructive/20 hover:text-destructive"
-                      onPress={() => removeSequenceRow(row.id)}
-                      isDisabled={sequenceRows.length <= 1}
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-              <div className="flex items-start justify-between">
-                <Badge
-                  variant="outline"
-                  className="py-3 font-medium text-foreground-muted text-sm"
-                >
-                  {sequenceRows.length} / 8 used
-                </Badge>
-                <Button
-                  variant="outline"
-                  className="text-sm"
-                  onPress={addSequenceRow}
-                  isDisabled={sequenceRows.length >= 8}
-                >
-                  <Plus className="h-3 w-3" />
-                  <span>Add Step</span>
-                </Button>
-              </div>
-              <p className="text-foreground-muted text-xs">
-                Supported steps: Left / Right / Up / Down / Wheel Up / Wheel
-                Down / Left Click / Right Click / Middle Click
-              </p>
-              {gestureMode === "hold" && (
-                <div className="flex flex-col gap-2">
-                  <span className="font-medium text-foreground text-sm">
-                    Step
-                  </span>
-                  <p className="text-foreground-muted text-xs">
-                    Single non-movement input that fires while the trigger is
-                    held.
-                  </p>
-                  <Select
-                    value={finalStep}
-                    onChange={(key) => {
-                      setFinalStep(String(key))
-                      setIsDirty(true)
-                    }}
-                    className="w-full"
-                  >
-                    <SelectItem id="wheel-up" textValue="Wheel Up">
-                      Wheel Up
-                    </SelectItem>
-                    <SelectItem id="wheel-down" textValue="Wheel Down">
-                      Wheel Down
-                    </SelectItem>
-                    <SelectItem id="left-click" textValue="Left Click">
-                      Left Click
-                    </SelectItem>
-                    <SelectItem id="right-click" textValue="Right Click">
-                      Right Click
-                    </SelectItem>
-                    <SelectItem id="middle-click" textValue="Middle Click">
-                      Middle Click
-                    </SelectItem>
-                  </Select>
-                </div>
-              )}
-            </div>
-          </div>
+          <GestureTabContent
+            triggerButton={triggerButton}
+            gestureMode={gestureMode}
+            sequenceRows={sequenceRows}
+            finalStep={finalStep}
+            onTriggerButtonChange={(key) => {
+              setTriggerButton(key)
+              setIsDirty(true)
+            }}
+            onGestureModeChange={(mode) => {
+              setGestureMode(mode)
+              setIsDirty(true)
+            }}
+            onSequenceRowChange={updateSequenceRow}
+            onAddSequenceRow={addSequenceRow}
+            onRemoveSequenceRow={removeSequenceRow}
+            onFinalStepChange={(key) => {
+              setFinalStep(key)
+              setIsDirty(true)
+            }}
+          />
         )}
       </div>
 
-      {/* Footer */}
-      <div className="flex h-16 items-center justify-end gap-3 border-border border-t px-6">
-        <Button
-          variant="outline"
-          className="h-9 px-4 text-[13px]"
-          onPress={handleCancel}
-          isDisabled={!isDirty}
-        >
-          Cancel
-        </Button>
-        <Button
-          className="h-9 gap-2 px-4 text-[13px]"
-          onPress={handleSave}
-          isDisabled={!isDirty}
-        >
-          <Check className="h-4 w-4" />
-          <span>Save Changes</span>
-        </Button>
-      </div>
+      <ActionEditFooter
+        isDirty={isDirty}
+        onCancel={handleCancel}
+        onSave={handleSave}
+      />
     </AppSettingsLayout>
   )
 }
