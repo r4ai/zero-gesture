@@ -28,6 +28,7 @@ import {
   DialogIcon,
 } from "@/components/ui/dialog"
 import { Select, SelectItem } from "@/components/ui/select"
+import { TextField } from "@/components/ui/textfield"
 
 export const Route = createFileRoute("/applications/$appId/edit")({
   validateSearch: (
@@ -62,6 +63,7 @@ function AppEditPage() {
   const { appId } = useParams({ from: "/applications/$appId/edit" })
   const search = Route.useSearch()
   const navigate = useNavigate()
+  const currentApp = APPS.find((app) => app.id === appId)
   const [conditions, setConditions] =
     useState<MatchCondition[]>(initialConditions)
   const [activeConditionId, setActiveConditionId] = useState<number | null>(
@@ -73,8 +75,9 @@ function AppEditPage() {
   const [selectedDetectMethod, setSelectedDetectMethod] = useState<
     "exact" | "contains" | "regex"
   >("exact")
-
-  const currentApp = APPS.find((app) => app.id === appId)
+  const [editedAppName, setEditedAppName] = useState<string>(
+    currentApp?.name ?? "",
+  )
 
   if (!currentApp) {
     navigate({ to: "/applications" })
@@ -138,15 +141,18 @@ function AppEditPage() {
     <div className="flex h-full flex-1 flex-col bg-background">
       {/* Header */}
       <div className="flex h-16 items-center justify-between border-border border-b px-6">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <div className="flex h-8 w-8 items-center justify-center rounded-md bg-background-subtle">
             <Globe className="h-4 w-4 text-foreground-subtle" />
           </div>
-          <div className="flex flex-col">
-            <h2 className="font-semibold text-foreground text-lg">
-              {currentApp.name}
-            </h2>
-          </div>
+          <TextField
+            variant="transparent"
+            value={editedAppName}
+            onChange={setEditedAppName}
+            aria-label="Application name"
+            className="w-full max-w-[420px]"
+            inputClassName="h-auto font-semibold text-foreground text-lg py-0 px-1"
+          />
         </div>
         <Button
           variant="outline"

@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button"
 import { KeyInput } from "@/components/ui/key-input"
 import { Select, SelectItem } from "@/components/ui/select"
 import { TabItem, TabList, Tabs } from "@/components/ui/tabs"
+import { TextField } from "@/components/ui/textfield"
 
 export const Route = createFileRoute(
   "/applications/$appId/gestures/$gestureId/",
@@ -48,16 +49,23 @@ const INITIAL_SEQUENCE_ROWS: SequenceRow[] = [
 
 function ActionEditHeader({
   title,
+  onTitleChange,
   onRemoveAction,
 }: {
   title: string
+  onTitleChange: (title: string) => void
   onRemoveAction: () => void
 }) {
   return (
     <div className="flex h-16 items-center justify-between border-border border-b px-6">
-      <div className="flex flex-col">
-        <h2 className="font-semibold text-foreground text-lg">{title}</h2>
-      </div>
+      <TextField
+        variant="transparent"
+        value={title}
+        onChange={onTitleChange}
+        aria-label="Action title"
+        className="w-full max-w-[420px]"
+        inputClassName="h-auto font-semibold text-foreground text-lg py-0 px-2"
+      />
       <Button
         variant="outline"
         className="h-8 gap-2 rounded-md border-destructive-subtle bg-destructive-subtle text-[12px] text-destructive hover:bg-destructive/20 hover:text-destructive"
@@ -386,6 +394,7 @@ function ActionEditPage() {
   )
   const [finalStep, setFinalStep] = useState<string>("wheel-up")
   const [editedKeys, setEditedKeys] = useState<string[]>(originalKeys)
+  const [editedTitle, setEditedTitle] = useState(gesture?.label ?? "Untitled")
   const [isDirty, setIsDirty] = useState(false)
 
   const handleSave = () => {
@@ -400,6 +409,7 @@ function ActionEditPage() {
     setTriggerButton("right-click")
     setSequenceRows(INITIAL_SEQUENCE_ROWS)
     setFinalStep("wheel-up")
+    setEditedTitle(gesture?.label ?? "Untitled")
     setIsDirty(false)
   }
 
@@ -482,7 +492,11 @@ function ActionEditPage() {
   return (
     <AppSettingsLayout appId={appId} selectedGestureId={gestureId}>
       <ActionEditHeader
-        title={gesture.label ?? "Untitled"}
+        title={editedTitle}
+        onTitleChange={(title) => {
+          setEditedTitle(title)
+          setIsDirty(true)
+        }}
         onRemoveAction={handleRemoveAction}
       />
       <ActionEditTabs

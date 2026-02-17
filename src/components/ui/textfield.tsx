@@ -20,6 +20,12 @@ const textfield = tv({
     error: "mt-1.5 font-medium text-destructive text-sm",
   },
   variants: {
+    variant: {
+      default: {},
+      transparent: {
+        input: "border-transparent bg-transparent focus-visible:ring-0",
+      },
+    },
     iconPosition: {
       start: {
         icon: "left-3",
@@ -36,6 +42,8 @@ export interface TextFieldProps extends Omit<RATextFieldProps, "children"> {
   description?: string
   errorMessage?: string | ((validation: ValidationResult) => string)
   placeholder?: string
+  variant?: "default" | "transparent"
+  inputClassName?: string
   children?: React.ReactNode
 }
 
@@ -44,6 +52,8 @@ export function TextField({
   description,
   errorMessage,
   placeholder,
+  variant = "default",
+  inputClassName,
   className,
   children,
   ...props
@@ -54,14 +64,17 @@ export function TextField({
     input: inputClass,
     description: descriptionClass,
     error: errorClass,
-  } = textfield()
+  } = textfield({ variant })
 
   return (
     <RATextField className={className} {...props}>
       {label && <RALabel className={labelClass()}>{label}</RALabel>}
       <div className={inputGroupClass()}>
         {children}
-        <RAInput className={inputClass()} placeholder={placeholder} />
+        <RAInput
+          className={inputClass({ className: inputClassName })}
+          placeholder={placeholder}
+        />
       </div>
       {description && <p className={descriptionClass()}>{description}</p>}
       {errorMessage && (
