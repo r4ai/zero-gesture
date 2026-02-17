@@ -2526,30 +2526,64 @@
               "children": [
                 {
                   "type": "frame",
-                  "id": "X8V71",
-                  "name": "actionHeaderLeft",
-                  "layout": "vertical",
-                  "gap": 3,
+                  "id": "ao8WF",
+                  "name": "Frame 2",
+                  "clip": true,
+                  "gap": 12,
+                  "alignItems": "center",
                   "children": [
                     {
-                      "type": "text",
-                      "id": "Brrvz",
-                      "name": "actionHeaderTitle",
-                      "fill": "$foreground",
-                      "content": "Google Chrome",
-                      "fontFamily": "DM Sans",
-                      "fontSize": 16,
-                      "fontWeight": "600"
+                      "type": "frame",
+                      "id": "Vb0gG",
+                      "name": "App Icon Frame",
+                      "width": 32,
+                      "height": 32,
+                      "fill": "$background-subtle",
+                      "cornerRadius": 6,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "gJ7HM",
+                          "name": "defaultIcon",
+                          "width": 18,
+                          "height": 18,
+                          "iconFontName": "globe",
+                          "iconFontFamily": "lucide",
+                          "fill": "$foreground-subtle"
+                        }
+                      ]
                     },
                     {
-                      "type": "text",
-                      "id": "WlMwc",
-                      "name": "actionHeaderSub",
-                      "fill": "$foreground-subtle",
-                      "content": "4 matching conditions",
-                      "fontFamily": "DM Sans",
-                      "fontSize": 12,
-                      "fontWeight": "normal"
+                      "type": "frame",
+                      "id": "X8V71",
+                      "name": "actionHeaderLeft",
+                      "layout": "vertical",
+                      "gap": 3,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "Brrvz",
+                          "name": "actionHeaderTitle",
+                          "context": "A transparent input field, allowing for updating label",
+                          "fill": "$foreground",
+                          "content": "Google Chrome",
+                          "fontFamily": "DM Sans",
+                          "fontSize": 16,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "WlMwc",
+                          "name": "actionHeaderSub",
+                          "fill": "$foreground-subtle",
+                          "content": "4 matching conditions",
+                          "fontFamily": "DM Sans",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ]
                     }
                   ]
                 },
@@ -4310,31 +4344,42 @@
               "children": [
                 {
                   "type": "frame",
-                  "id": "7ZS9q",
-                  "name": "actionHeaderLeft",
-                  "layout": "vertical",
-                  "gap": 3,
+                  "id": "DCfGk",
+                  "name": "Frame 1",
+                  "clip": true,
+                  "gap": 12,
+                  "justifyContent": "center",
+                  "alignItems": "center",
                   "children": [
                     {
-                      "type": "text",
-                      "id": "1llSe",
-                      "name": "actionHeaderTitle",
-                      "context": "A transparent input field, allowing for updating label",
-                      "fill": "$foreground",
-                      "content": "Left",
-                      "fontFamily": "DM Sans",
-                      "fontSize": 16,
-                      "fontWeight": "600"
-                    },
-                    {
-                      "type": "text",
-                      "id": "wc1zs",
-                      "name": "actionHeaderSub",
-                      "fill": "$foreground-subtle",
-                      "content": "Left → Right → WheelUp",
-                      "fontFamily": "DM Sans",
-                      "fontSize": 12,
-                      "fontWeight": "normal"
+                      "type": "frame",
+                      "id": "7ZS9q",
+                      "name": "actionHeaderLeft",
+                      "layout": "vertical",
+                      "gap": 3,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "1llSe",
+                          "name": "actionHeaderTitle",
+                          "context": "A transparent input field, allowing for updating label",
+                          "fill": "$foreground",
+                          "content": "Left",
+                          "fontFamily": "DM Sans",
+                          "fontSize": 16,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "wc1zs",
+                          "name": "actionHeaderSub",
+                          "fill": "$foreground-subtle",
+                          "content": "Left → Right → WheelUp",
+                          "fontFamily": "DM Sans",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ]
                     }
                   ]
                 },
