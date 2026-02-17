@@ -14,7 +14,7 @@ const textfield = tv({
     label: "mb-1.5 block font-medium text-foreground text-sm",
     inputGroup: "group relative flex items-center",
     input:
-      "flex h-10 w-full rounded-md border border-border bg-background px-3 py-2 text-foreground text-sm transition-colors file:border-0 file:bg-transparent file:font-medium file:text-sm placeholder:text-foreground-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-foreground focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:bg-background-muted disabled:opacity-50 group-has-[[slot=end]]:pr-9 group-has-[[slot=start]]:pl-9",
+      "flex h-10 w-full rounded-md border border-border bg-background px-3 py-2 text-foreground text-sm transition-colors file:border-0 file:bg-transparent file:font-medium file:text-sm placeholder:text-foreground-muted focus-visible:outline-2 focus-visible:outline-foreground focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:bg-background-muted disabled:opacity-50 group-has-[[slot=end]]:pr-9 group-has-[[slot=start]]:pl-9",
     icon: "pointer-events-none absolute top-1/2 size-5 shrink-0 -translate-y-1/2 text-foreground-muted *:size-full",
     description: "mt-1.5 text-foreground-muted text-sm",
     error: "mt-1.5 font-medium text-destructive text-sm",
@@ -23,7 +23,8 @@ const textfield = tv({
     variant: {
       default: {},
       transparent: {
-        input: "border-transparent bg-transparent focus-visible:ring-0",
+        input:
+          "border-transparent bg-transparent focus-visible:ring-0 disabled:bg-transparent disabled:opacity-100",
       },
     },
     iconPosition: {

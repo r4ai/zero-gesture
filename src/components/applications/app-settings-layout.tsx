@@ -4,6 +4,7 @@ import type { ReactNode } from "react"
 import { twMerge } from "tailwind-merge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { useConfigDraft } from "@/contexts/config-draft"
 import { DEFAULT_BINDINGS, type GestureBinding } from "@/types/config"
 
 interface AppSettingsLayoutProps {
@@ -15,17 +16,29 @@ interface AppSettingsLayoutProps {
 interface AppItem {
   id: string
   name: string
-  icon: "fallback" | "chrome" | "terminal" | "vscode"
+  icon: "fallback" | "terminal" | "generic"
 }
 
-export const APPS: AppItem[] = [
-  { id: "default", name: "default", icon: "fallback" },
-  { id: "chrome", name: "Google Chrome", icon: "chrome" },
-  { id: "terminal", name: "Terminal", icon: "terminal" },
-  { id: "vscode", name: "VS Code:", icon: "vscode" },
-]
+function toAppItems(appIds: string[]): AppItem[] {
+  return appIds.map((id) => {
+    if (id === "default") return { id, name: "default", icon: "fallback" }
+    if (id.includes("term")) return { id, name: id, icon: "terminal" }
+    return { id, name: id, icon: "generic" }
+  })
+}
 
-export const GESTURES = DEFAULT_BINDINGS
+function getAppIdsFromBindings(bindings: Record<string, GestureBinding[]>) {
+  const ids = Object.keys(bindings)
+  const rest = ids.filter((id) => id !== "default").sort()
+  return ["default", ...rest]
+}
+
+function createNextAppId(appIds: string[]): string {
+  const base = "app"
+  let index = 1
+  while (appIds.includes(`${base}-${index}`)) index += 1
+  return `${base}-${index}`
+}
 
 /**
  * Convert a gesture sequence into a stable route id.
@@ -84,7 +97,9 @@ interface AppPanelLayoutProps {
 
 export function AppPanelLayout({ appId, children }: AppPanelLayoutProps) {
   const navigate = useNavigate()
-  const currentApp = APPS.find((app) => app.id === appId)
+  const { draft } = useConfigDraft()
+  const appIds = getAppIdsFromBindings(draft.bindings)
+  const currentApp = appIds.includes(appId)
 
   if (!currentApp) {
     navigate({ to: "/applications" })
@@ -102,6 +117,27 @@ export function AppPanelLayout({ appId, children }: AppPanelLayoutProps) {
 }
 
 function AppPanel({ appId }: { appId: string }) {
+  const navigate = useNavigate()
+  const { draft, setDraft } = useConfigDraft()
+  const appIds = getAppIdsFromBindings(draft.bindings)
+  const apps = toAppItems(appIds)
+
+  const addApp = () => {
+    const nextId = createNextAppId(appIds)
+    setDraft({
+      ...draft,
+      apps: { ...draft.apps, [nextId]: { matchers: [] } },
+      bindings: {
+        ...draft.bindings,
+        [nextId]: [...(draft.bindings.default ?? DEFAULT_BINDINGS)],
+      },
+    })
+    navigate({
+      to: "/applications/$appId/edit",
+      params: { appId: nextId },
+    })
+  }
+
   return (
     <div className="flex h-full w-[220px] flex-col border-border border-r bg-background">
       <div className="flex flex-col gap-1 border-border border-b px-4 py-4 pb-3">
@@ -110,7 +146,7 @@ function AppPanel({ appId }: { appId: string }) {
       </div>
 
       <div className="flex flex-1 flex-col gap-1 overflow-y-auto p-2">
-        {APPS.map((app) => {
+        {apps.map((app) => {
           const isActive = appId === app.id
 
           return (
@@ -125,7 +161,12 @@ function AppPanel({ appId }: { appId: string }) {
             >
               <Link
                 to="/applications/$appId/gestures/$gestureId"
-                params={{ appId: app.id, gestureId: getGestureId(GESTURES[0]) }}
+                params={{
+                  appId: app.id,
+                  gestureId: getGestureId(
+                    draft.bindings[app.id]?.[0] ?? DEFAULT_BINDINGS[0],
+                  ),
+                }}
                 className="flex min-w-0 flex-1 items-center gap-2"
               >
                 <div className="flex h-6 w-6 items-center justify-center rounded-md bg-background-subtle">
@@ -171,6 +212,7 @@ function AppPanel({ appId }: { appId: string }) {
         <Button
           variant="outline"
           className="h-8 w-full gap-2 rounded-lg border-border-muted bg-transparent text-[12px]"
+          onPress={addApp}
         >
           <Plus className="h-3.5 w-3.5" />
           <span>Add Application</span>
@@ -188,11 +230,41 @@ function GesturePanel({
   selectedGestureId: string
 }) {
   const navigate = useNavigate()
-  const currentApp = APPS.find((app) => app.id === appId)
+  const { draft, setDraft } = useConfigDraft()
+  const bindings = draft.bindings[appId] ?? []
+  const appIds = getAppIdsFromBindings(draft.bindings)
+  const currentApp = appIds.includes(appId)
 
   if (!currentApp) {
     navigate({ to: "/applications" })
     return null
+  }
+
+  const addGesture = () => {
+    const template = bindings[bindings.length - 1] ?? DEFAULT_BINDINGS[0]
+    const nextBinding: GestureBinding = {
+      ...template,
+      label: "New Gesture",
+      gesture: {
+        ...template.gesture,
+        sequence: ["right"],
+      },
+      action: { type: "keyboard", keys: [] },
+    }
+
+    const nextBindings = [...bindings, nextBinding]
+    setDraft({
+      ...draft,
+      bindings: {
+        ...draft.bindings,
+        [appId]: nextBindings,
+      },
+    })
+
+    navigate({
+      to: "/applications/$appId/gestures/$gestureId",
+      params: { appId, gestureId: getGestureId(nextBinding) },
+    })
   }
 
   return (
@@ -205,7 +277,7 @@ function GesturePanel({
       </div>
 
       <div className="flex flex-1 flex-col gap-1 overflow-y-auto p-2">
-        {GESTURES.map((gesture) => {
+        {bindings.map((gesture) => {
           const gestureId = getGestureId(gesture)
           const isActive = gestureId === selectedGestureId
 
@@ -240,6 +312,7 @@ function GesturePanel({
         <Button
           variant="outline"
           className="h-8 w-full gap-2 rounded-lg border-border-muted bg-transparent text-[12px]"
+          onPress={addGesture}
         >
           <Plus className="h-3.5 w-3.5" />
           <span>Add Gesture</span>

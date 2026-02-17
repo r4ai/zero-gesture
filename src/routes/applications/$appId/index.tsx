@@ -6,13 +6,11 @@ import {
 } from "@tanstack/react-router"
 import { Check, Keyboard, Loader2, X } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import {
-  GESTURES,
-  getGestureId,
-} from "@/components/applications/app-settings-layout"
+import { getGestureId } from "@/components/applications/app-settings-layout"
 import { Button } from "@/components/ui/button"
 import { ComboBox, ComboBoxItem } from "@/components/ui/combobox"
 import { Dialog, DialogContent } from "@/components/ui/dialog"
+import { DEFAULT_BINDINGS } from "@/types/config"
 
 type KeyboardInputMode = "wait" | "manual"
 
@@ -91,7 +89,8 @@ export const Route = createFileRoute("/applications/$appId/")({
     return { mode, gestureId, keys, tab }
   },
   beforeLoad: ({ params, search }) => {
-    const targetGestureId = search.gestureId || getGestureId(GESTURES[0])
+    const targetGestureId =
+      search.gestureId || getGestureId(DEFAULT_BINDINGS[0])
 
     if (!search.mode) {
       throw redirect({
@@ -173,7 +172,7 @@ function KeyboardInputPage() {
   const search = Route.useSearch()
   const navigate = useNavigate()
 
-  const targetGestureId = search.gestureId || getGestureId(GESTURES[0])
+  const targetGestureId = search.gestureId || getGestureId(DEFAULT_BINDINGS[0])
   const initialKeys = useMemo(() => parseKeys(search.keys), [search.keys])
   const [waitPreviewKeys, setWaitPreviewKeys] = useState<string[]>(initialKeys)
   const [selectedModifiers, setSelectedModifiers] = useState<Set<string>>(
