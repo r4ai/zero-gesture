@@ -85,16 +85,25 @@ const {
 
 export interface DialogContentProps extends ModalOverlayProps {
   children: React.ReactNode
+  modalClassName?: string
 }
 
 /**
  * The content container for the dialog.
  * Must be used inside a `Dialog` component.
  */
-export function DialogContent({ children, ...props }: DialogContentProps) {
+export function DialogContent({
+  children,
+  className,
+  modalClassName,
+  ...props
+}: DialogContentProps) {
   return (
-    <ModalOverlay className={overlay()} {...props}>
-      <RAModal className={modal()}>
+    <ModalOverlay
+      className={[overlay(), className].filter(Boolean).join(" ")}
+      {...props}
+    >
+      <RAModal className={modal({ className: modalClassName })}>
         <RADialog className="outline-none">{children}</RADialog>
       </RAModal>
     </ModalOverlay>

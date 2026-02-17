@@ -1,6 +1,6 @@
-import { createFileRoute, useParams } from "@tanstack/react-router"
+import { createFileRoute, useNavigate, useParams } from "@tanstack/react-router"
 import { Check, Keyboard, Trash2 } from "lucide-react"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import {
   AppSettingsLayout,
   formatGestureSequence,
@@ -26,12 +26,60 @@ function ActionEditPage() {
   const { appId, gestureId } = useParams({
     from: "/applications/$appId/gestures/$gestureId/",
   })
+  const search = Route.useSearch() as { shortcut?: string }
+  const navigate = useNavigate()
   const gesture = GESTURES.find((item) => getGestureId(item) === gestureId)
+  const originalKeys = gesture?.action.keys ?? []
   const [selectedTab, setSelectedTab] = useState<string>("action")
-  const [editedKeys, setEditedKeys] = useState<string[]>(
-    gesture?.action.keys ?? [],
-  )
+  const [editedKeys, setEditedKeys] = useState<string[]>(originalKeys)
   const [isDirty, setIsDirty] = useState(false)
+
+  const handleSave = () => {
+    // TODO: Save changes to backend
+    setIsDirty(false)
+  }
+
+  const handleCancel = () => {
+    // Reset to original values
+    setEditedKeys(originalKeys)
+    setIsDirty(false)
+  }
+
+  const handleRemoveAction = () => {
+    // TODO: Remove action from gesture
+  }
+
+  const openKeyboardInput = (mode: "wait" | "manual") => {
+    navigate({
+      to: "/applications/$appId",
+      params: { appId },
+      search: {
+        mode,
+        gestureId,
+        keys: editedKeys.length > 0 ? editedKeys.join(",") : undefined,
+      },
+    })
+  }
+
+  useEffect(() => {
+    const shortcut =
+      typeof search.shortcut === "string" ? search.shortcut : undefined
+    if (!shortcut) return
+
+    const next = shortcut
+      .split(",")
+      .map((part: string) => part.trim())
+      .filter((part: string) => part.length > 0)
+
+    setEditedKeys(next)
+    setIsDirty(true)
+    navigate({
+      to: "/applications/$appId/gestures/$gestureId",
+      params: { appId, gestureId },
+      search: {},
+      replace: true,
+    })
+  }, [appId, gestureId, navigate, search.shortcut])
 
   if (!gesture) {
     return (
@@ -43,21 +91,6 @@ function ActionEditPage() {
         </div>
       </AppSettingsLayout>
     )
-  }
-
-  const handleSave = () => {
-    // TODO: Save changes to backend
-    setIsDirty(false)
-  }
-
-  const handleCancel = () => {
-    // Reset to original values
-    setEditedKeys(gesture.action.keys)
-    setIsDirty(false)
-  }
-
-  const handleRemoveAction = () => {
-    // TODO: Remove action from gesture
   }
 
   return (
@@ -131,6 +164,8 @@ function ActionEditPage() {
                 setEditedKeys(keys)
                 setIsDirty(true)
               }}
+              onPress={() => openKeyboardInput("wait")}
+              onKeyboardPress={() => openKeyboardInput("manual")}
             />
           </div>
         )}
