@@ -60,7 +60,7 @@ function ActionEditHeader({
       </div>
       <Button
         variant="outline"
-        className="h-8 gap-2 rounded-md border-destructive-subtle bg-destructive-subtle text-[12px] text-destructive hover:bg-destructive/20"
+        className="h-8 gap-2 rounded-md border-destructive-subtle bg-destructive-subtle text-[12px] text-destructive hover:bg-destructive/20 hover:text-destructive"
         onPress={onRemoveAction}
       >
         <Trash2 className="h-3.5 w-3.5" />
