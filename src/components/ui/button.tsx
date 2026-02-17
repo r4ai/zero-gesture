@@ -12,7 +12,7 @@ const button = tv({
       destructive:
         "bg-destructive text-foreground-inverted hover:bg-destructive/90",
       outline:
-        "border border-border bg-background hover:bg-background-subtle hover:text-foreground",
+        "border border-border hover:bg-background-subtle hover:text-foreground",
       secondary:
         "bg-background-subtle text-foreground hover:bg-background-subtle/80",
       ghost: "hover:bg-background-subtle hover:text-foreground",
