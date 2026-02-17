@@ -52,10 +52,11 @@ function AppLayout() {
    * @param path - Route path to check (e.g., "/general")
    * @returns true if the route is active, false otherwise
    */
-  const isRouteActive = (path: string) => !!matchRoute({ to: path })
+  const isRouteActive = (path: string) =>
+    !!matchRoute({ to: path, fuzzy: true })
 
   return (
-    <div className="flex h-screen w-full overflow-hidden">
+    <div className="flex h-full w-full overflow-hidden">
       {/* Sidebar Navigation */}
       <Sidebar>
         {({ compact }) => (

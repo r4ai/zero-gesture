@@ -3,7 +3,6 @@ import { Check, Keyboard, Trash2 } from "lucide-react"
 import { useEffect, useState } from "react"
 import {
   AppSettingsLayout,
-  formatGestureSequence,
   GESTURES,
   getGestureId,
 } from "@/components/applications/app-settings-layout"
@@ -98,12 +97,9 @@ function ActionEditPage() {
       {/* Header */}
       <div className="flex h-16 items-center justify-between border-border border-b px-6">
         <div className="flex flex-col">
-          <h2 className="font-semibold text-[16px] text-foreground">
-            {formatGestureSequence(gesture.gesture.sequence)}
+          <h2 className="font-semibold text-foreground text-lg">
+            {gesture.label ?? "Untitled"}
           </h2>
-          <span className="text-[12px] text-foreground-subtle">
-            {gesture.label || "Custom Gesture"}
-          </span>
         </div>
         <Button
           variant="outline"
@@ -116,7 +112,7 @@ function ActionEditPage() {
       </div>
 
       {/* Tab Bar */}
-      <div className="flex h-14 items-center border-border border-b px-6 py-2">
+      <div className="flex h-14 items-center border-border px-6 py-2">
         <Tabs
           selectedKey={selectedTab}
           onSelectionChange={(key: string | number) =>
@@ -137,7 +133,7 @@ function ActionEditPage() {
           <div className="flex flex-col gap-6">
             {/* Action Type */}
             <div className="flex flex-col gap-2">
-              <span className="font-medium text-[12px] text-foreground-subtle">
+              <span className="font-medium text-foreground text-sm">
                 Action Type
               </span>
               <Select value="keyboard" onChange={() => {}} className="w-full">

@@ -38,9 +38,7 @@ export function KeyInput({
 
   return (
     <div className="flex flex-col gap-2">
-      <span className="font-medium text-[12px] text-foreground-subtle">
-        Shortcut
-      </span>
+      <span className="font-medium text-foreground text-sm">Shortcut</span>
       <div className="flex h-[40px] items-center gap-1.5">
         <button
           type="button"
@@ -56,11 +54,11 @@ export function KeyInput({
                   key={`${key}-${index}`}
                   className="flex items-center gap-1.5"
                 >
-                  <Badge variant="key">{key}</Badge>
+                  <Badge className="text-foreground" variant="key">
+                    {key}
+                  </Badge>
                   {index < keys.length - 1 && (
-                    <span className="text-[12px] text-foreground-subtle">
-                      +
-                    </span>
+                    <span className="text-[12px] text-foreground-muted">+</span>
                   )}
                 </div>
               ))}
@@ -79,22 +77,22 @@ export function KeyInput({
             onPress={onKeyboardPress}
             isDisabled={isDisabled}
           >
-            <Keyboard className="h-3.5 w-3.5 text-foreground-muted" />
+            <Keyboard className="h-3.5 w-3.5 text-foreground" />
           </Button>
           {keys.length > 0 && (
             <Button
               variant="outline"
               size="icon"
-              className="h-10 w-10 rounded-[8px] border-border bg-background-card hover:bg-background-subtle"
+              className="size-10 rounded-md border-destructive-subtle bg-destructive-subtle text-[12px] text-destructive hover:bg-destructive/20 hover:text-destructive"
               onPress={handleClear}
               isDisabled={isDisabled}
             >
-              <X className="h-3.5 w-3.5 text-foreground-muted" />
+              <X className="size-3.5" />
             </Button>
           )}
         </div>
       </div>
-      {hint && <p className="text-[11px] text-foreground-faint">{hint}</p>}
+      {hint && <p className="text-foreground-muted text-xs">{hint}</p>}
     </div>
   )
 }

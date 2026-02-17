@@ -88,6 +88,11 @@
   body {
     @apply bg-background text-foreground;
   }
+  html,
+  body,
+  #root {
+    @apply h-full overflow-hidden;
+  }
 }
 
 @theme {

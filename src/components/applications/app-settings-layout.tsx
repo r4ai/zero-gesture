@@ -1,6 +1,7 @@
 import { Link, useNavigate } from "@tanstack/react-router"
 import { Pencil, Plus, Terminal } from "lucide-react"
 import type { ReactNode } from "react"
+import { twMerge } from "tailwind-merge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { DEFAULT_BINDINGS, type GestureBinding } from "@/types/config"
@@ -104,12 +105,8 @@ function AppPanel({ appId }: { appId: string }) {
   return (
     <div className="flex h-full w-[220px] flex-col border-border border-r bg-background">
       <div className="flex flex-col gap-1 border-border border-b px-4 py-4 pb-3">
-        <h3 className="font-semibold text-[13px] text-foreground">
-          Applications
-        </h3>
-        <p className="text-[12px] text-foreground-subtle">
-          Select app to configure
-        </p>
+        <h3 className="font-semibold text-foreground text-sm">Applications</h3>
+        <p className="text-foreground-muted text-xs">Select app to configure</p>
       </div>
 
       <div className="flex flex-1 flex-col gap-1 overflow-y-auto p-2">
@@ -119,11 +116,12 @@ function AppPanel({ appId }: { appId: string }) {
           return (
             <div
               key={app.id}
-              className={`flex h-[40px] items-center justify-between rounded-lg px-2.5 transition-colors ${
+              className={twMerge(
+                "group flex h-[40px] items-center justify-between rounded-lg px-2.5 transition-colors",
                 isActive
                   ? "bg-background-card ring-1 ring-border-bright"
-                  : "hover:bg-background-card"
-              }`}
+                  : "hover:bg-background-card",
+              )}
             >
               <Link
                 to="/applications/$appId/gestures/$gestureId"
@@ -138,10 +136,10 @@ function AppPanel({ appId }: { appId: string }) {
                   )}
                 </div>
                 <span
-                  className={`truncate text-left text-[13px] ${
+                  className={`truncate text-left text-sm ${
                     isActive
                       ? "font-semibold text-foreground"
-                      : "font-medium text-foreground-subtle"
+                      : "font-medium text-foreground-muted"
                   }`}
                 >
                   {app.name}
@@ -152,16 +150,18 @@ function AppPanel({ appId }: { appId: string }) {
                   </Badge>
                 )}
               </Link>
-              {isActive && (
-                <Link
-                  to="/applications/$appId/edit"
-                  params={{ appId: app.id }}
-                  className="flex h-7 w-7 items-center justify-center rounded-md text-foreground-subtle transition-colors hover:bg-background-subtle hover:text-foreground"
-                  aria-label={`${app.name} settings`}
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                </Link>
-              )}
+              <Link
+                to="/applications/$appId/edit"
+                params={{ appId: app.id }}
+                className={twMerge(
+                  "flex h-7 w-7 items-center justify-center rounded-md text-foreground-subtle transition-colors hover:bg-background-subtle hover:text-foreground",
+                  "opacity-0 group-hover:opacity-100",
+                  isActive && "opacity-100",
+                )}
+                aria-label={`${app.name} settings`}
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </Link>
             </div>
           )
         })}
@@ -198,8 +198,8 @@ function GesturePanel({
   return (
     <div className="flex h-full w-[260px] flex-col border-border border-r bg-background">
       <div className="flex flex-col gap-1 border-border border-b px-4 py-4 pb-3">
-        <h3 className="font-semibold text-[13px] text-foreground">Gestures</h3>
-        <p className="text-[12px] text-foreground-subtle">
+        <h3 className="font-semibold text-foreground text-sm">Gestures</h3>
+        <p className="text-foreground-muted text-xs">
           Assign action to each gesture
         </p>
       </div>
@@ -214,14 +214,15 @@ function GesturePanel({
               key={gestureId}
               to="/applications/$appId/gestures/$gestureId"
               params={{ appId, gestureId }}
-              className={`flex h-[38px] items-center justify-between rounded-lg px-3 transition-colors ${
+              className={twMerge(
+                "flex h-[38px] items-center justify-between rounded-lg px-3 transition-colors",
                 isActive
                   ? "bg-background-card ring-1 ring-border-bright"
-                  : "hover:bg-background-card"
-              }`}
+                  : "hover:bg-background-card",
+              )}
             >
-              <span className="text-[13px] text-foreground">
-                {formatGestureSequence(gesture.gesture.sequence)}
+              <span className="text-foreground text-sm">
+                {gesture.label ?? "Untitled"}
               </span>
               {gesture.action.keys.length > 0 ? (
                 <Badge variant="default">
