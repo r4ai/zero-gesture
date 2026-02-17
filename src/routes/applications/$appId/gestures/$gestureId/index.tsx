@@ -1,10 +1,7 @@
 import { createFileRoute, useNavigate, useParams } from "@tanstack/react-router"
 import { Check, Keyboard, Plus, Trash2, X } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
-import {
-  AppSettingsLayout,
-  getGestureId,
-} from "@/components/applications/app-settings-layout"
+import { AppSettingsLayout } from "@/components/applications/app-settings-layout"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { KeyInput } from "@/components/ui/key-input"
@@ -428,7 +425,7 @@ function ActionEditPage() {
   const bindings = draft.bindings[appId] ?? []
 
   const gestureIndex = useMemo(
-    () => bindings.findIndex((item) => getGestureId(item) === gestureId),
+    () => bindings.findIndex((item) => item.id === gestureId),
     [bindings, gestureId],
   )
   const gesture = gestureIndex >= 0 ? bindings[gestureIndex] : null
@@ -441,14 +438,14 @@ function ActionEditPage() {
   )
   const [finalStep, setFinalStep] = useState<string>("wheel-up")
   const [editedKeys, setEditedKeys] = useState<string[]>([])
-  const [editedTitle, setEditedTitle] = useState("Untitled")
+  const [editedTitle, setEditedTitle] = useState("")
   const [isDirty, setIsDirty] = useState(false)
 
   useEffect(() => {
     if (!gesture) return
 
     setEditedKeys(gesture.action.keys)
-    setEditedTitle(gesture.label ?? "Untitled")
+    setEditedTitle(gesture.label ?? "")
     setGestureMode(gesture.gesture.mode)
     setTriggerButton(toUiButton(gesture.gesture.trigger))
     setSequenceRows(toSequenceRows(gesture.gesture.sequence))
@@ -474,7 +471,8 @@ function ActionEditPage() {
       finalStep === "wheel-down" ? "wheel_down" : "wheel_up"
 
     const nextGesture: GestureBinding = {
-      label: editedTitle.trim() || "Untitled",
+      id: gesture.id,
+      label: editedTitle.trim() || undefined,
       gesture:
         gestureMode === "hold"
           ? {
@@ -507,7 +505,7 @@ function ActionEditPage() {
 
     await save()
 
-    const nextGestureId = getGestureId(nextGesture)
+    const nextGestureId = nextGesture.id
     if (nextGestureId !== gestureId) {
       navigate({
         to: "/applications/$appId/gestures/$gestureId",
@@ -524,7 +522,7 @@ function ActionEditPage() {
     if (!gesture) return
 
     setEditedKeys(gesture.action.keys)
-    setEditedTitle(gesture.label ?? "Untitled")
+    setEditedTitle(gesture.label ?? "")
     setGestureMode(gesture.gesture.mode)
     setTriggerButton(toUiButton(gesture.gesture.trigger))
     setSequenceRows(toSequenceRows(gesture.gesture.sequence))

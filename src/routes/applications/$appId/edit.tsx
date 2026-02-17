@@ -30,7 +30,12 @@ import {
 import { Select, SelectItem } from "@/components/ui/select"
 import { TextField } from "@/components/ui/textfield"
 import { useConfigDraft } from "@/contexts/config-draft"
-import type { AppMatcher, MatchMethod, MatchTarget } from "@/types/config"
+import type {
+  AppDefinition,
+  AppMatcher,
+  MatchMethod,
+  MatchTarget,
+} from "@/types/config"
 
 export const Route = createFileRoute("/applications/$appId/edit")({
   validateSearch: (
@@ -104,7 +109,7 @@ function AppEditPage() {
       return
     }
     setConditions(toConditions(draft.apps[appId]?.matchers ?? []))
-    setEditedAppName(appId)
+    setEditedAppName(draft.apps[appId]?.label ?? "")
   }, [appId, draft.apps, isDefaultApp])
 
   if (!appIds.includes(appId)) {
@@ -123,6 +128,7 @@ function AppEditPage() {
       apps: {
         ...draft.apps,
         [appId]: {
+          label: draft.apps[appId]?.label,
           matchers: nextConditions.map((condition) => ({
             target: toMatcherTarget(condition.field),
             method: condition.method,
@@ -198,44 +204,29 @@ function AppEditPage() {
     navigate({ to: "/applications" })
   }
 
-  const renameAppInDraft = (): string => {
-    if (isDefaultApp) return appId
-    const nextId = editedAppName.trim()
-    if (nextId.length === 0 || nextId === appId) return appId
-    if (appIds.includes(nextId)) {
-      toast.error("Application id already exists")
-      return appId
-    }
-
-    setDraft({
-      ...draft,
-      apps: {
-        ...Object.fromEntries(
-          Object.entries(draft.apps).filter(([id]) => id !== appId),
-        ),
-        [nextId]: draft.apps[appId] ?? { matchers: [] },
-      },
-      bindings: {
-        ...Object.fromEntries(
-          Object.entries(draft.bindings).filter(([id]) => id !== appId),
-        ),
-        [nextId]: draft.bindings[appId] ?? [],
-      },
-    })
-
-    return nextId
-  }
-
   const handleSave = async () => {
-    const nextId = renameAppInDraft()
-    await save()
-    if (nextId !== appId) {
-      navigate({
-        to: "/applications/$appId/edit",
-        params: { appId: nextId },
-        replace: true,
+    if (!isDefaultApp) {
+      const currentApp = draft.apps[appId]
+      if (!currentApp) {
+        toast.error("Application not found")
+        return
+      }
+
+      const nextApp: AppDefinition = {
+        ...currentApp,
+        label: editedAppName.trim(),
+      }
+
+      setDraft({
+        ...draft,
+        apps: {
+          ...draft.apps,
+          [appId]: nextApp,
+        },
       })
     }
+
+    await save()
   }
 
   return (

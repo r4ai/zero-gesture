@@ -5,7 +5,7 @@ import { twMerge } from "tailwind-merge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { useConfigDraft } from "@/contexts/config-draft"
-import { DEFAULT_BINDINGS, type GestureBinding } from "@/types/config"
+import type { AppDefinition, GestureBinding } from "@/types/config"
 
 interface AppSettingsLayoutProps {
   appId: string
@@ -19,11 +19,15 @@ interface AppItem {
   icon: "fallback" | "terminal" | "generic"
 }
 
-function toAppItems(appIds: string[]): AppItem[] {
+function toAppItems(
+  appIds: string[],
+  apps: Record<string, AppDefinition>,
+): AppItem[] {
   return appIds.map((id) => {
     if (id === "default") return { id, name: "default", icon: "fallback" }
-    if (id.includes("term")) return { id, name: id, icon: "terminal" }
-    return { id, name: id, icon: "generic" }
+    const name = apps[id]?.label ?? ""
+    if (id.includes("term")) return { id, name, icon: "terminal" }
+    return { id, name, icon: "generic" }
   })
 }
 
@@ -41,11 +45,10 @@ function createNextAppId(appIds: string[]): string {
 }
 
 /**
- * Convert a gesture sequence into a stable route id.
- * e.g., ["up", "right"] -> "up-right"
+ * Return stable gesture route id.
  */
 export function getGestureId(binding: GestureBinding): string {
-  return binding.gesture.sequence.join("-")
+  return binding.id
 }
 
 /**
@@ -120,16 +123,16 @@ function AppPanel({ appId }: { appId: string }) {
   const navigate = useNavigate()
   const { draft, setDraft } = useConfigDraft()
   const appIds = getAppIdsFromBindings(draft.bindings)
-  const apps = toAppItems(appIds)
+  const apps = toAppItems(appIds, draft.apps)
 
   const addApp = () => {
     const nextId = createNextAppId(appIds)
     setDraft({
       ...draft,
-      apps: { ...draft.apps, [nextId]: { matchers: [] } },
+      apps: { ...draft.apps, [nextId]: { label: nextId, matchers: [] } },
       bindings: {
         ...draft.bindings,
-        [nextId]: [...(draft.bindings.default ?? DEFAULT_BINDINGS)],
+        [nextId]: [],
       },
     })
     navigate({
@@ -148,6 +151,7 @@ function AppPanel({ appId }: { appId: string }) {
       <div className="flex flex-1 flex-col gap-1 overflow-y-auto p-2">
         {apps.map((app) => {
           const isActive = appId === app.id
+          const firstGesture = draft.bindings[app.id]?.[0]
 
           return (
             <div
@@ -159,38 +163,62 @@ function AppPanel({ appId }: { appId: string }) {
                   : "hover:bg-background-card",
               )}
             >
-              <Link
-                to="/applications/$appId/gestures/$gestureId"
-                params={{
-                  appId: app.id,
-                  gestureId: getGestureId(
-                    draft.bindings[app.id]?.[0] ?? DEFAULT_BINDINGS[0],
-                  ),
-                }}
-                className="flex min-w-0 flex-1 items-center gap-2"
-              >
-                <div className="flex h-6 w-6 items-center justify-center rounded-md bg-background-subtle">
-                  {app.icon === "terminal" ? (
-                    <Terminal className="h-3.5 w-3.5 text-foreground-subtle" />
-                  ) : (
-                    <div className="h-3.5 w-3.5 rounded-sm bg-foreground-subtle" />
+              {firstGesture ? (
+                <Link
+                  to="/applications/$appId/gestures/$gestureId"
+                  params={{
+                    appId: app.id,
+                    gestureId: getGestureId(firstGesture),
+                  }}
+                  className="flex min-w-0 flex-1 items-center gap-2"
+                >
+                  <div className="flex h-6 w-6 items-center justify-center rounded-md bg-background-subtle">
+                    {app.icon === "terminal" ? (
+                      <Terminal className="h-3.5 w-3.5 text-foreground-subtle" />
+                    ) : (
+                      <div className="h-3.5 w-3.5 rounded-sm bg-foreground-subtle" />
+                    )}
+                  </div>
+                  <span
+                    className={`truncate text-left text-sm ${
+                      isActive
+                        ? "font-semibold text-foreground"
+                        : "font-medium text-foreground-muted"
+                    }`}
+                  >
+                    {app.name}
+                  </span>
+                  {app.icon === "fallback" && (
+                    <Badge className="ml-1" variant="fallback">
+                      fallback
+                    </Badge>
+                  )}
+                </Link>
+              ) : (
+                <div className="flex min-w-0 flex-1 items-center gap-2">
+                  <div className="flex h-6 w-6 items-center justify-center rounded-md bg-background-subtle">
+                    {app.icon === "terminal" ? (
+                      <Terminal className="h-3.5 w-3.5 text-foreground-subtle" />
+                    ) : (
+                      <div className="h-3.5 w-3.5 rounded-sm bg-foreground-subtle" />
+                    )}
+                  </div>
+                  <span
+                    className={`truncate text-left text-sm ${
+                      isActive
+                        ? "font-semibold text-foreground"
+                        : "font-medium text-foreground-muted"
+                    }`}
+                  >
+                    {app.name}
+                  </span>
+                  {app.icon === "fallback" && (
+                    <Badge className="ml-1" variant="fallback">
+                      fallback
+                    </Badge>
                   )}
                 </div>
-                <span
-                  className={`truncate text-left text-sm ${
-                    isActive
-                      ? "font-semibold text-foreground"
-                      : "font-medium text-foreground-muted"
-                  }`}
-                >
-                  {app.name}
-                </span>
-                {app.icon === "fallback" && (
-                  <Badge className="ml-1" variant="fallback">
-                    fallback
-                  </Badge>
-                )}
-              </Link>
+              )}
               <Link
                 to="/applications/$appId/edit"
                 params={{ appId: app.id }}
@@ -241,12 +269,12 @@ function GesturePanel({
   }
 
   const addGesture = () => {
-    const template = bindings[bindings.length - 1] ?? DEFAULT_BINDINGS[0]
     const nextBinding: GestureBinding = {
-      ...template,
+      id: crypto.randomUUID(),
       label: "New Gesture",
       gesture: {
-        ...template.gesture,
+        mode: "release",
+        trigger: "right_click",
         sequence: ["right"],
       },
       action: { type: "keyboard", keys: [] },
@@ -293,9 +321,7 @@ function GesturePanel({
                   : "hover:bg-background-card",
               )}
             >
-              <span className="text-foreground text-sm">
-                {gesture.label ?? "Untitled"}
-              </span>
+              <span className="text-foreground text-sm">{gesture.label}</span>
               {gesture.action.keys.length > 0 ? (
                 <Badge variant="default">
                   {formatKeys(gesture.action.keys)}

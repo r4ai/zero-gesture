@@ -18,6 +18,8 @@ export interface AppMatcher {
 
 /** Definition of an application for per-app gesture bindings. */
 export interface AppDefinition {
+  /** Human-readable name shown in UI. */
+  label?: string
   /** Matching rules (OR logic — any match counts). */
   matchers: AppMatcher[]
 }
@@ -94,6 +96,8 @@ export type Action = { type: "keyboard"; keys: string[] }
 
 /** A single gesture binding. */
 export interface GestureBinding {
+  /** Stable identifier for this gesture binding. */
+  id: string
   label?: string
   /** Gesture pattern to match. */
   gesture: GesturePattern
@@ -160,6 +164,7 @@ export const MAX_GESTURE_STEPS = 8
 /** Default gesture bindings matching the Rust backend. */
 export const DEFAULT_BINDINGS: GestureBinding[] = [
   {
+    id: "back",
     label: "Back",
     gesture: {
       trigger: "right_click",
@@ -169,6 +174,7 @@ export const DEFAULT_BINDINGS: GestureBinding[] = [
     action: { type: "keyboard", keys: ["alt", "left"] },
   },
   {
+    id: "forward",
     label: "Forward",
     gesture: {
       trigger: "right_click",
@@ -178,6 +184,7 @@ export const DEFAULT_BINDINGS: GestureBinding[] = [
     action: { type: "keyboard", keys: ["alt", "right"] },
   },
   {
+    id: "scroll-up",
     label: "Scroll Up",
     gesture: {
       trigger: "right_click",
@@ -187,6 +194,7 @@ export const DEFAULT_BINDINGS: GestureBinding[] = [
     action: { type: "keyboard", keys: ["pageup"] },
   },
   {
+    id: "scroll-down",
     label: "Scroll Down",
     gesture: {
       trigger: "right_click",
@@ -196,6 +204,7 @@ export const DEFAULT_BINDINGS: GestureBinding[] = [
     action: { type: "keyboard", keys: ["pagedown"] },
   },
   {
+    id: "top-of-page",
     label: "Top of Page",
     gesture: {
       trigger: "right_click",
@@ -205,6 +214,7 @@ export const DEFAULT_BINDINGS: GestureBinding[] = [
     action: { type: "keyboard", keys: ["ctrl", "home"] },
   },
   {
+    id: "bottom-of-page",
     label: "Bottom of Page",
     gesture: {
       trigger: "right_click",
@@ -214,6 +224,7 @@ export const DEFAULT_BINDINGS: GestureBinding[] = [
     action: { type: "keyboard", keys: ["ctrl", "end"] },
   },
   {
+    id: "next-tab",
     label: "Next Tab",
     gesture: {
       trigger: "right_click",
@@ -223,6 +234,7 @@ export const DEFAULT_BINDINGS: GestureBinding[] = [
     action: { type: "keyboard", keys: ["ctrl", "tab"] },
   },
   {
+    id: "previous-tab",
     label: "Previous Tab",
     gesture: {
       trigger: "right_click",
@@ -232,6 +244,7 @@ export const DEFAULT_BINDINGS: GestureBinding[] = [
     action: { type: "keyboard", keys: ["ctrl", "shift", "tab"] },
   },
   {
+    id: "reload",
     label: "Reload",
     gesture: {
       trigger: "right_click",
@@ -241,6 +254,7 @@ export const DEFAULT_BINDINGS: GestureBinding[] = [
     action: { type: "keyboard", keys: ["ctrl", "r"] },
   },
   {
+    id: "close-tab",
     label: "Close Tab",
     gesture: {
       trigger: "right_click",
