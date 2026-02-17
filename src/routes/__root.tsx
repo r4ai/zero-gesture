@@ -8,6 +8,7 @@ import {
 } from "@tanstack/react-router"
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools"
 import {
+  AppWindow,
   Monitor,
   Moon,
   MousePointer2,
@@ -95,6 +96,13 @@ function AppLayout() {
               >
                 <SlidersHorizontal className="size-4" />
                 {!compact ? <span>General</span> : null}
+              </SidebarItem>
+              <SidebarItem
+                active={isRouteActive("/applications")}
+                onClick={() => navigate({ to: "/applications" })}
+              >
+                <AppWindow className="size-4" />
+                {!compact ? <span>Applications</span> : null}
               </SidebarItem>
               <SidebarItem
                 active={isRouteActive("/advanced")}
