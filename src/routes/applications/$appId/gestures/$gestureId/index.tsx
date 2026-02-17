@@ -1,6 +1,12 @@
 import { createFileRoute, useParams } from "@tanstack/react-router"
 import { Check, Keyboard, Trash2 } from "lucide-react"
 import { useState } from "react"
+import {
+  AppSettingsLayout,
+  formatGestureSequence,
+  GESTURES,
+  getGestureId,
+} from "@/components/applications/app-settings-layout"
 import { Button } from "@/components/ui/button"
 import { KeyInput } from "@/components/ui/key-input"
 import { Select, SelectItem } from "@/components/ui/select"
@@ -13,51 +19,29 @@ export const Route = createFileRoute(
 })
 
 /**
- * Format gesture steps into display string
- */
-function formatGestureSequence(steps: string[]): string {
-  if (steps.length === 0) return ""
-  return steps
-    .map((step) =>
-      step
-        .split("_")
-        .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-        .join(" "),
-    )
-    .join(" → ")
-}
-
-// Mock gesture data
-const mockGestures: Record<
-  string,
-  { sequence: string[]; label?: string; keys: string[] }
-> = {
-  left: { sequence: ["left"], label: "Left", keys: ["ctrl", "z"] },
-  right: { sequence: ["right"], label: "Right", keys: ["ctrl", "y"] },
-  up: { sequence: ["up"], label: "Up", keys: [] },
-  down: { sequence: ["down"], label: "Down", keys: ["win", "down"] },
-  "up-right": { sequence: ["up", "right"], label: "Up-Right", keys: [] },
-}
-
-/**
  * Action Edit Page - Edit gesture action (right panel)
- * Based on Pencil: "Applications Settings - Action Edit"
+ * Based on Pencil: "Applications Settings - Gesture Edit"
  */
 function ActionEditPage() {
-  const { gestureId } = useParams({
+  const { appId, gestureId } = useParams({
     from: "/applications/$appId/gestures/$gestureId/",
   })
+  const gesture = GESTURES.find((item) => getGestureId(item) === gestureId)
   const [selectedTab, setSelectedTab] = useState<string>("action")
-  const [editedKeys, setEditedKeys] = useState<string[]>(["ctrl", "z"])
+  const [editedKeys, setEditedKeys] = useState<string[]>(
+    gesture?.action.keys ?? [],
+  )
   const [isDirty, setIsDirty] = useState(false)
-
-  const gesture = mockGestures[gestureId]
 
   if (!gesture) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <p className="text-[14px] text-foreground-subtle">Gesture not found</p>
-      </div>
+      <AppSettingsLayout appId={appId} selectedGestureId={gestureId}>
+        <div className="flex h-full items-center justify-center">
+          <p className="text-[14px] text-foreground-subtle">
+            Gesture not found
+          </p>
+        </div>
+      </AppSettingsLayout>
     )
   }
 
@@ -68,7 +52,7 @@ function ActionEditPage() {
 
   const handleCancel = () => {
     // Reset to original values
-    setEditedKeys(gesture.keys)
+    setEditedKeys(gesture.action.keys)
     setIsDirty(false)
   }
 
@@ -77,12 +61,12 @@ function ActionEditPage() {
   }
 
   return (
-    <>
+    <AppSettingsLayout appId={appId} selectedGestureId={gestureId}>
       {/* Header */}
       <div className="flex h-16 items-center justify-between border-border border-b px-6">
         <div className="flex flex-col">
           <h2 className="font-semibold text-[16px] text-foreground">
-            {formatGestureSequence(gesture.sequence)}
+            {formatGestureSequence(gesture.gesture.sequence)}
           </h2>
           <span className="text-[12px] text-foreground-subtle">
             {gesture.label || "Custom Gesture"}
@@ -179,6 +163,6 @@ function ActionEditPage() {
           <span>Save Changes</span>
         </Button>
       </div>
-    </>
+    </AppSettingsLayout>
   )
 }
