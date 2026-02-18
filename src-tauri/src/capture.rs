@@ -1,16 +1,16 @@
 //! One-shot window capture via a global low-level mouse hook.
 //!
-//! When [`start`] is called, a dedicated OS thread installs a `WH_MOUSE_LL`
+//! When [`win32::start`] is called, a dedicated OS thread installs a `WH_MOUSE_LL`
 //! hook.  The first left-button-down event that is **not** injected causes the
 //! hook to:
 //!
 //! 1. Suppress the click (return non-zero from the hook callback).
 //! 2. Resolve the window under the cursor with `WindowFromPoint`.
-//! 3. Collect [`ForegroundWindowInfo`] for that window.
+//! 3. Collect [`crate::window_info::ForegroundWindowInfo`] for that window.
 //! 4. Emit a `window-captured` Tauri event carrying the info.
 //! 5. Post `WM_QUIT` to shut the hook thread down.
 //!
-//! Calling [`stop`] at any time causes the hook thread to exit without emitting
+//! Calling [`win32::CaptureHandle::cancel`] at any time causes the hook thread to exit without emitting
 //! an event (cancel path).
 
 #[cfg(windows)]

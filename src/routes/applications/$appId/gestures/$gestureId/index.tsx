@@ -176,15 +176,6 @@ function ActionTabContent() {
     })
   }
 
-  const closeKeyboardInput = () => {
-    navigate({
-      to: "/applications/$appId/gestures/$gestureId",
-      params: { appId, gestureId },
-      search: { tab: selectedTab },
-      replace: true,
-    })
-  }
-
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-2">

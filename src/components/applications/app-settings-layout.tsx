@@ -148,7 +148,6 @@ function AppPanel({ appId }: { appId: string }) {
       <div className="flex flex-1 flex-col gap-1 overflow-y-auto p-2">
         {apps.map((app) => {
           const isActive = appId === app.id
-          const firstGesture = draft.bindings[app.id]?.[0]
 
           return (
             <div
