@@ -525,6 +525,13 @@ fn activate_element_window(
             return;
         }
 
+        // Best effort: let UI Automation focus the element represented by this HWND.
+        // This can clear in-page text focus in some apps where plain SetFocus(HWND)
+        // is not enough.
+        if try_uia_focus_by_hwnd(focus_target) {
+            return;
+        }
+
         let current_tid = GetCurrentThreadId();
         let target_tid = GetWindowThreadProcessId(focus_target, std::ptr::null_mut());
 
@@ -546,5 +553,28 @@ fn activate_element_window(
         if attached {
             let _ = AttachThreadInput(current_tid, target_tid, 0);
         }
+    }
+}
+
+/// Try to focus a UI Automation node resolved from HWND.
+fn try_uia_focus_by_hwnd(hwnd: windows_sys::Win32::Foundation::HWND) -> bool {
+    use windows_sys::Win32::UI::Accessibility::{UiaNodeFromHandle, UiaNodeRelease, UiaSetFocus};
+
+    unsafe {
+        let mut node = std::ptr::null_mut();
+        let hr = UiaNodeFromHandle(hwnd, &mut node);
+        if hr < 0 || node.is_null() {
+            return false;
+        }
+
+        let focus_hr = UiaSetFocus(node);
+        let _ = UiaNodeRelease(node);
+        if focus_hr < 0 {
+            debug!("try_uia_focus_by_hwnd: UiaSetFocus failed (hr={focus_hr:#x})");
+            return false;
+        }
+
+        debug!("try_uia_focus_by_hwnd: focused UIA node for hwnd={hwnd:?}");
+        true
     }
 }
