@@ -92,7 +92,7 @@ function AdvancedSettings() {
             </div>
             <Button
               variant="outline"
-              className="h-[34px] gap-2 rounded-[7px] border-zinc-700 bg-[#1c1c1f] px-[14px]"
+              className="h-[34px] gap-2 rounded-[7px] border-border bg-background-card px-[14px] text-foreground"
               onPress={handleImportConfig}
             >
               <Upload className="h-3.5 w-3.5" />
@@ -110,7 +110,7 @@ function AdvancedSettings() {
             </div>
             <Button
               variant="outline"
-              className="h-[34px] gap-2 rounded-[7px] border-zinc-700 bg-[#1c1c1f] px-[14px]"
+              className="h-[34px] gap-2 rounded-[7px] border-border bg-background-card px-[14px] text-foreground"
               onPress={handleExportConfig}
             >
               <Download className="h-3.5 w-3.5" />
@@ -128,7 +128,7 @@ function AdvancedSettings() {
             </div>
             <Button
               variant="outline"
-              className="h-[34px] gap-2 rounded-[7px] border-zinc-700 bg-[#1c1c1f] px-[14px]"
+              className="h-[34px] gap-2 rounded-[7px] border-border bg-background-card px-[14px] text-foreground"
               onPress={handleOpenConfigFolder}
             >
               <FolderOpen className="h-3.5 w-3.5" />

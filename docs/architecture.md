@@ -38,13 +38,12 @@ graph TD
 
     subgraph "Overlay Thread (Win32 Message Loop)"
         WIN[Transparent Window]
-        D2D[Direct2D Renderer]
 
-        WIN --> D2D
+        WIN --> GDI[GDI Renderer]
     end
 
     subgraph "Frontend (Tauri/Web)"
-        UI[React/Svelte App]
+        UI[React App]
     end
 
     User((User Input)) --> HM
@@ -70,7 +69,7 @@ graph TD
 
 UIスレッドのブロックを防ぐため、独立したスレッドでマウス入力を監視します。
 
-- **Technology:** `windows` crate (Win32 API: `SetWindowsHookExW`, `CallNextHookEx`)
+- **Technology:** `windows-sys` crate (Win32 API: `SetWindowsHookExW`, `CallNextHookEx`)
 - **Responsibility:**
   - **Low-Level Mouse Hook:** `WH_MOUSE_LL` を使用してマウスイベントをフック。
   - **Event Suppression:** ジェスチャー開始トリガー（例: 右クリック）を検知した場合、OSへのイベント伝播をブロック（`1`をreturn）し、コンテキストメニューの出現を防ぐ。
@@ -82,17 +81,17 @@ UIスレッドのブロックを防ぐため、独立したスレッドでマウ
 
 TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成・制御します。
 
-- **Technology:** `windows` crate (Win32 API, Direct2D/DirectComposition)
+- **Technology:** `windows-sys` crate (Win32 API, GDI)
 - **Responsibility:**
   - **Window Creation:** `WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW` スタイルの全画面透明ウィンドウを作成。
-  - **High-Performance Rendering:** Hook Threadから送られてくる座標データを元に、GPUアクセラレーション（Direct2D）を用いてラインを描画。
+  - **Rendering:** Hook Threadから送られてくる座標データを元に、GDI（`Polyline` + バックバッファビットマップ）を用いてラインを描画。Direct2Dは未実装（スタブのみ）。
   - **Lifecycle:** ジェスチャー中のみ可視化（`ShowWindow`）し、終了後は非表示＆描画クリアを行うことでリソースを節約。
 
 ### 3.4. Settings UI (The "Interface")
 
 ユーザーがジェスチャー定義を編集するための画面です。
 
-- **Technology:** Tauri Frontend (React + Tailwind CSS + shdcn/ui)
+- **Technology:** Tauri Frontend (React 19 + Tailwind CSS v4 + react-aria-components + TanStack Router)
 - **Responsibility:**
   - ジェスチャーとアクションのマッピング編集。
   - 軌跡の色・太さの設定。
@@ -126,13 +125,14 @@ TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成
 | Category             | Technology / Crate                 | Purpose                                          |
 | :------------------- | :--------------------------------- | :----------------------------------------------- |
 | **App Framework**    | `tauri` v2                         | アプリケーションシェル、設定UI、ビルドシステム   |
-| **Windows API**      | `windows`                          | Win32 APIへのRawアクセス (Hooks, GDI/D2D, Input) |
+| **Windows API**      | `windows-sys`                      | Win32 APIへのRawアクセス (Hooks, GDI, Input)     |
 | **Concurrency**      | `std::thread`, `crossbeam-channel` | スレッド管理と高速なメッセージパッシング         |
 | **State Mngt**       | `std::sync::{Arc, RwLock}`         | 設定データ等のスレッド間共有                     |
 | **Serialization**    | `serde`, `serde_json`              | 設定ファイルの保存・読み込み                     |
-| **Logging**          | `log`                              | ログ出力                                         |
-| **Input Simulation** | `windows` (SendInput)              | キーボード・マウス操作の自動実行                 |
-| **Frontend**         | React or Svelte + TypeScript       | 設定画面のUI構築                                 |
+| **Logging**          | `log`, `tauri-plugin-log`          | ログ出力                                         |
+| **Input Simulation** | `windows-sys` (SendInput)          | キーボード・マウス操作の自動実行                 |
+| **Pattern Matching** | `regex`                            | アプリ名マッチング                               |
+| **Frontend**         | React 19 + TypeScript + TanStack Router + react-aria-components | 設定画面のUI構築 |
 
 ---
 
@@ -142,17 +142,32 @@ TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成
 /
 ├── src-tauri/
 │   ├── src/
-│   │   ├── main.rs         // Entry point, Tauri setup
-│   │   ├── hook.rs         // Low-level mouse hook logic
-│   │   ├── overlay.rs      // Direct2D rendering window
-│   │   ├── config.rs       // Structs for settings
-│   │   ├── executor.rs     // Action dispatcher (Key sender)
-│   │   └── tray.rs         // System tray handling
+│   │   ├── main.rs             // Entry point, Tauri setup
+│   │   ├── lib.rs              // WorkerThreads管理、スレッド起動
+│   │   ├── config.rs           // 設定データ構造体
+│   │   ├── commands.rs         // Tauri IPC コマンドハンドラ
+│   │   ├── executor.rs         // アクション実行 (SendInput等)
+│   │   ├── gesture.rs          // ジェスチャー方向計算
+│   │   ├── tray.rs             // システムトレイ管理
+│   │   ├── capture.rs          // ウィンドウキャプチャ
+│   │   ├── window_info.rs      // アクティブウィンドウ情報取得
+│   │   ├── log.rs              // ログ設定
+│   │   ├── hook/
+│   │   │   ├── mod.rs          // フック起動・バインディングコンパイル
+│   │   │   ├── win32.rs        // Win32メッセージループ、フックコールバック
+│   │   │   ├── state.rs        // ジェスチャー状態機械
+│   │   │   ├── app_match.rs    // アプリ名マッチング
+│   │   │   └── trigger.rs      // トリガーボタン定義
+│   │   └── overlay/
+│   │       ├── mod.rs          // TrailRendererトレイト、OverlayCommand定義
+│   │       ├── window.rs       // Win32ウィンドウ作成・メッセージループ
+│   │       ├── gdi.rs          // GDIレンダラー実装
+│   │       └── direct2d.rs     // Direct2Dレンダラー（未実装スタブ）
 │   ├── Cargo.toml
-│   ├── tauri.conf.json
-│   └── capabilities/
-├── src/                    // Frontend (Settings UI)
-│   ├── App.tsx
+│   └── build.rs
+├── src/                        // Frontend (Settings UI)
+│   ├── main.tsx
+│   ├── routes/                 // TanStack Router ファイルベースルーティング
 │   └── components/
 └── docs/
     └── architecture.md
@@ -162,4 +177,4 @@ TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成
 
 - **Blocking:** Hookプロシージャ内での重い処理は厳禁。座標計算とチャネル送信のみを行い、即座に `CallNextHookEx` またはリターンを行う。
 - **Memory Safety:** `unsafe` ブロックを多用するWin32 API部分は、Rustのラッパー関数で適切に抽象化し、メモリリークや未定義動作を防ぐ。
-- **Drawing:** GDIではなくDirect2Dを使用することで、CPU使用率を下げ、高DPI環境での描画品質を保つ。
+- **Drawing:** 現在はGDI（`Polyline` + バックバッファ）を使用。将来的にDirect2Dへ移行することでCPU使用率の低下と高DPI品質の向上を図る。
