@@ -72,6 +72,8 @@ pub fn apply_config_update<R: tauri::Runtime>(
         return Err(format!("failed to save config: {err}"));
     }
 
+    tray::sync_toggle_menu_label(app, new_config.enabled);
+
     // Notify frontend that config has been updated
     let _ = app.emit("config-updated", new_config.clone());
 
