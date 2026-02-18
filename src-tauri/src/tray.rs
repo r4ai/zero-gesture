@@ -18,6 +18,9 @@ const MENU_OPEN_SETTINGS: &str = "open-settings";
 /// Menu item ID for the "Quit" action.
 const MENU_QUIT: &str = "quit";
 
+/// Managed state containing the tray toggle menu item handle.
+pub struct TrayToggleMenuItem<R: Runtime>(pub MenuItem<R>);
+
 /// Returns the label for the toggle menu item based on the current `enabled`
 /// state.
 fn toggle_label(enabled: bool) -> &'static str {
@@ -59,14 +62,14 @@ pub fn setup<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
         MenuItem::with_id(app, MENU_OPEN_SETTINGS, "Open Settings", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, MENU_QUIT, "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&toggle_item, &open_settings_item, &quit_item])?;
+    app.manage(TrayToggleMenuItem(toggle_item.clone()));
 
-    let toggle_item_clone = toggle_item.clone();
     let mut tray = TrayIconBuilder::with_id("main-tray")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(move |app, event| match event.id().as_ref() {
             MENU_TOGGLE_ENABLED => {
-                handle_toggle(app, &toggle_item_clone);
+                handle_toggle(app);
             }
             MENU_OPEN_SETTINGS => {
                 let _ = show_settings_window(app);
@@ -98,7 +101,7 @@ pub fn setup<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
 }
 
 /// Handles the "Toggle Gestures" menu action.
-fn handle_toggle<R: Runtime>(app: &AppHandle<R>, toggle_item: &MenuItem<R>) {
+fn handle_toggle<R: Runtime>(app: &AppHandle<R>) {
     let shared_config = app.state::<crate::SharedConfig>();
     let runtime = app.state::<crate::ThreadRuntime>();
     let config_dir = app.state::<crate::ConfigDir>();
@@ -131,7 +134,16 @@ fn handle_toggle<R: Runtime>(app: &AppHandle<R>, toggle_item: &MenuItem<R>) {
     }
 
     // Update the menu item text to reflect the new state.
-    let _ = toggle_item.set_text(toggle_label(new_enabled));
+    sync_toggle_menu_label(app, new_enabled);
+}
+
+/// Synchronizes tray toggle menu text with the current enabled state.
+pub fn sync_toggle_menu_label<R: Runtime>(app: &AppHandle<R>, enabled: bool) {
+    if let Some(toggle_item) = app.try_state::<TrayToggleMenuItem<R>>() {
+        let _ = toggle_item.0.set_text(toggle_label(enabled));
+    } else {
+        warn!("tray toggle menu item is not available to sync label");
+    }
 }
 
 /// Opens the settings webview window, or brings it to the foreground if it
