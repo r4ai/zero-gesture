@@ -153,10 +153,11 @@ pub fn execute(action: &Action) {
 fn execute_scroll_to_bottom() {
     use std::mem::size_of;
     use std::ptr::null_mut;
-    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::Foundation::{HWND, LPARAM, WPARAM};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetForegroundWindow, GetGUIThreadInfo, GetWindowThreadProcessId, PostMessageW,
-        GUITHREADINFO, SB_BOTTOM, WM_VSCROLL,
+        GetForegroundWindow, GetGUIThreadInfo, GetScrollInfo, GetWindowThreadProcessId,
+        SendMessageTimeoutW, GUITHREADINFO, SB_BOTTOM, SB_VERT, SCROLLINFO, SIF_PAGE, SIF_POS,
+        SIF_RANGE, SMTO_ABORTIFHUNG, WM_VSCROLL,
     };
 
     unsafe fn preferred_scroll_target(foreground: HWND) -> HWND {
@@ -182,27 +183,65 @@ fn execute_scroll_to_bottom() {
         foreground
     }
 
-    let foreground = unsafe { GetForegroundWindow() };
-    let mut posted = false;
-
-    let target = unsafe { preferred_scroll_target(foreground) };
-    for hwnd in [target, foreground] {
+    unsafe fn try_scroll_bottom_with_vscroll(hwnd: HWND) -> bool {
         if hwnd.is_null() {
-            continue;
+            return false;
         }
-        if hwnd == target && hwnd == foreground && posted {
-            continue;
+
+        let mut before: SCROLLINFO = unsafe { std::mem::zeroed() };
+        before.cbSize = size_of::<SCROLLINFO>() as u32;
+        before.fMask = (SIF_RANGE | SIF_PAGE | SIF_POS) as u32;
+        if unsafe { GetScrollInfo(hwnd, SB_VERT, &mut before) } == 0 {
+            return false;
         }
-        let ok = unsafe { PostMessageW(hwnd, WM_VSCROLL, SB_BOTTOM as usize, 0) };
-        posted |= ok != 0;
+
+        // No usable vertical scroll range.
+        if before.nMax <= before.nMin {
+            return false;
+        }
+
+        let mut result: usize = 0;
+        if unsafe {
+            SendMessageTimeoutW(
+                hwnd,
+                WM_VSCROLL,
+                SB_BOTTOM as WPARAM,
+                0 as LPARAM,
+                SMTO_ABORTIFHUNG,
+                100,
+                &mut result,
+            )
+        } == 0
+        {
+            return false;
+        }
+
+        let mut after: SCROLLINFO = unsafe { std::mem::zeroed() };
+        after.cbSize = size_of::<SCROLLINFO>() as u32;
+        after.fMask = (SIF_RANGE | SIF_PAGE | SIF_POS) as u32;
+        if unsafe { GetScrollInfo(hwnd, SB_VERT, &mut after) } == 0 {
+            return false;
+        }
+
+        let page = i32::try_from(after.nPage).unwrap_or(i32::MAX);
+        let effective_bottom = if page > 0 {
+            after.nMax.saturating_sub(page.saturating_sub(1))
+        } else {
+            after.nMax
+        };
+        after.nPos >= effective_bottom || after.nPos > before.nPos
     }
 
-    if posted {
-        debug!("ScrollToBottom posted WM_VSCROLL/SB_BOTTOM");
+    let foreground = unsafe { GetForegroundWindow() };
+    let target = unsafe { preferred_scroll_target(foreground) };
+    if unsafe { try_scroll_bottom_with_vscroll(target) }
+        || (foreground != target && unsafe { try_scroll_bottom_with_vscroll(foreground) })
+    {
+        debug!("ScrollToBottom handled via WM_VSCROLL/SB_BOTTOM");
         return;
     }
 
-    warn!("ScrollToBottom fallback to keyboard shortcut (Ctrl+End)");
+    warn!("ScrollToBottom fallback to keyboard shortcut (Ctrl+End), WM_VSCROLL was not effective");
     let fallback_keys = [String::from("ctrl"), String::from("end")];
     execute_keyboard(&fallback_keys);
 }
