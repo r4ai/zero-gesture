@@ -128,7 +128,6 @@ fn handle_toggle<R: Runtime>(app: &AppHandle<R>) {
         config_dir.inner(),
     ) {
         warn!("failed to toggle gestures: {err}");
-        return;
     }
 }
 
