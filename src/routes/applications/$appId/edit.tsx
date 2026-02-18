@@ -4,6 +4,7 @@ import {
   useNavigate,
   useParams,
 } from "@tanstack/react-router"
+import { listen } from "@tauri-apps/api/event"
 import {
   ArrowLeft,
   Check,
@@ -13,7 +14,7 @@ import {
   Trash2,
   X,
 } from "lucide-react"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { SettingsFormActions } from "@/components/settings-form-actions"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -30,17 +31,24 @@ import {
 import { Select, SelectItem } from "@/components/ui/select"
 import { TextField } from "@/components/ui/textfield"
 import { useConfigDraft } from "@/contexts/config-draft"
+import {
+  type ForegroundWindowInfo,
+  startWindowCapture,
+  stopWindowCapture,
+} from "@/lib/api"
 import type { MatchMethod, MatchTarget } from "@/types/config"
 
 export const Route = createFileRoute("/applications/$appId/edit")({
   validateSearch: (
     search: Record<string, unknown>,
-  ): { pickStep?: "pick" | "select" } => {
+  ): { pickStep?: "pick" | "select"; conditionId?: number } => {
     const pickStep =
       search.pickStep === "pick" || search.pickStep === "select"
         ? search.pickStep
         : undefined
-    return { pickStep }
+    const conditionId =
+      typeof search.conditionId === "number" ? search.conditionId : undefined
+    return { pickStep, conditionId }
   },
   component: AppEditPage,
 })
@@ -153,34 +161,80 @@ function useApplication() {
 
 function usePickDialog() {
   const { appId } = useParams({ from: "/applications/$appId/edit" })
-  const { updateCondition, appName } = useApplication()
+  const { updateCondition } = useApplication()
   const search = Route.useSearch()
   const navigate = useNavigate()
 
-  const [activeConditionId, setActiveConditionId] = useState<number | null>(
-    null,
-  )
+  const activeConditionId = search.conditionId ?? null
+
   const [selectedDetectKey, setSelectedDetectKey] = useState<
     "process_name" | "window_class" | "window_title"
   >("process_name")
   const [selectedDetectMethod, setSelectedDetectMethod] = useState<
     "exact" | "contains" | "regex"
   >("exact")
+  const [windowInfo, setWindowInfo] = useState<ForegroundWindowInfo | null>(
+    null,
+  )
 
   const isPickDialogOpen = search.pickStep === "pick"
   const isSelectDialogOpen = search.pickStep === "select"
 
+  // Start/stop the backend window capture hook when the PickDialog is open.
+  useEffect(() => {
+    if (!isPickDialogOpen) return
+
+    let unlisten: (() => void) | undefined
+
+    const setup = async () => {
+      // Listen for the window-captured event BEFORE starting the hook so we
+      // don't miss the event in case the hook fires very quickly.
+      unlisten = await listen<ForegroundWindowInfo>(
+        "window-captured",
+        (event) => {
+          const info = event.payload
+          setWindowInfo(info)
+          // Pre-select the first populated field.
+          if (info.process_name) {
+            setSelectedDetectKey("process_name")
+          } else if (info.window_class) {
+            setSelectedDetectKey("window_class")
+          } else {
+            setSelectedDetectKey("window_title")
+          }
+          navigate({
+            to: "/applications/$appId/edit",
+            params: { appId },
+            search: {
+              pickStep: "select",
+              conditionId: activeConditionId ?? undefined,
+            },
+            replace: true,
+          })
+        },
+      )
+      await startWindowCapture()
+    }
+
+    setup().catch(console.error)
+
+    return () => {
+      stopWindowCapture().catch(console.error)
+      unlisten?.()
+    }
+  }, [isPickDialogOpen, appId, navigate, activeConditionId])
+
   const open = (conditionId: number) => {
-    setActiveConditionId(conditionId)
+    setWindowInfo(null)
     navigate({
       to: "/applications/$appId/edit",
       params: { appId },
-      search: { pickStep: "pick" },
+      search: { pickStep: "pick", conditionId },
     })
   }
 
   const close = () => {
-    setActiveConditionId(null)
+    setWindowInfo(null)
     navigate({
       to: "/applications/$appId/edit",
       params: { appId },
@@ -189,13 +243,19 @@ function usePickDialog() {
     })
   }
 
-  const moveToSelect = () => {
-    navigate({
-      to: "/applications/$appId/edit",
-      params: { appId },
-      search: { pickStep: "select" },
-      replace: true,
-    })
+  /**
+   * Returns the value for the currently selected detect key from captured window info.
+   */
+  const getSelectedValue = (): string => {
+    if (!windowInfo) return ""
+    switch (selectedDetectKey) {
+      case "process_name":
+        return windowInfo.process_name ?? ""
+      case "window_class":
+        return windowInfo.window_class ?? ""
+      case "window_title":
+        return windowInfo.title ?? ""
+    }
   }
 
   const confirm = () => {
@@ -203,7 +263,7 @@ function usePickDialog() {
       updateCondition(activeConditionId, {
         field: selectedDetectKey,
         method: selectedDetectMethod,
-        value: appName.trim().toLowerCase() || "google-chrome",
+        value: getSelectedValue(),
       })
     }
     close()
@@ -212,13 +272,13 @@ function usePickDialog() {
   return {
     isPickDialogOpen,
     isSelectDialogOpen,
+    windowInfo,
     selectedDetectKey,
     setSelectedDetectKey,
     selectedDetectMethod,
     setSelectedDetectMethod,
     open,
     close,
-    moveToSelect,
     confirm,
   }
 }
@@ -417,7 +477,7 @@ function ConditionsList() {
 }
 
 function PickDialog() {
-  const { isPickDialogOpen, close, moveToSelect } = usePickDialog()
+  const { isPickDialogOpen, close } = usePickDialog()
 
   return (
     <Dialog
@@ -426,16 +486,13 @@ function PickDialog() {
     >
       <div />
       <DialogContent
-        isDismissable
+        isDismissable={false}
         onOpenChange={(isOpen) => !isOpen && close()}
       >
         <DialogHeader>
           <DialogClose onPress={close} />
         </DialogHeader>
-        <DialogBody
-          className="h-[568px] cursor-crosshair"
-          onClick={moveToSelect}
-        >
+        <DialogBody className="h-[568px] cursor-crosshair">
           <DialogIcon>
             <Crosshair className="h-[34px] w-[34px] text-white" />
           </DialogIcon>
@@ -452,6 +509,7 @@ function PickDialog() {
 function SelectDialog() {
   const {
     isSelectDialogOpen,
+    windowInfo,
     selectedDetectKey,
     setSelectedDetectKey,
     selectedDetectMethod,
@@ -459,6 +517,13 @@ function SelectDialog() {
     close,
     confirm,
   } = usePickDialog()
+
+  /** Display name derived from window info (process name preferred). */
+  const displayName =
+    windowInfo?.process_name?.replace(/\.exe$/i, "") ??
+    windowInfo?.title ??
+    windowInfo?.window_class ??
+    "Unknown App"
 
   return (
     <Dialog
@@ -484,7 +549,7 @@ function SelectDialog() {
                 <Globe className="h-[18px] w-[18px] text-white" />
               </div>
               <span className="font-semibold text-[14px] text-foreground">
-                Google Chrome
+                {displayName}
               </span>
             </div>
           </div>
@@ -500,43 +565,54 @@ function SelectDialog() {
                     key: "process_name",
                     label: "Process Name",
                     description: "Usually stable and recommended",
+                    value: windowInfo?.process_name,
                   },
                   {
                     key: "window_class",
                     label: "Window Class",
                     description: "Useful for native windows and terminals",
+                    value: windowInfo?.window_class,
                   },
                   {
                     key: "window_title",
                     label: "Window Title",
                     description: "Good for dynamic page-specific matching",
+                    value: windowInfo?.title,
                   },
                 ] as const
-              ).map(({ key, label, description }) => (
+              ).map(({ key, label, description, value }) => (
                 <button
                   key={key}
                   type="button"
                   onClick={() => setSelectedDetectKey(key)}
+                  disabled={value == null}
                   className={`flex w-full items-start gap-3 rounded-lg border p-3.5 text-left ${
-                    selectedDetectKey === key
-                      ? "border-border-white bg-background-glass-light"
-                      : "border-border bg-transparent"
+                    value == null
+                      ? "cursor-not-allowed border-border opacity-40"
+                      : selectedDetectKey === key
+                        ? "border-border-white bg-background-glass-light"
+                        : "border-border bg-transparent"
                   }`}
                 >
                   <div
-                    className={`mt-[2px] h-4 w-4 rounded-full border ${
-                      selectedDetectKey === key
+                    className={`mt-[2px] h-4 w-4 flex-shrink-0 rounded-full border ${
+                      selectedDetectKey === key && value != null
                         ? "border-4 border-foreground"
                         : "border-[1.5px] border-border-muted"
                     }`}
                   />
-                  <div className="flex flex-col gap-1">
+                  <div className="flex min-w-0 flex-col gap-1">
                     <p className="font-semibold text-[13px] text-foreground">
                       {label}
                     </p>
                     <p className="text-foreground-subtle text-sm">
                       {description}
                     </p>
+                    {value != null && (
+                      <p className="truncate font-mono text-foreground text-xs">
+                        {value}
+                      </p>
+                    )}
                   </div>
                 </button>
               ))}

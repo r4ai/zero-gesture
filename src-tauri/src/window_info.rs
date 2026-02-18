@@ -4,7 +4,7 @@
 //! Win32 window class, and title — for use in per-application gesture bindings.
 
 /// Information about the current foreground window.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct ForegroundWindowInfo {
     /// Executable file name (e.g., "chrome.exe"), lowercased. `None` if unavailable.
     pub process_name: Option<String>,
