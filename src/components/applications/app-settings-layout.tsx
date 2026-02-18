@@ -245,7 +245,7 @@ function GesturePanel({
       gesture: {
         mode: "release",
         trigger: "right_click",
-        sequence: ["right"],
+        sequence: [],
       },
       action: { type: "keyboard", keys: [] },
     }
