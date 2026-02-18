@@ -50,6 +50,14 @@ export const Route = createFileRoute(
 type ActionEditTab = "gesture" | "action"
 type GestureMode = "hold" | "release"
 
+function getSequenceDescription(mode: GestureMode): string {
+  if (mode === "hold") {
+    return "Ordered movement steps recognized while the trigger is held, before the selected step fires. Up to 8 steps."
+  }
+
+  return "Ordered steps recognized before the action fires when the trigger is released. Up to 8 steps."
+}
+
 function useGesture() {
   const { appId, gestureId } = useParams({
     from: "/applications/$appId/gestures/$gestureId/",
@@ -363,7 +371,7 @@ function GestureTabContent() {
       <div className="flex flex-col gap-3">
         <span className="font-medium text-foreground text-sm">Sequence</span>
         <p className="text-foreground-muted text-xs">
-          Ordered steps recognized before the final step fires. Up to 8 steps.
+          {getSequenceDescription(gestureMode)}
         </p>
         <div className="flex flex-col gap-2">
           {sequence.map((step, index) => (
