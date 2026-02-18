@@ -1,23 +1,31 @@
-import { createFileRoute } from "@tanstack/react-router"
-
-function ApplicationsPage() {
-  return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="font-bold text-2xl tracking-tight">Applications</h2>
-        <p className="text-muted-foreground">
-          Manage application-specific gesture settings.
-        </p>
-      </div>
-      <div className="rounded-lg border p-8 text-center">
-        <p className="text-muted-foreground">
-          Applications settings will be implemented here.
-        </p>
-      </div>
-    </div>
-  )
-}
+import { createFileRoute, Navigate } from "@tanstack/react-router"
+import { useConfigDraft } from "@/contexts/config-draft"
 
 export const Route = createFileRoute("/applications/")({
-  component: ApplicationsPage,
+  component: ApplicationsIndexPage,
 })
+
+function ApplicationsIndexPage() {
+  const { draft } = useConfigDraft()
+  const defaultBindings = draft.bindings.default ?? []
+  const firstGesture = defaultBindings[0]
+
+  if (firstGesture) {
+    return (
+      <Navigate
+        to="/applications/$appId/gestures/$gestureId"
+        params={{ appId: "default", gestureId: firstGesture.id }}
+        search={{ tab: "gesture" }}
+        replace
+      />
+    )
+  }
+
+  return (
+    <Navigate
+      to="/applications/$appId/gestures"
+      params={{ appId: "default" }}
+      replace
+    />
+  )
+}

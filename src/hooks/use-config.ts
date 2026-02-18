@@ -3,42 +3,61 @@ import {
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query"
+import { isTauri } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
 import { useEffect } from "react"
-import { getConfig, updateConfig } from "@/lib/api"
-import type { AppConfig } from "@/types/config"
+import * as api from "@/lib/api"
+import { type AppConfig, DEFAULTS } from "@/types/config"
 
 export const CONFIG_QUERY_KEY = ["config"] as const
 
-/** config-updated イベントを購読し、キャッシュを自動更新するフック */
+/** Hook that subscribes to the "config-updated" event and automatically updates the cache */
 export function useConfigUpdatedListener() {
   const queryClient = useQueryClient()
   useEffect(() => {
-    const unlisten = listen<AppConfig>("config-updated", (event) => {
-      queryClient.setQueryData(CONFIG_QUERY_KEY, event.payload)
-    })
-    return () => {
-      unlisten.then((fn) => fn())
+    if (isTauri()) {
+      const unlisten = listen<AppConfig>("config-updated", (event) => {
+        queryClient.setQueryData(CONFIG_QUERY_KEY, event.payload)
+      })
+      return () => {
+        unlisten.then((fn) => fn())
+      }
     }
+    if (import.meta.env.DEV) return
+    console.error(
+      "useConfigUpdatedListener is only available in Tauri environment",
+    )
   }, [queryClient])
 }
 
-/** 現在の config を取得する（Suspense 対応） */
+const getConfig = () => {
+  if (isTauri()) return api.getConfig()
+  if (import.meta.env.DEV) return DEFAULTS // mock config for development
+  throw new Error("getConfig is only available in Tauri environment")
+}
+
+const updateConfig = (newConfig: AppConfig) => {
+  if (isTauri()) return api.updateConfig(newConfig)
+  if (import.meta.env.DEV) return Promise.resolve() // mock update for development
+  throw new Error("updateConfig is only available in Tauri environment")
+}
+
+/** Get the current config (supports Suspense) */
 export function useConfig() {
   return useSuspenseQuery({
     queryKey: CONFIG_QUERY_KEY,
     queryFn: getConfig,
-    staleTime: Number.POSITIVE_INFINITY, // イベント駆動で更新するため自動再取得しない
+    staleTime: Number.POSITIVE_INFINITY, // Do not refetch automatically; updates are event-driven
   })
 }
 
-/** config を更新する */
+/** Update config */
 export function useUpdateConfig() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: updateConfig,
-    // 成功時はサーバーから config-updated イベントが来るので楽観的更新は不要
-    // エラー時も既存キャッシュはそのまま維持
+    // On success, a "config-updated" event will be sent from the server so optimistic updates are unnecessary
+    // On error, keep the existing cache unchanged
     onError: () => {
       queryClient.invalidateQueries({ queryKey: CONFIG_QUERY_KEY })
     },

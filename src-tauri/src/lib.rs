@@ -1,3 +1,4 @@
+pub mod capture;
 pub mod commands;
 pub mod config;
 pub mod executor;
@@ -310,6 +311,7 @@ pub fn run() {
             app.manage(shared_config.clone());
             app.manage(ConfigDir(config_dir_path));
             app.manage(ThreadRuntime::start(shared_config));
+            app.manage(commands::CaptureState(std::sync::Mutex::new(None)));
             tray::setup(app)?;
 
             Ok(())
@@ -320,7 +322,10 @@ pub fn run() {
             commands::update_config,
             commands::import_config,
             commands::export_config,
-            commands::open_config_dir
+            commands::open_config_dir,
+            commands::get_foreground_window_info,
+            commands::start_window_capture,
+            commands::stop_window_capture
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

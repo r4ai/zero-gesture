@@ -46,6 +46,9 @@ pub struct AppMatcher {
 /// Definition of an application for per-app gesture bindings.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AppDefinition {
+    /// Human-readable name shown in UI. Can be changed without affecting app ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
     /// Matching rules (OR logic — any match counts).
     pub matchers: Vec<AppMatcher>,
 }
@@ -127,6 +130,11 @@ pub struct GesturePattern {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GestureBinding {
+    /// Stable identifier for this gesture binding.
+    ///
+    /// This ID is used for internal identity and should not be treated as a
+    /// user-facing name. The display name belongs to [`Self::label`].
+    pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     /// Gesture pattern to match.
@@ -397,19 +405,33 @@ impl AppConfig {
     ///   (first one wins, later ones are dropped).
     /// - Empty `sequence` is allowed (wildcard hold binding).
     ///
-    /// A warning is logged for every invalid entry that gets dropped and for
-    /// every normalized field.
+    /// A warning is logged for every invalid entry that gets dropped.
     fn validate_bindings_for_app(
         app_id: &str,
         app_bindings: &[GestureBinding],
     ) -> Vec<GestureBinding> {
         let mut validated: Vec<GestureBinding> = Vec::new();
+        let mut used_ids: HashSet<String> = HashSet::new();
         let mut seen_release: HashSet<(TriggerButton, Vec<GestureStep>)> = HashSet::new();
         let mut seen_hold: HashSet<(TriggerButton, Vec<GestureStep>, GestureStep)> = HashSet::new();
 
         for binding in app_bindings {
             match binding.gesture.mode {
                 GestureMode::Release => {
+                    if binding.id.trim().is_empty() {
+                        warn!(
+                            "Release gesture is missing id in app {:?}, skipping",
+                            app_id
+                        );
+                        continue;
+                    }
+                    if !used_ids.insert(binding.id.clone()) {
+                        warn!(
+                            "Duplicate gesture id {:?} in app {:?}, skipping",
+                            binding.id, app_id
+                        );
+                        continue;
+                    }
                     if binding.gesture.sequence.is_empty() {
                         warn!(
                             "Empty release gesture sequence in bindings for app {:?}, skipping",
@@ -463,6 +485,17 @@ impl AppConfig {
                     validated.push(normalized);
                 }
                 GestureMode::Hold => {
+                    if binding.id.trim().is_empty() {
+                        warn!("Hold gesture is missing id in app {:?}, skipping", app_id);
+                        continue;
+                    }
+                    if !used_ids.insert(binding.id.clone()) {
+                        warn!(
+                            "Duplicate gesture id {:?} in app {:?}, skipping",
+                            binding.id, app_id
+                        );
+                        continue;
+                    }
                     if binding.gesture.sequence.len() > Self::MAX_GESTURE_STEPS {
                         warn!(
                             "Hold gesture sequence too long ({} > {}) in app {:?}, skipping",
@@ -522,6 +555,7 @@ impl AppConfig {
     fn default_bindings() -> HashMap<String, Vec<GestureBinding>> {
         let defaults = vec![
             GestureBinding {
+                id: "back".to_string(),
                 gesture: GesturePattern {
                     trigger: TriggerButton::RightClick,
                     mode: GestureMode::Release,
@@ -534,6 +568,7 @@ impl AppConfig {
                 label: Some("Back".to_string()),
             },
             GestureBinding {
+                id: "forward".to_string(),
                 gesture: GesturePattern {
                     trigger: TriggerButton::RightClick,
                     mode: GestureMode::Release,
@@ -546,6 +581,7 @@ impl AppConfig {
                 label: Some("Forward".to_string()),
             },
             GestureBinding {
+                id: "scroll-up".to_string(),
                 gesture: GesturePattern {
                     trigger: TriggerButton::RightClick,
                     mode: GestureMode::Release,
@@ -558,6 +594,7 @@ impl AppConfig {
                 label: Some("Scroll Up".to_string()),
             },
             GestureBinding {
+                id: "scroll-down".to_string(),
                 gesture: GesturePattern {
                     trigger: TriggerButton::RightClick,
                     mode: GestureMode::Release,
@@ -570,6 +607,7 @@ impl AppConfig {
                 label: Some("Scroll Down".to_string()),
             },
             GestureBinding {
+                id: "top-of-page".to_string(),
                 gesture: GesturePattern {
                     trigger: TriggerButton::RightClick,
                     mode: GestureMode::Release,
@@ -582,6 +620,7 @@ impl AppConfig {
                 label: Some("Top of Page".to_string()),
             },
             GestureBinding {
+                id: "bottom-of-page".to_string(),
                 gesture: GesturePattern {
                     trigger: TriggerButton::RightClick,
                     mode: GestureMode::Release,
@@ -594,6 +633,7 @@ impl AppConfig {
                 label: Some("Bottom of Page".to_string()),
             },
             GestureBinding {
+                id: "next-tab".to_string(),
                 gesture: GesturePattern {
                     trigger: TriggerButton::RightClick,
                     mode: GestureMode::Release,
@@ -606,6 +646,7 @@ impl AppConfig {
                 label: Some("Next Tab".to_string()),
             },
             GestureBinding {
+                id: "previous-tab".to_string(),
                 gesture: GesturePattern {
                     trigger: TriggerButton::RightClick,
                     mode: GestureMode::Release,
@@ -618,6 +659,7 @@ impl AppConfig {
                 label: Some("Previous Tab".to_string()),
             },
             GestureBinding {
+                id: "reload".to_string(),
                 gesture: GesturePattern {
                     trigger: TriggerButton::RightClick,
                     mode: GestureMode::Release,
@@ -630,6 +672,7 @@ impl AppConfig {
                 label: Some("Reload".to_string()),
             },
             GestureBinding {
+                id: "close-tab".to_string(),
                 gesture: GesturePattern {
                     trigger: TriggerButton::RightClick,
                     mode: GestureMode::Release,
@@ -741,6 +784,7 @@ mod tests {
         key: &str,
     ) -> GestureBinding {
         GestureBinding {
+            id: format!("release-{key}"),
             label: None,
             gesture: GesturePattern {
                 trigger,
@@ -759,6 +803,7 @@ mod tests {
         key: &str,
     ) -> GestureBinding {
         GestureBinding {
+            id: format!("hold-{key}"),
             label: None,
             gesture: GesturePattern {
                 trigger,
@@ -866,6 +911,7 @@ mod tests {
             "bindings": {
                 "default": [
                     {
+                        "id": "reload",
                         "label": "Reload",
                         "gesture": {
                             "trigger": "right_click",
@@ -877,6 +923,7 @@ mod tests {
                         }
                     },
                     {
+                        "id": "wheel-up",
                         "gesture": {
                             "trigger": "middle_click",
                             "sequence": ["wheel_up"]
@@ -908,6 +955,7 @@ mod tests {
             "bindings": {
                 "default": [
                     {
+                        "id": "hold-scroll-up",
                         "label": "Scroll Up While Hold",
                         "gesture": {
                             "trigger": "right_click",
@@ -937,6 +985,7 @@ mod tests {
             "bindings": {
                 "default": [
                     {
+                        "id": "right-then-wheel-down",
                         "label": "Right then WheelDown",
                         "gesture": {
                             "trigger": "right_click",
@@ -967,6 +1016,7 @@ mod tests {
         let raw = r##"{
             "apps": {
                 "browser": {
+                    "label": "Browser",
                     "matchers": [
                         { "target": "process_name", "method": "exact", "value": "chrome.exe" }
                     ]
@@ -975,6 +1025,7 @@ mod tests {
             "bindings": {
                 "default": [
                     {
+                        "id": "global-back",
                         "gesture": {
                             "trigger": "right_click",
                             "sequence": ["left"]
@@ -987,6 +1038,7 @@ mod tests {
                 ],
                 "browser": [
                     {
+                        "id": "browser-reload",
                         "label": "Reload",
                         "gesture": {
                             "trigger": "right_click",
@@ -1003,6 +1055,7 @@ mod tests {
 
         let cfg: AppConfig = serde_json::from_str(raw).expect("per-app config must parse");
         assert_eq!(cfg.apps.len(), 1);
+        assert_eq!(cfg.apps["browser"].label.as_deref(), Some("Browser"));
         assert_eq!(cfg.bindings.len(), 2);
         assert_eq!(cfg.bindings["browser"].len(), 1);
     }
@@ -1167,6 +1220,58 @@ mod tests {
         assert_eq!(defaults[0].gesture.mode, GestureMode::Hold);
         assert_eq!(defaults[0].gesture.step, Some(GestureStep::WheelUp));
         assert_eq!(defaults[0].action, keyboard_action("first"));
+    }
+
+    #[test]
+    fn validate_drops_bindings_with_empty_or_duplicate_id() {
+        let mut cfg = AppConfig {
+            bindings: HashMap::from([(
+                AppConfig::DEFAULT_APP_ID.to_string(),
+                vec![
+                    GestureBinding {
+                        id: String::new(),
+                        label: Some("A".to_string()),
+                        gesture: GesturePattern {
+                            trigger: TriggerButton::RightClick,
+                            mode: GestureMode::Release,
+                            sequence: vec![GestureStep::Left],
+                            step: None,
+                        },
+                        action: keyboard_action("a"),
+                    },
+                    GestureBinding {
+                        id: "dup".to_string(),
+                        label: Some("B".to_string()),
+                        gesture: GesturePattern {
+                            trigger: TriggerButton::RightClick,
+                            mode: GestureMode::Release,
+                            sequence: vec![GestureStep::Right],
+                            step: None,
+                        },
+                        action: keyboard_action("b"),
+                    },
+                    GestureBinding {
+                        id: "dup".to_string(),
+                        label: Some("C".to_string()),
+                        gesture: GesturePattern {
+                            trigger: TriggerButton::RightClick,
+                            mode: GestureMode::Release,
+                            sequence: vec![GestureStep::Down],
+                            step: None,
+                        },
+                        action: keyboard_action("c"),
+                    },
+                ],
+            )]),
+            ..AppConfig::default()
+        };
+
+        cfg.validate();
+
+        let defaults = get_default_bindings(&cfg);
+        assert_eq!(defaults.len(), 1);
+        assert_eq!(defaults[0].id, "dup");
+        assert_eq!(defaults[0].action, keyboard_action("b"));
     }
 
     #[test]

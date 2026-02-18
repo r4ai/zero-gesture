@@ -1,23 +1,49 @@
 import { createFileRoute } from "@tanstack/react-router"
-
-function GeneralPage() {
-  return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="font-bold text-2xl tracking-tight">General</h2>
-        <p className="text-muted-foreground">
-          Configure general settings for Zero Gesture.
-        </p>
-      </div>
-      <div className="rounded-lg border p-8 text-center">
-        <p className="text-muted-foreground">
-          General settings will be implemented here.
-        </p>
-      </div>
-    </div>
-  )
-}
+import { SettingsFormActions } from "@/components/settings-form-actions"
+import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel"
+import { Switch } from "@/components/ui/switch"
+import { useConfigDraft } from "@/contexts/config-draft"
 
 export const Route = createFileRoute("/general/")({
-  component: GeneralPage,
+  component: GeneralSettings,
 })
+
+/**
+ * General settings page component
+ * Displays general preferences for the application
+ */
+function GeneralSettings() {
+  const { draft, setDraft } = useConfigDraft()
+
+  return (
+    <Panel>
+      <PanelHeader>
+        <div className="flex flex-col gap-0.5">
+          <h2 className="font-semibold text-[18px]">General</h2>
+          <p className="text-[12px] text-foreground-subtle">
+            General preferences for everyday use.
+          </p>
+        </div>
+      </PanelHeader>
+      <PanelBody>
+        <div className="rounded-[10px] border border-border bg-background-elevated">
+          <div className="flex h-[72px] items-center justify-between px-5">
+            <div className="flex flex-col gap-1">
+              <span className="font-medium text-[14px]">
+                Enable Zero Gesture
+              </span>
+              <span className="text-[12px] text-foreground-subtle">
+                Run gesture control on all of the other apps
+              </span>
+            </div>
+            <Switch
+              isSelected={draft.enabled}
+              onChange={(enabled) => setDraft({ ...draft, enabled })}
+            />
+          </div>
+        </div>
+      </PanelBody>
+      <SettingsFormActions />
+    </Panel>
+  )
+}

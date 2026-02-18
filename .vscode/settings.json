@@ -1,0 +1,15 @@
+{
+  "[typescript]": {
+    "editor.defaultFormatter": "biomejs.biome"
+  },
+  "[json]": {
+    "editor.defaultFormatter": "biomejs.biome"
+  },
+  "editor.codeActionsOnSave": {
+    "source.organizeImports.biome": "always"
+  },
+  "tailwindCSS.classFunctions": ["tv", "twMerge", "twJoin"],
+  "files.associations": {
+    "*.css": "tailwindcss"
+  }
+}
