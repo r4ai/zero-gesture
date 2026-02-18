@@ -120,8 +120,6 @@ fn handle_toggle<R: Runtime>(app: &AppHandle<R>) {
         next
     };
 
-    let new_enabled = new_config.enabled;
-
     if let Err(err) = crate::commands::apply_config_update(
         new_config,
         app,
@@ -132,9 +130,6 @@ fn handle_toggle<R: Runtime>(app: &AppHandle<R>) {
         warn!("failed to toggle gestures: {err}");
         return;
     }
-
-    // Update the menu item text to reflect the new state.
-    sync_toggle_menu_label(app, new_enabled);
 }
 
 /// Synchronizes tray toggle menu text with the current enabled state.
