@@ -173,6 +173,19 @@ impl GestureRecognizer {
         }
     }
 
+    /// Resets the recognized sequence while keeping cursor tracking active.
+    ///
+    /// This clears all confirmed and in-progress steps so subsequent input is
+    /// interpreted as a fresh sequence within the same gesture session.
+    pub fn reset_sequence(&mut self) {
+        self.steps.clear();
+        self.current_dir = None;
+        self.pending_dir = None;
+        self.pending_accum = 0;
+        self.segment_accum = 0;
+        self.overflowed = false;
+    }
+
     fn classify_direction(dx: i32, dy: i32, ambiguity_deadzone_px: i32) -> Option<Direction> {
         let abs_dx = dx.abs();
         let abs_dy = dy.abs();
@@ -353,5 +366,24 @@ mod tests {
 
         assert_eq!(rec.current_sequence(), Some(vec![GestureStep::Down]));
         assert_eq!(rec.finalize_sequence(), Some(vec![GestureStep::Down]));
+    }
+
+    #[test]
+    fn reset_sequence_clears_steps_and_accepts_new_input() {
+        let mut rec = GestureRecognizer::default();
+        rec.add_point(100, 100);
+        rec.add_point(160, 100);
+        rec.add_input_step(GestureStep::WheelUp);
+
+        assert_eq!(
+            rec.current_sequence(),
+            Some(vec![GestureStep::Right, GestureStep::WheelUp])
+        );
+
+        rec.reset_sequence();
+        assert_eq!(rec.current_sequence(), None);
+
+        rec.add_input_step(GestureStep::WheelDown);
+        assert_eq!(rec.finalize_sequence(), Some(vec![GestureStep::WheelDown]));
     }
 }
