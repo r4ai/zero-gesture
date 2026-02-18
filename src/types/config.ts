@@ -52,15 +52,17 @@ export type HoldStep = (typeof HOLD_STEPS)[number]
 export const GESTURE_MODES = ["release", "hold"] as const
 export type GestureMode = (typeof GESTURE_MODES)[number]
 
+/** Mode-specific description for gesture `sequence`. */
+export const GESTURE_SEQUENCE_DESCRIPTIONS: Record<GestureMode, string> = {
+  release: "The full sequence to match when the trigger button is released.",
+  hold: "The currently recognized sequence required before `step` fires.",
+}
+
 /** Base properties shared by all gesture patterns. */
 interface GesturePatternBase {
   /** Button that starts this gesture. */
   trigger: TriggerButton
-  /**
-   * Ordered sequence of movement/input steps.
-   * - `release` mode: the full sequence to match on trigger release.
-   * - `hold` mode: current recognized sequence required before `step` fires.
-   */
+  /** Ordered sequence of movement/input steps. */
   sequence: GestureStep[]
 }
 
@@ -71,6 +73,8 @@ interface GesturePatternBase {
 interface ReleaseGesturePattern extends GesturePatternBase {
   /** Whether this gesture runs on trigger release (default) or while holding trigger. */
   mode: "release"
+  /** The full sequence to match when the trigger button is released. */
+  sequence: GestureStep[]
   /** `step` is not applicable for release-mode bindings. */
   step?: never
 }
@@ -82,6 +86,8 @@ interface ReleaseGesturePattern extends GesturePatternBase {
 interface HoldGesturePattern extends GesturePatternBase {
   /** Whether this gesture runs while holding the trigger. */
   mode: "hold"
+  /** The currently recognized sequence required before `step` fires. */
+  sequence: GestureStep[]
   /** Single non-movement input step for `hold` mode (wheel only). */
   step: HoldStep
 }
