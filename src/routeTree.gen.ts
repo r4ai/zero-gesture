@@ -16,6 +16,7 @@ import { Route as AdvancedIndexRouteImport } from './routes/advanced/index'
 import { Route as ApplicationsAppIdRouteRouteImport } from './routes/applications/$appId/route'
 import { Route as ApplicationsAppIdIndexRouteImport } from './routes/applications/$appId/index'
 import { Route as ApplicationsAppIdEditRouteImport } from './routes/applications/$appId/edit'
+import { Route as ApplicationsAppIdGesturesIndexRouteImport } from './routes/applications/$appId/gestures/index'
 import { Route as ApplicationsAppIdGesturesGestureIdIndexRouteImport } from './routes/applications/$appId/gestures/$gestureId/index'
 
 const SettingsRoute = SettingsRouteImport.update({
@@ -53,6 +54,12 @@ const ApplicationsAppIdEditRoute = ApplicationsAppIdEditRouteImport.update({
   path: '/edit',
   getParentRoute: () => ApplicationsAppIdRouteRoute,
 } as any)
+const ApplicationsAppIdGesturesIndexRoute =
+  ApplicationsAppIdGesturesIndexRouteImport.update({
+    id: '/gestures/',
+    path: '/gestures/',
+    getParentRoute: () => ApplicationsAppIdRouteRoute,
+  } as any)
 const ApplicationsAppIdGesturesGestureIdIndexRoute =
   ApplicationsAppIdGesturesGestureIdIndexRouteImport.update({
     id: '/gestures/$gestureId/',
@@ -68,6 +75,7 @@ export interface FileRoutesByFullPath {
   '/general/': typeof GeneralIndexRoute
   '/applications/$appId/edit': typeof ApplicationsAppIdEditRoute
   '/applications/$appId/': typeof ApplicationsAppIdIndexRoute
+  '/applications/$appId/gestures/': typeof ApplicationsAppIdGesturesIndexRoute
   '/applications/$appId/gestures/$gestureId/': typeof ApplicationsAppIdGesturesGestureIdIndexRoute
 }
 export interface FileRoutesByTo {
@@ -77,6 +85,7 @@ export interface FileRoutesByTo {
   '/general': typeof GeneralIndexRoute
   '/applications/$appId/edit': typeof ApplicationsAppIdEditRoute
   '/applications/$appId': typeof ApplicationsAppIdIndexRoute
+  '/applications/$appId/gestures': typeof ApplicationsAppIdGesturesIndexRoute
   '/applications/$appId/gestures/$gestureId': typeof ApplicationsAppIdGesturesGestureIdIndexRoute
 }
 export interface FileRoutesById {
@@ -88,6 +97,7 @@ export interface FileRoutesById {
   '/general/': typeof GeneralIndexRoute
   '/applications/$appId/edit': typeof ApplicationsAppIdEditRoute
   '/applications/$appId/': typeof ApplicationsAppIdIndexRoute
+  '/applications/$appId/gestures/': typeof ApplicationsAppIdGesturesIndexRoute
   '/applications/$appId/gestures/$gestureId/': typeof ApplicationsAppIdGesturesGestureIdIndexRoute
 }
 export interface FileRouteTypes {
@@ -100,6 +110,7 @@ export interface FileRouteTypes {
     | '/general/'
     | '/applications/$appId/edit'
     | '/applications/$appId/'
+    | '/applications/$appId/gestures/'
     | '/applications/$appId/gestures/$gestureId/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -109,6 +120,7 @@ export interface FileRouteTypes {
     | '/general'
     | '/applications/$appId/edit'
     | '/applications/$appId'
+    | '/applications/$appId/gestures'
     | '/applications/$appId/gestures/$gestureId'
   id:
     | '__root__'
@@ -119,6 +131,7 @@ export interface FileRouteTypes {
     | '/general/'
     | '/applications/$appId/edit'
     | '/applications/$appId/'
+    | '/applications/$appId/gestures/'
     | '/applications/$appId/gestures/$gestureId/'
   fileRoutesById: FileRoutesById
 }
@@ -181,6 +194,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApplicationsAppIdEditRouteImport
       parentRoute: typeof ApplicationsAppIdRouteRoute
     }
+    '/applications/$appId/gestures/': {
+      id: '/applications/$appId/gestures/'
+      path: '/gestures'
+      fullPath: '/applications/$appId/gestures/'
+      preLoaderRoute: typeof ApplicationsAppIdGesturesIndexRouteImport
+      parentRoute: typeof ApplicationsAppIdRouteRoute
+    }
     '/applications/$appId/gestures/$gestureId/': {
       id: '/applications/$appId/gestures/$gestureId/'
       path: '/gestures/$gestureId'
@@ -194,6 +214,7 @@ declare module '@tanstack/react-router' {
 interface ApplicationsAppIdRouteRouteChildren {
   ApplicationsAppIdEditRoute: typeof ApplicationsAppIdEditRoute
   ApplicationsAppIdIndexRoute: typeof ApplicationsAppIdIndexRoute
+  ApplicationsAppIdGesturesIndexRoute: typeof ApplicationsAppIdGesturesIndexRoute
   ApplicationsAppIdGesturesGestureIdIndexRoute: typeof ApplicationsAppIdGesturesGestureIdIndexRoute
 }
 
@@ -201,6 +222,7 @@ const ApplicationsAppIdRouteRouteChildren: ApplicationsAppIdRouteRouteChildren =
   {
     ApplicationsAppIdEditRoute: ApplicationsAppIdEditRoute,
     ApplicationsAppIdIndexRoute: ApplicationsAppIdIndexRoute,
+    ApplicationsAppIdGesturesIndexRoute: ApplicationsAppIdGesturesIndexRoute,
     ApplicationsAppIdGesturesGestureIdIndexRoute:
       ApplicationsAppIdGesturesGestureIdIndexRoute,
   }

@@ -170,6 +170,7 @@ function AppPanel({ appId }: { appId: string }) {
                     appId: app.id,
                     gestureId: getGestureId(firstGesture),
                   }}
+                  search={{ tab: "gesture" }}
                   className="flex min-w-0 flex-1 items-center gap-2"
                 >
                   <div className="flex h-6 w-6 items-center justify-center rounded-md bg-background-subtle">
@@ -314,6 +315,7 @@ function GesturePanel({
               key={gestureId}
               to="/applications/$appId/gestures/$gestureId"
               params={{ appId, gestureId }}
+              search={{ tab: "gesture" }}
               className={twMerge(
                 "flex h-[38px] items-center justify-between rounded-lg px-3 transition-colors",
                 isActive

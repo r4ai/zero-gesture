@@ -421,7 +421,14 @@ function ActionEditPage() {
   })
   const search = Route.useSearch()
   const navigate = useNavigate()
-  const { draft, setDraft, save, isSaving } = useConfigDraft()
+  const {
+    draft,
+    setDraft,
+    save,
+    reset,
+    isSaving,
+    isDirty: isDraftDirty,
+  } = useConfigDraft()
   const bindings = draft.bindings[appId] ?? []
 
   const gestureIndex = useMemo(
@@ -439,7 +446,8 @@ function ActionEditPage() {
   const [finalStep, setFinalStep] = useState<string>("wheel-up")
   const [editedKeys, setEditedKeys] = useState<string[]>([])
   const [editedTitle, setEditedTitle] = useState("")
-  const [isDirty, setIsDirty] = useState(false)
+  const [isEditorDirty, setIsEditorDirty] = useState(false)
+  const canSave = isEditorDirty || isDraftDirty
 
   useEffect(() => {
     if (!gesture) return
@@ -454,7 +462,7 @@ function ActionEditPage() {
         ? toUiStep(gesture.gesture.step)
         : "wheel-up",
     )
-    setIsDirty(false)
+    setIsEditorDirty(false)
   }, [gesture])
 
   const handleSave = async () => {
@@ -515,28 +523,22 @@ function ActionEditPage() {
       })
     }
 
-    setIsDirty(false)
+    setIsEditorDirty(false)
   }
 
   const handleCancel = () => {
-    if (!gesture) return
-
-    setEditedKeys(gesture.action.keys)
-    setEditedTitle(gesture.label ?? "")
-    setGestureMode(gesture.gesture.mode)
-    setTriggerButton(toUiButton(gesture.gesture.trigger))
-    setSequenceRows(toSequenceRows(gesture.gesture.sequence))
-    setFinalStep(
-      gesture.gesture.mode === "hold"
-        ? toUiStep(gesture.gesture.step)
-        : "wheel-up",
-    )
-    setIsDirty(false)
+    reset()
+    setIsEditorDirty(false)
+    navigate({
+      to: "/applications/$appId/gestures",
+      params: { appId },
+      replace: true,
+    })
   }
 
   const handleRemoveAction = () => {
     setEditedKeys([])
-    setIsDirty(true)
+    setIsEditorDirty(true)
   }
 
   const openKeyboardInput = (mode: "wait" | "manual") => {
@@ -559,7 +561,7 @@ function ActionEditPage() {
     setSequenceRows((prev) =>
       prev.map((row) => (row.id === rowId ? { ...row, ...patch } : row)),
     )
-    setIsDirty(true)
+    setIsEditorDirty(true)
   }
 
   const addSequenceRow = () => {
@@ -571,12 +573,12 @@ function ActionEditPage() {
         step: "wheel-up",
       },
     ])
-    setIsDirty(true)
+    setIsEditorDirty(true)
   }
 
   const removeSequenceRow = (rowId: number) => {
     setSequenceRows((prev) => prev.filter((row) => row.id !== rowId))
-    setIsDirty(true)
+    setIsEditorDirty(true)
   }
 
   useEffect(() => {
@@ -590,7 +592,7 @@ function ActionEditPage() {
       .filter((part: string) => part.length > 0)
 
     setEditedKeys(next)
-    setIsDirty(true)
+    setIsEditorDirty(true)
     navigate({
       to: "/applications/$appId/gestures/$gestureId",
       params: { appId, gestureId },
@@ -617,7 +619,7 @@ function ActionEditPage() {
         title={editedTitle}
         onTitleChange={(title) => {
           setEditedTitle(title)
-          setIsDirty(true)
+          setIsEditorDirty(true)
         }}
         onRemoveAction={handleRemoveAction}
       />
@@ -638,7 +640,7 @@ function ActionEditPage() {
             editedKeys={editedKeys}
             onKeysChange={(keys) => {
               setEditedKeys(keys)
-              setIsDirty(true)
+              setIsEditorDirty(true)
             }}
             onWaitMode={() => openKeyboardInput("wait")}
             onManualMode={() => openKeyboardInput("manual")}
@@ -653,25 +655,25 @@ function ActionEditPage() {
             finalStep={finalStep}
             onTriggerButtonChange={(key) => {
               setTriggerButton(key)
-              setIsDirty(true)
+              setIsEditorDirty(true)
             }}
             onGestureModeChange={(mode) => {
               setGestureMode(mode)
-              setIsDirty(true)
+              setIsEditorDirty(true)
             }}
             onSequenceRowChange={updateSequenceRow}
             onAddSequenceRow={addSequenceRow}
             onRemoveSequenceRow={removeSequenceRow}
             onFinalStepChange={(key) => {
               setFinalStep(key)
-              setIsDirty(true)
+              setIsEditorDirty(true)
             }}
           />
         )}
       </div>
 
       <ActionEditFooter
-        isDirty={isDirty}
+        isDirty={canSave}
         isSaving={isSaving}
         onCancel={handleCancel}
         onSave={handleSave}
