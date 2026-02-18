@@ -3,3 +3,10 @@
 .docs-story {
   @apply bg-background text-foreground;
 }
+
+html,
+body,
+#root {
+  /* biome-ignore lint/complexity/noImportantStyles: need to override global.css */
+  overflow: auto !important;
+}

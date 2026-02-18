@@ -13,7 +13,7 @@ export const Route = createFileRoute("/general/")({
  * Displays general preferences for the application
  */
 function GeneralSettings() {
-  const { draft, setDraft, isDirty, reset, save, isSaving } = useConfigDraft()
+  const { draft, setDraft } = useConfigDraft()
 
   return (
     <Panel>
@@ -43,12 +43,7 @@ function GeneralSettings() {
           </div>
         </div>
       </PanelBody>
-      <SettingsFormActions
-        isDirty={isDirty}
-        isSaving={isSaving}
-        onSave={save}
-        onCancel={reset}
-      />
+      <SettingsFormActions />
     </Panel>
   )
 }

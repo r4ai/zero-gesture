@@ -19,6 +19,20 @@ interface ConfigDraftContext {
 
 const ConfigDraftContext = createContext<ConfigDraftContext | null>(null)
 
+export function ConfigDraftContextProvider({
+  children,
+  value,
+}: {
+  children: ReactNode
+  value: ConfigDraftContext
+}) {
+  return (
+    <ConfigDraftContext.Provider value={value}>
+      {children}
+    </ConfigDraftContext.Provider>
+  )
+}
+
 /** useConfig() を使うため Suspense の内側に置くこと */
 export function ConfigDraftProvider({ children }: { children: ReactNode }) {
   const { data: config } = useConfig()

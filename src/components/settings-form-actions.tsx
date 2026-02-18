@@ -1,24 +1,6 @@
 import { Button } from "@/components/ui/button"
 import { PanelFooter } from "@/components/ui/panel"
-
-export interface SettingsFormActionsProps {
-  /**
-   * Whether there are unsaved changes
-   */
-  isDirty: boolean
-  /**
-   * Whether the form is currently saving
-   */
-  isSaving: boolean
-  /**
-   * Callback when the user clicks the Save button
-   */
-  onSave: () => void
-  /**
-   * Callback when the user clicks the Cancel button
-   */
-  onCancel: () => void
-}
+import { useConfigDraft } from "@/contexts/config-draft"
 
 /**
  * Common action buttons for settings pages
@@ -29,27 +11,19 @@ export interface SettingsFormActionsProps {
  * <Panel>
  *   <PanelHeader>...</PanelHeader>
  *   <PanelBody>...</PanelBody>
- *   <SettingsFormActions
- *     isDirty={isDirty}
- *     isSaving={isSaving}
- *     onSave={save}
- *     onCancel={reset}
- *   />
+ *   <SettingsFormActions />
  * </Panel>
  * ```
  */
-export function SettingsFormActions({
-  isDirty,
-  isSaving,
-  onSave,
-  onCancel,
-}: SettingsFormActionsProps) {
+export function SettingsFormActions() {
+  const { isDirty, isSaving, save, reset } = useConfigDraft()
+
   return (
     <PanelFooter>
-      <Button variant="outline" onPress={onCancel} isDisabled={!isDirty}>
+      <Button variant="outline" onPress={reset} isDisabled={!isDirty}>
         Cancel
       </Button>
-      <Button onPress={onSave} isDisabled={!isDirty || isSaving}>
+      <Button onPress={save} isDisabled={!isDirty || isSaving}>
         <span className="font-semibold text-[13px]">
           {isSaving ? "Saving..." : "Save Changes"}
         </span>
