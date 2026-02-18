@@ -267,7 +267,7 @@ fn precompute_matched_app(msg: u32, info: &MSLLHOOKSTRUCT) -> Option<String> {
     let pt = (info.pt.x, info.pt.y);
 
     let activation_mode = HOOK_STATE.with(|cell| {
-        let borrow = cell.borrow();
+        let borrow = cell.try_borrow().ok()?;
         let hs = borrow.as_ref()?;
         if !matches!(hs.state, GestureState::Idle) {
             return None;
@@ -287,7 +287,7 @@ fn precompute_matched_app(msg: u32, info: &MSLLHOOKSTRUCT) -> Option<String> {
     debug!("window info: {:?}", window_info);
 
     HOOK_STATE.with(|cell| {
-        let borrow = cell.borrow();
+        let borrow = cell.try_borrow().ok()?;
         let hs = borrow.as_ref()?;
         match_app(&hs.config.apps, &window_info).map(|id| id.to_owned())
     })
