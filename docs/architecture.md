@@ -38,7 +38,6 @@ graph TD
 
     subgraph "Overlay Thread (Win32 Message Loop)"
         WIN[Transparent Window]
-        D2D[Direct2D Renderer]
 
         WIN --> GDI[GDI Renderer]
     end
