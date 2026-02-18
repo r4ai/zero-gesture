@@ -17,6 +17,14 @@ export default mergeConfig(
       projects: [
         {
           extends: true,
+          test: {
+            name: "unit",
+            include: ["src/**/*.test.ts"],
+            exclude: ["**/*.stories.ts", "**/*.stories.tsx"],
+          },
+        },
+        {
+          extends: true,
           plugins: [
             storybookTest({
               // The location of your Storybook config, main.js|ts
