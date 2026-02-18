@@ -8,52 +8,104 @@ import { Dialog, DialogContent } from "@/components/ui/dialog"
 // Constants
 // ---------------------------------------------------------------------------
 
-export const MODIFIER_KEYS = ["Ctrl", "Alt", "Shift", "Win"] as const
+/**
+ * Modifier keys supported by the backend (executor.rs).
+ * These match the key names used in config files.
+ */
+export const MODIFIER_KEYS = ["ctrl", "alt", "shift", "win"] as const
 export type ModifierKey = (typeof MODIFIER_KEYS)[number]
 
+/**
+ * All supported keys that can be used in keyboard shortcuts.
+ * Matches the keys supported by executor.rs parse_key function.
+ *
+ * Categories:
+ * - Letters: a-z
+ * - Numbers: 0-9
+ * - Function keys: f1-f24
+ * - Navigation: left, right, up, down, tab, enter, escape, backspace, delete, home, end, pageup, pagedown
+ * - Space
+ */
 export const SHORTCUT_KEYS = [
-  "A",
-  "B",
-  "C",
-  "D",
-  "E",
-  "F",
-  "G",
-  "H",
-  "I",
-  "J",
-  "K",
-  "L",
-  "M",
-  "N",
-  "O",
-  "P",
-  "Q",
-  "R",
-  "S",
-  "T",
-  "U",
-  "V",
-  "W",
-  "X",
-  "Y",
-  "Z",
-  "F1",
-  "F2",
-  "F3",
-  "F4",
-  "F5",
-  "F6",
-  "F7",
-  "F8",
-  "F9",
-  "F10",
-  "F11",
-  "F12",
-  "Space",
-  "Enter",
-  "Tab",
-  "Backspace",
+  // Letters a-z
+  "a",
+  "b",
+  "c",
+  "d",
+  "e",
+  "f",
+  "g",
+  "h",
+  "i",
+  "j",
+  "k",
+  "l",
+  "m",
+  "n",
+  "o",
+  "p",
+  "q",
+  "r",
+  "s",
+  "t",
+  "u",
+  "v",
+  "w",
+  "x",
+  "y",
+  "z",
+  // Numbers 0-9
+  "0",
+  "1",
+  "2",
+  "3",
+  "4",
+  "5",
+  "6",
+  "7",
+  "8",
+  "9",
+  // Function keys f1-f24
+  "f1",
+  "f2",
+  "f3",
+  "f4",
+  "f5",
+  "f6",
+  "f7",
+  "f8",
+  "f9",
+  "f10",
+  "f11",
+  "f12",
+  "f13",
+  "f14",
+  "f15",
+  "f16",
+  "f17",
+  "f18",
+  "f19",
+  "f20",
+  "f21",
+  "f22",
+  "f23",
+  "f24",
+  // Navigation keys
+  "left",
+  "right",
+  "up",
+  "down",
+  "tab",
+  "enter",
+  "escape",
+  "backspace",
+  "delete",
+  "home",
+  "end",
+  "pageup",
+  "pagedown",
+  // Space
+  "space",
 ] as const
 
 export type KeyboardInputMode = "wait" | "manual"
@@ -64,52 +116,96 @@ export type KeyboardInputMode = "wait" | "manual"
 
 /**
  * Parse a comma-separated key string into an array of normalized key names.
+ * Normalized key names match the backend (executor.rs) format.
  *
  * @example
- * parseKeys("Ctrl,Alt,A") // => ["Ctrl", "Alt", "A"]
- * parseKeys("ctrl,a")     // => ["Ctrl", "A"]
+ * parseKeys("ctrl,alt,a") // => ["ctrl", "alt", "a"]
+ * parseKeys("Ctrl,Alt,A") // => ["ctrl", "alt", "a"]
+ * parseKeys("pgup,pgdn")  // => ["pageup", "pagedown"]
  */
 export function parseKeys(raw?: string): string[] {
   if (!raw) return []
 
-  const normalize = (value: string): string => {
+  const normalize = (value: string): string | null => {
     const key = value.trim()
+    if (key.length === 0) return null
+
     const lower = key.toLowerCase()
 
-    if (lower === "ctrl" || lower === "control") return "Ctrl"
-    if (lower === "alt" || lower === "option") return "Alt"
-    if (lower === "shift") return "Shift"
+    // Modifiers
+    if (lower === "ctrl" || lower === "control") return "ctrl"
+    if (lower === "alt" || lower === "menu" || lower === "option") return "alt"
+    if (lower === "shift") return "shift"
     if (
       lower === "meta" ||
       lower === "command" ||
       lower === "cmd" ||
       lower === "win" ||
-      lower === "windows"
+      lower === "windows" ||
+      lower === "lwin" ||
+      lower === "super"
     ) {
-      return "Win"
+      return "win"
     }
-    if (key.length === 1) return key.toUpperCase()
-    return key
+
+    // Navigation / editing aliases
+    if (lower === "return") return "enter"
+    if (lower === "esc") return "escape"
+    if (lower === "del") return "delete"
+    if (lower === "pgup") return "pageup"
+    if (lower === "pgdn" || lower === "pagedn") return "pagedown"
+
+    // Single characters (letters and numbers)
+    if (key.length === 1) {
+      const ch = key.charCodeAt(0)
+      // a-z
+      if (ch >= 65 && ch <= 90) return String.fromCharCode(ch + 32) // A-Z -> a-z
+      if (ch >= 97 && ch <= 122) return key // already lowercase
+      // 0-9
+      if (ch >= 48 && ch <= 57) return key
+      return null
+    }
+
+    // Check if it's a valid function key (f1-f24)
+    if (lower.startsWith("f")) {
+      const num = lower.slice(1)
+      if (/^\d+$/.test(num)) {
+        const n = Number.parseInt(num, 10)
+        if (n >= 1 && n <= 24) return lower
+      }
+    }
+
+    // Other supported keys (must match SHORTCUT_KEYS)
+    const supportedKeys = SHORTCUT_KEYS as unknown as string[]
+    if (supportedKeys.includes(lower)) return lower
+
+    // Unknown key - return null to filter it out
+    return null
   }
 
   return raw
     .split(",")
     .map((part) => normalize(part))
-    .filter((part) => part.length > 0)
+    .filter((part): part is string => part !== null && part.length > 0)
 }
 
 /**
- * Normalize a raw `KeyboardEvent.key` value to a display-friendly key name.
+ * Normalize a raw `KeyboardEvent.key` value to a backend-compatible key name.
  * Returns `null` for bare modifier keys (they are tracked via `event.ctrlKey` etc.).
  *
+ * This function mirrors the parsing logic in executor.rs parse_key function.
+ *
  * @example
- * normalizePressedKey("a")          // => "A"
- * normalizePressedKey(" ")          // => "Space"
+ * normalizePressedKey("a")          // => "a"
+ * normalizePressedKey(" ")          // => "space"
  * normalizePressedKey("Control")    // => null
+ * normalizePressedKey("ArrowUp")    // => "up"
+ * normalizePressedKey("F1")         // => "f1"
  */
 export function normalizePressedKey(key: string): string | null {
   const lower = key.toLowerCase()
 
+  // Bare modifier keys - return null as they are tracked via event.*Key
   if (
     lower === "meta" ||
     lower === "control" ||
@@ -119,24 +215,90 @@ export function normalizePressedKey(key: string): string | null {
     return null
   }
 
-  if (lower === " ") return "Space"
-  if (lower === "arrowup") return "ArrowUp"
-  if (lower === "arrowdown") return "ArrowDown"
-  if (lower === "arrowleft") return "ArrowLeft"
-  if (lower === "arrowright") return "ArrowRight"
+  // Space
+  if (lower === " ") return "space"
 
-  if (key.length === 1) return key.toUpperCase()
-  return key
+  // Arrow keys -> navigation names
+  if (lower === "arrowup") return "up"
+  if (lower === "arrowdown") return "down"
+  if (lower === "arrowleft") return "left"
+  if (lower === "arrowright") return "right"
+
+  // Navigation / editing key aliases
+  if (lower === "return") return "enter"
+  if (lower === "esc") return "escape"
+  if (lower === "del") return "delete"
+
+  // Single character keys (a-z, 0-9)
+  if (key.length === 1) {
+    const ch = key.charCodeAt(0)
+    // a-z
+    if (ch >= 65 && ch <= 90) return String.fromCharCode(ch + 32) // A-Z -> a-z
+    if (ch >= 97 && ch <= 122) return key // already lowercase
+    // 0-9
+    if (ch >= 48 && ch <= 57) return key
+    return null
+  }
+
+  // Function keys - normalize to lowercase f1-f24
+  if (
+    lower.match(
+      /^f(1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24)$/,
+    )
+  ) {
+    return lower
+  }
+
+  // Other keys - check if supported
+  const supportedKeys = SHORTCUT_KEYS as unknown as string[]
+  if (supportedKeys.includes(lower)) return lower
+
+  return null
 }
 
 /**
- * Return a human-readable label for a modifier key.
+ * Return a human-readable label for a key.
+ * Converts backend key names to display format.
  *
  * @example
- * modifierLabel("Win") // => "Win"
+ * keyLabel("ctrl") // => "Ctrl"
+ * keyLabel("f1") // => "F1"
+ * keyLabel("pageup") // => "PageUp"
+ */
+export function keyLabel(key: string): string {
+  if (!key) return ""
+
+  const lower = key.toLowerCase()
+
+  // Modifiers - capitalize first letter
+  if (lower === "ctrl") return "Ctrl"
+  if (lower === "alt") return "Alt"
+  if (lower === "shift") return "Shift"
+  if (lower === "win") return "Win"
+
+  // Function keys - uppercase F
+  if (lower.match(/^f\d+$/)) {
+    return key.toUpperCase()
+  }
+
+  // Navigation keys with special casing
+  if (lower === "pageup") return "PageUp"
+  if (lower === "pagedown") return "PageDown"
+
+  // Single letters - uppercase
+  if (key.length === 1 && key >= "a" && key <= "z") {
+    return key.toUpperCase()
+  }
+
+  // Default - capitalize first letter
+  return key.charAt(0).toUpperCase() + key.slice(1)
+}
+
+/**
+ * @deprecated Use keyLabel instead
  */
 export function modifierLabel(key: string): string {
-  return key
+  return keyLabel(key)
 }
 
 // ---------------------------------------------------------------------------
@@ -264,7 +426,7 @@ function KeyComboPreview({
           className="flex items-center gap-1.5"
         >
           <span className="inline-flex h-8 min-w-[34px] items-center justify-center rounded-md border border-border-muted bg-background-card px-3 font-semibold text-[14px] text-foreground">
-            {modifierLabel(key)}
+            {keyLabel(key)}
           </span>
           {index < keys.length - 1 && (
             <span className="text-[14px] text-foreground-muted">+</span>
@@ -501,7 +663,7 @@ export function ManualKeyInputDialog({
                     }`}
                     onPress={() => toggleModifier(modifier)}
                   >
-                    {modifierLabel(modifier)}
+                    {keyLabel(modifier)}
                   </Button>
                 )
               })}
@@ -516,8 +678,8 @@ export function ManualKeyInputDialog({
               onSelectionChange={(key) => setSelectedKey(String(key ?? ""))}
             >
               {SHORTCUT_KEYS.map((key) => (
-                <ComboBoxItem key={key} id={key} textValue={key}>
-                  {key}
+                <ComboBoxItem key={key} id={key} textValue={keyLabel(key)}>
+                  {keyLabel(key)}
                 </ComboBoxItem>
               ))}
             </ComboBox>
