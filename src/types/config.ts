@@ -73,8 +73,6 @@ interface GesturePatternBase {
 interface ReleaseGesturePattern extends GesturePatternBase {
   /** Whether this gesture runs on trigger release (default) or while holding trigger. */
   mode: "release"
-  /** `step` is not applicable for release-mode bindings. */
-  step?: never
 }
 
 /**

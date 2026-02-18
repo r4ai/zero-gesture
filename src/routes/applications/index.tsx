@@ -1,5 +1,4 @@
 import { createFileRoute, Navigate } from "@tanstack/react-router"
-import { getGestureId } from "@/components/applications/app-settings-layout"
 import { useConfigDraft } from "@/contexts/config-draft"
 
 export const Route = createFileRoute("/applications/")({
@@ -15,7 +14,7 @@ function ApplicationsIndexPage() {
     return (
       <Navigate
         to="/applications/$appId/gestures/$gestureId"
-        params={{ appId: "default", gestureId: getGestureId(firstGesture) }}
+        params={{ appId: "default", gestureId: firstGesture.id }}
         search={{ tab: "gesture" }}
         replace
       />

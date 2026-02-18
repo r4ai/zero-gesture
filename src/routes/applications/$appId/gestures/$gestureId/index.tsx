@@ -1,7 +1,6 @@
 import { createFileRoute, useNavigate, useParams } from "@tanstack/react-router"
-import { Check, Keyboard, Plus, Trash2, X } from "lucide-react"
-import { useEffect, useMemo, useState } from "react"
-import { AppSettingsLayout } from "@/components/applications/app-settings-layout"
+import { Keyboard, Plus, Trash2, X } from "lucide-react"
+import { SettingsFormActions } from "@/components/settings-form-actions"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { KeyInput } from "@/components/ui/key-input"
@@ -9,7 +8,16 @@ import { Select, SelectItem } from "@/components/ui/select"
 import { TabItem, TabList, Tabs } from "@/components/ui/tabs"
 import { TextField } from "@/components/ui/textfield"
 import { useConfigDraft } from "@/contexts/config-draft"
-import type { GestureBinding, GestureStep, TriggerButton } from "@/types/config"
+import {
+  GESTURE_MODES,
+  GESTURE_STEPS,
+  type GestureStep,
+  HOLD_STEPS,
+  type HoldStep,
+  TRIGGER_BUTTONS,
+  type TriggerButton,
+} from "@/types/config"
+import { GestureNotFound } from "../-components/gesture-not-found"
 
 export const Route = createFileRoute(
   "/applications/$appId/gestures/$gestureId/",
@@ -34,69 +42,49 @@ export const Route = createFileRoute(
 type ActionEditTab = "gesture" | "action"
 type GestureMode = "hold" | "release"
 
-type SequenceRow = {
-  id: number
-  type: string
-  step: string
-}
-
-const INITIAL_SEQUENCE_ROWS: SequenceRow[] = [
-  { id: 1, type: "mouse-move", step: "left" },
-  { id: 2, type: "mouse-move", step: "right" },
-]
-
-function toUiButton(trigger: TriggerButton): string {
-  if (trigger === "left_click") return "left-click"
-  if (trigger === "middle_click") return "middle-click"
-  return "right-click"
-}
-
-function fromUiButton(trigger: string): TriggerButton {
-  if (trigger === "left-click") return "left_click"
-  if (trigger === "middle-click") return "middle_click"
-  return "right_click"
-}
-
-function toUiStep(step: GestureStep): string {
-  return step.split("_").join("-")
-}
-
-function fromUiStep(step: string): GestureStep {
-  return step.split("-").join("_") as GestureStep
-}
-
-function inferStepType(step: string): string {
-  return ["left", "right", "up", "down"].includes(step)
-    ? "mouse-move"
-    : "mouse-input"
-}
-
-function toSequenceRows(sequence: GestureStep[]): SequenceRow[] {
-  return sequence.map((step, index) => {
-    const uiStep = toUiStep(step)
-    return {
-      id: index + 1,
-      type: inferStepType(uiStep),
-      step: uiStep,
-    }
+function useGesture() {
+  const { appId, gestureId } = useParams({
+    from: "/applications/$appId/gestures/$gestureId/",
   })
+  const { draft, setDraft } = useConfigDraft()
+
+  const gesture = draft.bindings[appId]?.find((item) => item.id === gestureId)
+
+  const setGesture = (updatedGesture: NonNullable<typeof gesture>) => {
+    setDraft({
+      ...draft,
+      bindings: {
+        ...draft.bindings,
+        [appId]: draft.bindings[appId].map((item) =>
+          item.id === gestureId ? updatedGesture : item,
+        ),
+      },
+    })
+  }
+
+  const removeGesture = () => {
+    setDraft({
+      ...draft,
+      bindings: {
+        ...draft.bindings,
+        [appId]: draft.bindings[appId].filter((item) => item.id !== gestureId),
+      },
+    })
+  }
+
+  return { gesture, setGesture, removeGesture, appId, gestureId }
 }
 
-function ActionEditHeader({
-  title,
-  onTitleChange,
-  onRemoveAction,
-}: {
-  title: string
-  onTitleChange: (title: string) => void
-  onRemoveAction: () => void
-}) {
+function ActionEditHeader() {
+  const { gesture, setGesture, removeGesture } = useGesture()
+  if (!gesture) return null
+
   return (
     <div className="flex h-16 items-center justify-between border-border border-b px-6">
       <TextField
         variant="transparent"
-        value={title}
-        onChange={onTitleChange}
+        value={gesture.label}
+        onChange={(value) => setGesture({ ...gesture, label: value })}
         aria-label="Action title"
         className="w-full max-w-[420px]"
         inputClassName="h-auto font-semibold text-foreground text-lg py-0 px-2"
@@ -104,7 +92,7 @@ function ActionEditHeader({
       <Button
         variant="outline"
         className="h-8 gap-2 rounded-md border-destructive-subtle bg-destructive-subtle text-[12px] text-destructive hover:bg-destructive/20 hover:text-destructive"
-        onPress={onRemoveAction}
+        onPress={removeGesture}
       >
         <Trash2 className="h-3.5 w-3.5" />
         <span>Remove Action</span>
@@ -138,22 +126,61 @@ function ActionEditTabs({
   )
 }
 
-function ActionTabContent({
-  editedKeys,
-  onKeysChange,
-  onWaitMode,
-  onManualMode,
-}: {
-  editedKeys: string[]
-  onKeysChange: (keys: string[]) => void
-  onWaitMode: () => void
-  onManualMode: () => void
-}) {
+function ActionTabContent() {
+  const { gesture, setGesture, appId, gestureId } = useGesture()
+  const navigate = useNavigate()
+  const search = Route.useSearch()
+
+  if (!gesture) return null
+
+  const selectedTab = search.tab === "action" ? "action" : "gesture"
+
+  const actionType = gesture.action.type
+  const onActionTypeChange = (type?: string) => {
+    if (type !== "keyboard") {
+      // TODO: handle unsupported action type
+      console.error("Unsupported action type:", type)
+      return
+    }
+    setGesture({
+      ...gesture,
+      action: {
+        ...gesture.action,
+        type,
+      },
+    })
+  }
+
+  const keys = gesture.action.keys ?? []
+  const onKeysChange = (updatedKeys: string[]) => {
+    setGesture({
+      ...gesture,
+      action: { ...gesture.action, keys: updatedKeys },
+    })
+  }
+
+  const openKeyboardInput = (mode: "wait" | "manual") => {
+    navigate({
+      to: "/applications/$appId",
+      params: { appId },
+      search: {
+        mode,
+        gestureId,
+        keys: keys.length > 0 ? keys.join(",") : undefined,
+        tab: selectedTab,
+      },
+    })
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-2">
         <span className="font-medium text-foreground text-sm">Action Type</span>
-        <Select value="keyboard" onChange={() => {}} className="w-full">
+        <Select
+          value={actionType}
+          onChange={(key) => onActionTypeChange(key?.toString())}
+          className="w-full"
+        >
           <SelectItem id="keyboard" textValue="Keyboard Shortcut">
             <div className="flex items-center gap-2">
               <div className="flex h-4 w-4 items-center justify-center">
@@ -168,41 +195,106 @@ function ActionTabContent({
       <div className="h-px bg-border" />
 
       <KeyInput
-        keys={editedKeys}
+        keys={keys}
         onChange={onKeysChange}
-        onPress={onWaitMode}
-        onKeyboardPress={onManualMode}
+        onPress={() => openKeyboardInput("wait")}
+        onKeyboardPress={() => openKeyboardInput("manual")}
       />
     </div>
   )
 }
+function isValidTriggerButton(key?: string): key is TriggerButton {
+  return (TRIGGER_BUTTONS as readonly string[]).includes(key ?? "")
+}
 
-function GestureTabContent({
-  triggerButton,
-  gestureMode,
-  sequenceRows,
-  finalStep,
-  onTriggerButtonChange,
-  onGestureModeChange,
-  onSequenceRowChange,
-  onAddSequenceRow,
-  onRemoveSequenceRow,
-  onFinalStepChange,
-}: {
-  triggerButton: string
-  gestureMode: GestureMode
-  sequenceRows: SequenceRow[]
-  finalStep: string
-  onTriggerButtonChange: (key: string) => void
-  onGestureModeChange: (mode: GestureMode) => void
-  onSequenceRowChange: (
-    rowId: number,
-    patch: Partial<Pick<SequenceRow, "type" | "step">>,
-  ) => void
-  onAddSequenceRow: () => void
-  onRemoveSequenceRow: (rowId: number) => void
-  onFinalStepChange: (key: string) => void
-}) {
+function isValidGestureMode(key?: string): key is GestureMode {
+  return (GESTURE_MODES as readonly string[]).includes(key ?? "")
+}
+
+function isValidGestureStep(key?: string): key is GestureStep {
+  return (GESTURE_STEPS as readonly string[]).includes(key ?? "")
+}
+
+function isValidHoldStep(key?: string): key is HoldStep {
+  return (HOLD_STEPS as readonly string[]).includes(key ?? "")
+}
+
+function GestureTabContent() {
+  const { gesture, setGesture } = useGesture()
+  if (!gesture) return <GestureNotFound />
+
+  const triggerButton = gesture.gesture.trigger
+  const onTriggerButtonChange = (key?: string) => {
+    if (!isValidTriggerButton(key)) {
+      // TODO: handle invalid value
+      console.error("Invalid trigger button:", key)
+      return
+    }
+    setGesture({ ...gesture, gesture: { ...gesture.gesture, trigger: key } })
+  }
+
+  const gestureMode = gesture.gesture.mode
+  const onGestureModeChange = (mode?: string) => {
+    if (!isValidGestureMode(mode)) {
+      // TODO: handle invalid value
+      console.error("Invalid gesture mode:", mode)
+      return
+    }
+    setGesture({
+      ...gesture,
+      gesture: { step: "wheel_up", ...gesture.gesture, mode },
+    })
+  }
+
+  const sequence = gesture.gesture.sequence
+  const onStepChange = (index: number, step?: string) => {
+    if (!isValidGestureStep(step)) {
+      // TODO: handle invalid value
+      console.error("Invalid sequence step:", step)
+      return
+    }
+    const nextSequence = [...sequence]
+    nextSequence[index] = step
+    setGesture({
+      ...gesture,
+      gesture: { ...gesture.gesture, sequence: nextSequence },
+    })
+  }
+  const onAddStep = () => {
+    if (sequence.length >= 8) return
+    const nextSequence: GestureStep[] = [...sequence, "left"]
+    setGesture({
+      ...gesture,
+      gesture: { ...gesture.gesture, sequence: nextSequence },
+    })
+  }
+  const onRemoveStep = (index: number) => {
+    const nextSequence = sequence.filter((_, i) => i !== index)
+    setGesture({
+      ...gesture,
+      gesture: { ...gesture.gesture, sequence: nextSequence },
+    })
+  }
+
+  const holdStep =
+    gesture.gesture.mode === "hold" ? gesture.gesture.step : "wheel-up"
+  const onHoldStepChange = (step?: string) => {
+    if (!isValidHoldStep(step)) {
+      // TODO: handle invalid value
+      console.error("Invalid hold step:", step)
+      return
+    }
+    if (gesture.gesture.mode !== "hold") {
+      // TODO: handle invalid state
+      console.error("Hold step can only be set in hold mode")
+      return
+    }
+    setGesture({
+      ...gesture,
+      gesture: { ...gesture.gesture, step },
+    })
+  }
+
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-2">
@@ -212,19 +304,21 @@ function GestureTabContent({
         <div className="flex h-10 items-center gap-2">
           <Select
             value={triggerButton}
-            onChange={(key) => onTriggerButtonChange(String(key))}
+            onChange={(key) => onTriggerButtonChange(key?.toString())}
             className="flex-1"
           >
-            <SelectItem id="right-click" textValue="Right Click">
+            <SelectItem id="right_click" textValue="Right Click">
               Right Click
             </SelectItem>
-            <SelectItem id="left-click" textValue="Left Click">
+            <SelectItem id="left_click" textValue="Left Click">
               Left Click
             </SelectItem>
-            <SelectItem id="middle-click" textValue="Middle Click">
+            <SelectItem id="middle_click" textValue="Middle Click">
               Middle Click
             </SelectItem>
           </Select>
+
+          {/* TODO: make this button works */}
           <Button
             variant="outline"
             size="icon"
@@ -244,9 +338,7 @@ function GestureTabContent({
         </span>
         <Tabs
           selectedKey={gestureMode}
-          onSelectionChange={(key: string | number) =>
-            onGestureModeChange(String(key) as GestureMode)
-          }
+          onSelectionChange={(key) => onGestureModeChange(key.toString())}
           className="w-full"
         >
           <TabList className="flex h-10 items-center gap-1 rounded-xl border border-border bg-background-card p-1">
@@ -266,61 +358,15 @@ function GestureTabContent({
           Ordered steps recognized before the final step fires. Up to 8 steps.
         </p>
         <div className="flex flex-col gap-2">
-          {sequenceRows.map((row, index) => (
-            <div key={row.id} className="flex items-center gap-2">
-              <span className="w-3 text-center text-[12px] text-foreground-muted">
-                {index + 1}
-              </span>
-              <Select
-                value={row.type}
-                onChange={(key) =>
-                  onSequenceRowChange(row.id, { type: String(key) })
-                }
-                className="w-[140px]"
-              >
-                <SelectItem id="mouse-move" textValue="Mouse Move">
-                  Mouse Move
-                </SelectItem>
-                <SelectItem id="mouse-input" textValue="Mouse Input">
-                  Mouse Input
-                </SelectItem>
-              </Select>
-              <Select
-                value={row.step}
-                onChange={(key) =>
-                  onSequenceRowChange(row.id, { step: String(key) })
-                }
-                className="flex-1"
-              >
-                <SelectItem id="left" textValue="Left">
-                  Left
-                </SelectItem>
-                <SelectItem id="right" textValue="Right">
-                  Right
-                </SelectItem>
-                <SelectItem id="up" textValue="Up">
-                  Up
-                </SelectItem>
-                <SelectItem id="down" textValue="Down">
-                  Down
-                </SelectItem>
-                <SelectItem id="wheel-up" textValue="Wheel Up">
-                  Wheel Up
-                </SelectItem>
-                <SelectItem id="wheel-down" textValue="Wheel Down">
-                  Wheel Down
-                </SelectItem>
-              </Select>
-              <Button
-                variant="outline"
-                size="icon"
-                className="h-10 w-10 rounded-[8px] border-destructive-subtle bg-destructive-subtle text-destructive hover:bg-destructive/20 hover:text-destructive"
-                onPress={() => onRemoveSequenceRow(row.id)}
-                isDisabled={sequenceRows.length <= 1}
-              >
-                <X className="h-3.5 w-3.5" />
-              </Button>
-            </div>
+          {sequence.map((step, index) => (
+            <Sequence
+              // biome-ignore lint/suspicious/noArrayIndexKey: Using index as key is acceptable here since the order is fixed and won't change
+              key={index}
+              step={step}
+              index={index}
+              onStepChange={onStepChange}
+              onRemoveStep={onRemoveStep}
+            />
           ))}
         </div>
         <div className="flex items-start justify-between">
@@ -328,13 +374,13 @@ function GestureTabContent({
             variant="outline"
             className="py-3 font-medium text-foreground-muted text-sm"
           >
-            {sequenceRows.length} / 8 used
+            {sequence.length} / 8 used
           </Badge>
           <Button
             variant="outline"
             className="text-sm"
-            onPress={onAddSequenceRow}
-            isDisabled={sequenceRows.length >= 8}
+            onPress={onAddStep}
+            isDisabled={sequence.length >= 8}
           >
             <Plus className="h-3 w-3" />
             <span>Add Step</span>
@@ -344,6 +390,7 @@ function GestureTabContent({
           Supported steps: Left / Right / Up / Down / Wheel Up / Wheel Down /
           Left Click / Right Click / Middle Click
         </p>
+
         {gestureMode === "hold" && (
           <div className="flex flex-col gap-2">
             <span className="font-medium text-foreground text-sm">Step</span>
@@ -351,24 +398,15 @@ function GestureTabContent({
               Single non-movement input that fires while the trigger is held.
             </p>
             <Select
-              value={finalStep}
-              onChange={(key) => onFinalStepChange(String(key))}
+              value={holdStep}
+              onChange={(key) => onHoldStepChange(key?.toString())}
               className="w-full"
             >
-              <SelectItem id="wheel-up" textValue="Wheel Up">
+              <SelectItem id="wheel_up" textValue="Wheel Up">
                 Wheel Up
               </SelectItem>
-              <SelectItem id="wheel-down" textValue="Wheel Down">
+              <SelectItem id="wheel_down" textValue="Wheel Down">
                 Wheel Down
-              </SelectItem>
-              <SelectItem id="left-click" textValue="Left Click">
-                Left Click
-              </SelectItem>
-              <SelectItem id="right-click" textValue="Right Click">
-                Right Click
-              </SelectItem>
-              <SelectItem id="middle-click" textValue="Middle Click">
-                Middle Click
               </SelectItem>
             </Select>
           </div>
@@ -378,34 +416,53 @@ function GestureTabContent({
   )
 }
 
-function ActionEditFooter({
-  isDirty,
-  isSaving,
-  onCancel,
-  onSave,
+function Sequence({
+  step,
+  index,
+  onStepChange,
+  onRemoveStep,
 }: {
-  isDirty: boolean
-  isSaving: boolean
-  onCancel: () => void
-  onSave: () => void
+  step: string
+  index: number
+  onStepChange: (index: number, step?: string) => void
+  onRemoveStep: (index: number) => void
 }) {
   return (
-    <div className="flex h-16 items-center justify-end gap-3 border-border border-t px-6">
+    <div key={index} className="flex items-center gap-2">
+      <span className="w-3 text-center text-[12px] text-foreground-muted">
+        {index + 1}
+      </span>
+      <Select
+        value={step}
+        onChange={(key) => onStepChange(index, key?.toString())}
+        className="flex-1"
+      >
+        <SelectItem id="left" textValue="Left">
+          Left
+        </SelectItem>
+        <SelectItem id="right" textValue="Right">
+          Right
+        </SelectItem>
+        <SelectItem id="up" textValue="Up">
+          Up
+        </SelectItem>
+        <SelectItem id="down" textValue="Down">
+          Down
+        </SelectItem>
+        <SelectItem id="wheel_up" textValue="Wheel Up">
+          Wheel Up
+        </SelectItem>
+        <SelectItem id="wheel_down" textValue="Wheel Down">
+          Wheel Down
+        </SelectItem>
+      </Select>
       <Button
         variant="outline"
-        className="h-9 px-4 text-[13px]"
-        onPress={onCancel}
-        isDisabled={!isDirty}
+        size="icon"
+        className="h-10 w-10 rounded-[8px] border-destructive-subtle bg-destructive-subtle text-destructive hover:bg-destructive/20 hover:text-destructive"
+        onPress={() => onRemoveStep(index)}
       >
-        Cancel
-      </Button>
-      <Button
-        className="h-9 gap-2 px-4 text-[13px]"
-        onPress={onSave}
-        isDisabled={!isDirty || isSaving}
-      >
-        <Check className="h-4 w-4" />
-        <span>{isSaving ? "Saving..." : "Save Changes"}</span>
+        <X className="h-3.5 w-3.5" />
       </Button>
     </div>
   )
@@ -416,213 +473,19 @@ function ActionEditFooter({
  * Based on Pencil: "Applications Settings - Gesture Edit"
  */
 function ActionEditPage() {
-  const { appId, gestureId } = useParams({
-    from: "/applications/$appId/gestures/$gestureId/",
-  })
+  const { gesture, appId, gestureId } = useGesture()
   const search = Route.useSearch()
   const navigate = useNavigate()
-  const {
-    draft,
-    setDraft,
-    save,
-    reset,
-    isSaving,
-    isDirty: isDraftDirty,
-  } = useConfigDraft()
-  const bindings = draft.bindings[appId] ?? []
-
-  const gestureIndex = useMemo(
-    () => bindings.findIndex((item) => item.id === gestureId),
-    [bindings, gestureId],
-  )
-  const gesture = gestureIndex >= 0 ? bindings[gestureIndex] : null
 
   const selectedTab = search.tab ?? "gesture"
-  const [gestureMode, setGestureMode] = useState<GestureMode>("hold")
-  const [triggerButton, setTriggerButton] = useState<string>("right-click")
-  const [sequenceRows, setSequenceRows] = useState<SequenceRow[]>(
-    INITIAL_SEQUENCE_ROWS,
-  )
-  const [finalStep, setFinalStep] = useState<string>("wheel-up")
-  const [editedKeys, setEditedKeys] = useState<string[]>([])
-  const [editedTitle, setEditedTitle] = useState("")
-  const [isEditorDirty, setIsEditorDirty] = useState(false)
-  const canSave = isEditorDirty || isDraftDirty
-
-  useEffect(() => {
-    if (!gesture) return
-
-    setEditedKeys(gesture.action.keys)
-    setEditedTitle(gesture.label ?? "")
-    setGestureMode(gesture.gesture.mode)
-    setTriggerButton(toUiButton(gesture.gesture.trigger))
-    setSequenceRows(toSequenceRows(gesture.gesture.sequence))
-    setFinalStep(
-      gesture.gesture.mode === "hold"
-        ? toUiStep(gesture.gesture.step)
-        : "wheel-up",
-    )
-    setIsEditorDirty(false)
-  }, [gesture])
-
-  const handleSave = async () => {
-    if (!gesture || gestureIndex < 0) return
-
-    const nextSequence = sequenceRows
-      .map((row) => row.step)
-      .map(fromUiStep)
-      .slice(0, 8)
-
-    if (nextSequence.length === 0) return
-
-    const normalizedFinalStep =
-      finalStep === "wheel-down" ? "wheel_down" : "wheel_up"
-
-    const nextGesture: GestureBinding = {
-      id: gesture.id,
-      label: editedTitle.trim() || undefined,
-      gesture:
-        gestureMode === "hold"
-          ? {
-              mode: "hold",
-              trigger: fromUiButton(triggerButton),
-              sequence: nextSequence,
-              step: normalizedFinalStep,
-            }
-          : {
-              mode: "release",
-              trigger: fromUiButton(triggerButton),
-              sequence: nextSequence,
-            },
-      action: {
-        type: "keyboard",
-        keys: editedKeys,
-      },
-    }
-
-    const nextBindings = [...bindings]
-    nextBindings[gestureIndex] = nextGesture
-
-    setDraft({
-      ...draft,
-      bindings: {
-        ...draft.bindings,
-        [appId]: nextBindings,
-      },
-    })
-
-    await save()
-
-    const nextGestureId = nextGesture.id
-    if (nextGestureId !== gestureId) {
-      navigate({
-        to: "/applications/$appId/gestures/$gestureId",
-        params: { appId, gestureId: nextGestureId },
-        search: search.tab ? { tab: search.tab } : {},
-        replace: true,
-      })
-    }
-
-    setIsEditorDirty(false)
-  }
-
-  const handleCancel = () => {
-    reset()
-    setIsEditorDirty(false)
-    navigate({
-      to: "/applications/$appId/gestures",
-      params: { appId },
-      replace: true,
-    })
-  }
-
-  const handleRemoveAction = () => {
-    setEditedKeys([])
-    setIsEditorDirty(true)
-  }
-
-  const openKeyboardInput = (mode: "wait" | "manual") => {
-    navigate({
-      to: "/applications/$appId",
-      params: { appId },
-      search: {
-        mode,
-        gestureId,
-        keys: editedKeys.length > 0 ? editedKeys.join(",") : undefined,
-        tab: selectedTab,
-      },
-    })
-  }
-
-  const updateSequenceRow = (
-    rowId: number,
-    patch: Partial<Pick<SequenceRow, "type" | "step">>,
-  ) => {
-    setSequenceRows((prev) =>
-      prev.map((row) => (row.id === rowId ? { ...row, ...patch } : row)),
-    )
-    setIsEditorDirty(true)
-  }
-
-  const addSequenceRow = () => {
-    setSequenceRows((prev) => [
-      ...prev,
-      {
-        id: Math.max(0, ...prev.map((row) => row.id)) + 1,
-        type: "mouse-input",
-        step: "wheel-up",
-      },
-    ])
-    setIsEditorDirty(true)
-  }
-
-  const removeSequenceRow = (rowId: number) => {
-    setSequenceRows((prev) => prev.filter((row) => row.id !== rowId))
-    setIsEditorDirty(true)
-  }
-
-  useEffect(() => {
-    const shortcut =
-      typeof search.shortcut === "string" ? search.shortcut : undefined
-    if (!shortcut) return
-
-    const next = shortcut
-      .split(",")
-      .map((part: string) => part.trim())
-      .filter((part: string) => part.length > 0)
-
-    setEditedKeys(next)
-    setIsEditorDirty(true)
-    navigate({
-      to: "/applications/$appId/gestures/$gestureId",
-      params: { appId, gestureId },
-      search: search.tab ? { tab: search.tab } : {},
-      replace: true,
-    })
-  }, [appId, gestureId, navigate, search.shortcut, search.tab])
 
   if (!gesture) {
-    return (
-      <AppSettingsLayout appId={appId} selectedGestureId={gestureId}>
-        <div className="flex h-full items-center justify-center">
-          <p className="text-[14px] text-foreground-subtle">
-            Gesture not found
-          </p>
-        </div>
-      </AppSettingsLayout>
-    )
+    return <GestureNotFound />
   }
 
   return (
-    <AppSettingsLayout appId={appId} selectedGestureId={gestureId}>
-      <ActionEditHeader
-        title={editedTitle}
-        onTitleChange={(title) => {
-          setEditedTitle(title)
-          setIsEditorDirty(true)
-        }}
-        onRemoveAction={handleRemoveAction}
-      />
+    <>
+      <ActionEditHeader />
       <ActionEditTabs
         selectedTab={selectedTab}
         onSelectionChange={(tab) => {
@@ -635,49 +498,11 @@ function ActionEditPage() {
         }}
       />
       <div className="flex-1 overflow-y-auto p-6">
-        {selectedTab === "action" && (
-          <ActionTabContent
-            editedKeys={editedKeys}
-            onKeysChange={(keys) => {
-              setEditedKeys(keys)
-              setIsEditorDirty(true)
-            }}
-            onWaitMode={() => openKeyboardInput("wait")}
-            onManualMode={() => openKeyboardInput("manual")}
-          />
-        )}
-
-        {selectedTab === "gesture" && (
-          <GestureTabContent
-            triggerButton={triggerButton}
-            gestureMode={gestureMode}
-            sequenceRows={sequenceRows}
-            finalStep={finalStep}
-            onTriggerButtonChange={(key) => {
-              setTriggerButton(key)
-              setIsEditorDirty(true)
-            }}
-            onGestureModeChange={(mode) => {
-              setGestureMode(mode)
-              setIsEditorDirty(true)
-            }}
-            onSequenceRowChange={updateSequenceRow}
-            onAddSequenceRow={addSequenceRow}
-            onRemoveSequenceRow={removeSequenceRow}
-            onFinalStepChange={(key) => {
-              setFinalStep(key)
-              setIsEditorDirty(true)
-            }}
-          />
-        )}
+        {selectedTab === "action" && <ActionTabContent />}
+        {selectedTab === "gesture" && <GestureTabContent />}
       </div>
 
-      <ActionEditFooter
-        isDirty={canSave}
-        isSaving={isSaving}
-        onCancel={handleCancel}
-        onSave={handleSave}
-      />
-    </AppSettingsLayout>
+      <SettingsFormActions />
+    </>
   )
 }

@@ -1,9 +1,6 @@
 import { createFileRoute, Navigate, useParams } from "@tanstack/react-router"
-import {
-  AppSettingsLayout,
-  getGestureId,
-} from "@/components/applications/app-settings-layout"
 import { useConfigDraft } from "@/contexts/config-draft"
+import { GestureNotFound } from "./-components/gesture-not-found"
 
 export const Route = createFileRoute("/applications/$appId/gestures/")({
   component: GesturesEmptyPage,
@@ -18,18 +15,12 @@ function GesturesEmptyPage() {
     return (
       <Navigate
         to="/applications/$appId/gestures/$gestureId"
-        params={{ appId, gestureId: getGestureId(firstGesture) }}
+        params={{ appId, gestureId: firstGesture.id }}
         search={{ tab: "gesture" }}
         replace
       />
     )
   }
 
-  return (
-    <AppSettingsLayout appId={appId} selectedGestureId="">
-      <div className="flex h-full items-center justify-center">
-        <p className="text-[14px] text-foreground-subtle">Gesture not found</p>
-      </div>
-    </AppSettingsLayout>
-  )
+  return <GestureNotFound />
 }

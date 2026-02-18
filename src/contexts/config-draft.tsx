@@ -33,15 +33,16 @@ export function ConfigDraftContextProvider({
   )
 }
 
-/** useConfig() を使うため Suspense の内側に置くこと */
+/** Must be placed inside Suspense because it uses useConfig() */
 export function ConfigDraftProvider({ children }: { children: ReactNode }) {
   const { data: config } = useConfig()
   const { mutate: updateConfig, isPending } = useUpdateConfig()
 
   const [draft, setDraft] = useState<AppConfig>(config)
 
-  // config-updated イベント等でサーバー側の config が変わったら draft を同期する
+  // Sync draft when server-side config changes due to config-updated events, etc.
   useEffect(() => {
+    // TODO: check if draft is dirty and ask user if they want to discard changes
     setDraft(config)
   }, [config])
 
