@@ -18,13 +18,17 @@ import {
   type TriggerButton,
 } from "@/types/config"
 import { GestureNotFound } from "../-components/gesture-not-found"
+import {
+  ManualKeyInputDialog,
+  WaitKeyInputDialog,
+} from "../-components/keyboard-input"
 
 export const Route = createFileRoute(
   "/applications/$appId/gestures/$gestureId/",
 )({
   validateSearch: (
     search: Record<string, unknown>,
-  ): { shortcut?: string; tab?: ActionEditTab } => {
+  ): { shortcut?: string; tab?: ActionEditTab; mode?: "wait" | "manual" } => {
     const shortcut =
       typeof search.shortcut === "string" && search.shortcut.length > 0
         ? search.shortcut
@@ -33,8 +37,12 @@ export const Route = createFileRoute(
       search.tab === "gesture" || search.tab === "action"
         ? search.tab
         : undefined
+    const mode =
+      search.mode === "wait" || search.mode === "manual"
+        ? search.mode
+        : undefined
 
-    return { shortcut, tab }
+    return { shortcut, tab, mode }
   },
   component: ActionEditPage,
 })
@@ -161,14 +169,19 @@ function ActionTabContent() {
 
   const openKeyboardInput = (mode: "wait" | "manual") => {
     navigate({
-      to: "/applications/$appId",
-      params: { appId },
-      search: {
-        mode,
-        gestureId,
-        keys: keys.length > 0 ? keys.join(",") : undefined,
-        tab: selectedTab,
-      },
+      to: "/applications/$appId/gestures/$gestureId",
+      params: { appId, gestureId },
+      search: { tab: selectedTab, mode },
+      replace: true,
+    })
+  }
+
+  const closeKeyboardInput = () => {
+    navigate({
+      to: "/applications/$appId/gestures/$gestureId",
+      params: { appId, gestureId },
+      search: { tab: selectedTab },
+      replace: true,
     })
   }
 
@@ -473,14 +486,34 @@ function Sequence({
  * Based on Pencil: "Applications Settings - Gesture Edit"
  */
 function ActionEditPage() {
-  const { gesture, appId, gestureId } = useGesture()
+  const { gesture, setGesture, appId, gestureId } = useGesture()
   const search = Route.useSearch()
   const navigate = useNavigate()
 
   const selectedTab = search.tab ?? "gesture"
+  const keyboardMode = search.mode
+
+  const closeKeyboardInput = () => {
+    navigate({
+      to: "/applications/$appId/gestures/$gestureId",
+      params: { appId, gestureId },
+      search: { tab: selectedTab },
+      replace: true,
+    })
+  }
 
   if (!gesture) {
     return <GestureNotFound />
+  }
+
+  const keys = gesture.action.keys ?? []
+
+  const handleKeysConfirm = (updatedKeys: string[]) => {
+    setGesture({
+      ...gesture,
+      action: { ...gesture.action, keys: updatedKeys },
+    })
+    closeKeyboardInput()
   }
 
   return (
@@ -503,6 +536,19 @@ function ActionEditPage() {
       </div>
 
       <SettingsFormActions />
+
+      <WaitKeyInputDialog
+        isOpen={keyboardMode === "wait"}
+        initialKeys={keys}
+        onConfirm={handleKeysConfirm}
+        onClose={closeKeyboardInput}
+      />
+      <ManualKeyInputDialog
+        isOpen={keyboardMode === "manual"}
+        initialKeys={keys}
+        onConfirm={handleKeysConfirm}
+        onClose={closeKeyboardInput}
+      />
     </>
   )
 }
