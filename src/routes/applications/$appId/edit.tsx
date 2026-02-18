@@ -372,7 +372,7 @@ function ConditionsList() {
   return (
     <div className="flex-1 overflow-y-auto p-6">
       <Link
-        to="/applications/$appId"
+        to="/applications/$appId/gestures"
         params={{ appId }}
         className="mb-6 inline-flex h-8 items-center gap-2 rounded-md border bg-transparent px-3 text-[12px] text-foreground-muted transition-colors hover:border-border-bright hover:text-foreground"
       >

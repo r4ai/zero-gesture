@@ -10,7 +10,7 @@ import type { AppDefinition, GestureBinding } from "@/types/config"
 
 interface AppSettingsLayoutProps {
   appId: string
-  selectedGestureId: string
+  selectedGestureId: string | undefined
   children: ReactNode
 }
 
@@ -224,7 +224,7 @@ function GesturePanel({
   selectedGestureId,
 }: {
   appId: string
-  selectedGestureId: string
+  selectedGestureId: string | undefined
 }) {
   const navigate = useNavigate()
   const { draft, setDraft } = useConfigDraft()

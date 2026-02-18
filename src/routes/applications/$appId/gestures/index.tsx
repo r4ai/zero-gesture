@@ -1,4 +1,5 @@
 import { createFileRoute, Navigate, useParams } from "@tanstack/react-router"
+import { GesturePanelLayout } from "@/components/applications/app-settings-layout"
 import { useConfigDraft } from "@/contexts/config-draft"
 import { GestureNotFound } from "./-components/gesture-not-found"
 
@@ -22,5 +23,9 @@ function GesturesEmptyPage() {
     )
   }
 
-  return <GestureNotFound />
+  return (
+    <GesturePanelLayout appId={appId} selectedGestureId={undefined}>
+      <GestureNotFound />
+    </GesturePanelLayout>
+  )
 }
