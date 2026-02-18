@@ -14,6 +14,7 @@ import {
   type GestureStep,
   HOLD_STEPS,
   type HoldStep,
+  type KeyboardAction,
   TRIGGER_BUTTONS,
   type TriggerButton,
 } from "@/types/config"
@@ -157,22 +158,32 @@ function ActionTabContent() {
 
   const actionType = gesture.action.type
   const onActionTypeChange = (type?: string) => {
-    if (type !== "keyboard") {
-      // TODO: handle unsupported action type
+    if (type !== "keyboard" && type !== "scroll_to_bottom") {
       console.error("Unsupported action type:", type)
+      return
+    }
+    if (type === "keyboard") {
+      const nextAction: KeyboardAction =
+        gesture.action.type === "keyboard"
+          ? gesture.action
+          : { type: "keyboard", keys: [] }
+      setGesture({
+        ...gesture,
+        action: nextAction,
+      })
       return
     }
     setGesture({
       ...gesture,
-      action: {
-        ...gesture.action,
-        type,
-      },
+      action: { type: "scroll_to_bottom" },
     })
   }
 
-  const keys = gesture.action.keys ?? []
+  const keys = gesture.action.type === "keyboard" ? gesture.action.keys : []
   const onKeysChange = (updatedKeys: string[]) => {
+    if (gesture.action.type !== "keyboard") {
+      return
+    }
     setGesture({
       ...gesture,
       action: { ...gesture.action, keys: updatedKeys },
@@ -205,17 +216,28 @@ function ActionTabContent() {
               <span className="font-medium text-[13px]">Keyboard Shortcut</span>
             </div>
           </SelectItem>
+          <SelectItem id="scroll_to_bottom" textValue="Scroll To Bottom">
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-[13px]">Scroll To Bottom</span>
+            </div>
+          </SelectItem>
         </Select>
       </div>
 
       <div className="h-px bg-border" />
 
-      <KeyInput
-        keys={keys}
-        onChange={onKeysChange}
-        onPress={() => openKeyboardInput("wait")}
-        onKeyboardPress={() => openKeyboardInput("manual")}
-      />
+      {gesture.action.type === "keyboard" ? (
+        <KeyInput
+          keys={keys}
+          onChange={onKeysChange}
+          onPress={() => openKeyboardInput("wait")}
+          onKeyboardPress={() => openKeyboardInput("manual")}
+        />
+      ) : (
+        <p className="text-foreground-muted text-sm">
+          Uses native Windows scroll messaging with keyboard fallback.
+        </p>
+      )}
     </div>
   )
 }
@@ -509,9 +531,13 @@ function ActionEditPage() {
     return <GestureNotFound />
   }
 
-  const keys = gesture.action.keys ?? []
+  const keys = gesture.action.type === "keyboard" ? gesture.action.keys : []
 
   const handleKeysConfirm = (updatedKeys: string[]) => {
+    if (gesture.action.type !== "keyboard") {
+      closeKeyboardInput()
+      return
+    }
     setGesture({
       ...gesture,
       action: { ...gesture.action, keys: updatedKeys },

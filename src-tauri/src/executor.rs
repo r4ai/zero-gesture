@@ -1,8 +1,7 @@
 //! Gesture action execution.
 //!
-//! Maps recognised gestures to user-defined actions (currently keyboard
-//! shortcuts) and executes them by synthesising input via the Win32
-//! `SendInput` API.
+//! Maps recognised gestures to user-defined actions and executes them via
+//! Win32 APIs.
 
 use log::{debug, warn};
 use serde::{Deserialize, Serialize};
@@ -19,6 +18,10 @@ use serde::{Deserialize, Serialize};
 pub enum Action {
     /// Simulate a keyboard shortcut by pressing the given keys simultaneously.
     Keyboard { keys: Vec<String> },
+    /// Scroll the focused surface to its bottom using Win32 messages with
+    /// keyboard fallback.
+    #[serde(rename = "scroll_to_bottom")]
+    ScrollToBottom,
 }
 
 /// Parse a human-readable key name into a Win32 virtual-key code.
@@ -124,6 +127,7 @@ pub fn generate_label(action: &Action) -> String {
             })
             .collect::<Vec<_>>()
             .join(" + "),
+        Action::ScrollToBottom => "Scroll To Bottom".to_string(),
     }
 }
 
@@ -141,7 +145,71 @@ pub fn generate_label(action: &Action) -> String {
 pub fn execute(action: &Action) {
     match action {
         Action::Keyboard { keys } => execute_keyboard(keys),
+        Action::ScrollToBottom => execute_scroll_to_bottom(),
     }
+}
+
+#[cfg(windows)]
+fn execute_scroll_to_bottom() {
+    use std::mem::size_of;
+    use std::ptr::null_mut;
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetGUIThreadInfo, GetWindowThreadProcessId, PostMessageW,
+        GUITHREADINFO, SB_BOTTOM, WM_VSCROLL,
+    };
+
+    unsafe fn preferred_scroll_target(foreground: HWND) -> HWND {
+        if foreground.is_null() {
+            return null_mut();
+        }
+
+        let thread_id = unsafe { GetWindowThreadProcessId(foreground, null_mut()) };
+        if thread_id == 0 {
+            return foreground;
+        }
+
+        let mut thread_info: GUITHREADINFO = unsafe { std::mem::zeroed() };
+        thread_info.cbSize = size_of::<GUITHREADINFO>() as u32;
+        if unsafe { GetGUIThreadInfo(thread_id, &mut thread_info) } != 0 {
+            if !thread_info.hwndFocus.is_null() {
+                return thread_info.hwndFocus;
+            }
+            if !thread_info.hwndActive.is_null() {
+                return thread_info.hwndActive;
+            }
+        }
+        foreground
+    }
+
+    let foreground = unsafe { GetForegroundWindow() };
+    let mut posted = false;
+
+    let target = unsafe { preferred_scroll_target(foreground) };
+    for hwnd in [target, foreground] {
+        if hwnd.is_null() {
+            continue;
+        }
+        if hwnd == target && hwnd == foreground && posted {
+            continue;
+        }
+        let ok = unsafe { PostMessageW(hwnd, WM_VSCROLL, SB_BOTTOM as usize, 0) };
+        posted |= ok != 0;
+    }
+
+    if posted {
+        debug!("ScrollToBottom posted WM_VSCROLL/SB_BOTTOM");
+        return;
+    }
+
+    warn!("ScrollToBottom fallback to keyboard shortcut (Ctrl+End)");
+    let fallback_keys = [String::from("ctrl"), String::from("end")];
+    execute_keyboard(&fallback_keys);
+}
+
+#[cfg(not(windows))]
+fn execute_scroll_to_bottom() {
+    warn!("ScrollToBottom action execution is only supported on Windows");
 }
 
 #[cfg(windows)]
@@ -285,6 +353,13 @@ mod tests {
                 keys: vec!["ctrl".to_string(), "w".to_string()]
             }
         );
+    }
+
+    #[test]
+    fn action_scroll_to_bottom_deserialize_from_json() {
+        let json = r#"{"type": "scroll_to_bottom"}"#;
+        let action: Action = serde_json::from_str(json).unwrap();
+        assert_eq!(action, Action::ScrollToBottom);
     }
 
     #[cfg(windows)]

@@ -627,9 +627,7 @@ impl AppConfig {
                     sequence: vec![GestureStep::Up, GestureStep::Down],
                     step: None,
                 },
-                action: Action::Keyboard {
-                    keys: vec!["ctrl".to_string(), "end".to_string()],
-                },
+                action: Action::ScrollToBottom,
                 label: Some("Bottom of Page".to_string()),
             },
             GestureBinding {
@@ -852,56 +850,85 @@ mod tests {
         let defaults = get_default_bindings(&cfg);
         assert_eq!(defaults.len(), 10);
 
-        let expected: Vec<(Vec<GestureStep>, Vec<&str>, &str)> = vec![
-            (vec![GestureStep::Left], vec!["alt", "left"], "Back"),
-            (vec![GestureStep::Right], vec!["alt", "right"], "Forward"),
-            (vec![GestureStep::Up], vec!["pageup"], "Scroll Up"),
-            (vec![GestureStep::Down], vec!["pagedown"], "Scroll Down"),
+        let expected: Vec<(Vec<GestureStep>, Action, &str)> = vec![
+            (
+                vec![GestureStep::Left],
+                Action::Keyboard {
+                    keys: vec!["alt".to_string(), "left".to_string()],
+                },
+                "Back",
+            ),
+            (
+                vec![GestureStep::Right],
+                Action::Keyboard {
+                    keys: vec!["alt".to_string(), "right".to_string()],
+                },
+                "Forward",
+            ),
+            (
+                vec![GestureStep::Up],
+                Action::Keyboard {
+                    keys: vec!["pageup".to_string()],
+                },
+                "Scroll Up",
+            ),
+            (
+                vec![GestureStep::Down],
+                Action::Keyboard {
+                    keys: vec!["pagedown".to_string()],
+                },
+                "Scroll Down",
+            ),
             (
                 vec![GestureStep::Down, GestureStep::Up],
-                vec!["ctrl", "home"],
+                Action::Keyboard {
+                    keys: vec!["ctrl".to_string(), "home".to_string()],
+                },
                 "Top of Page",
             ),
             (
                 vec![GestureStep::Up, GestureStep::Down],
-                vec!["ctrl", "end"],
+                Action::ScrollToBottom,
                 "Bottom of Page",
             ),
             (
                 vec![GestureStep::Up, GestureStep::Right],
-                vec!["ctrl", "tab"],
+                Action::Keyboard {
+                    keys: vec!["ctrl".to_string(), "tab".to_string()],
+                },
                 "Next Tab",
             ),
             (
                 vec![GestureStep::Up, GestureStep::Left],
-                vec!["ctrl", "shift", "tab"],
+                Action::Keyboard {
+                    keys: vec!["ctrl".to_string(), "shift".to_string(), "tab".to_string()],
+                },
                 "Previous Tab",
             ),
             (
                 vec![GestureStep::Right, GestureStep::Down],
-                vec!["ctrl", "r"],
+                Action::Keyboard {
+                    keys: vec!["ctrl".to_string(), "r".to_string()],
+                },
                 "Reload",
             ),
             (
                 vec![GestureStep::Down, GestureStep::Right],
-                vec!["ctrl", "w"],
+                Action::Keyboard {
+                    keys: vec!["ctrl".to_string(), "w".to_string()],
+                },
                 "Close Tab",
             ),
         ];
 
-        for (sequence, keys, label) in expected {
+        for (sequence, expected_action, label) in expected {
             let binding = defaults
                 .iter()
                 .find(|binding| binding.gesture.sequence == sequence)
                 .expect("expected sequence must exist in default bindings");
             assert_eq!(binding.gesture.trigger, TriggerButton::RightClick);
             assert_eq!(binding.label.as_deref(), Some(label));
-            let expected_keys = keys
-                .into_iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>();
-            let Action::Keyboard { keys: actual } = &binding.action;
-            assert_eq!(actual, &expected_keys);
+            assert_eq!(binding.action, expected_action);
         }
     }
 

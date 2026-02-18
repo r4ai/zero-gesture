@@ -6,7 +6,7 @@ import { twMerge } from "tailwind-merge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { useConfigDraft } from "@/contexts/config-draft"
-import type { AppDefinition, GestureBinding } from "@/types/config"
+import type { Action, AppDefinition, GestureBinding } from "@/types/config"
 
 interface AppSettingsLayoutProps {
   appId: string
@@ -67,6 +67,16 @@ export function formatGestureSequence(steps: string[]): string {
  */
 export function formatKeys(keys: string[]): string {
   return keys.map((key) => key.charAt(0).toUpperCase() + key.slice(1)).join("+")
+}
+
+function formatAction(action: Action): string {
+  if (action.type === "keyboard") {
+    return action.keys.length > 0 ? formatKeys(action.keys) : "—"
+  }
+  if (action.type === "scroll_to_bottom") {
+    return "Scroll Bottom"
+  }
+  return "—"
 }
 
 /**
@@ -291,13 +301,16 @@ function GesturePanel({
               )}
             >
               <span className="text-foreground text-sm">{gesture.label}</span>
-              {gesture.action.keys.length > 0 ? (
-                <Badge variant="default">
-                  {formatKeys(gesture.action.keys)}
-                </Badge>
-              ) : (
-                <Badge variant="outline">—</Badge>
-              )}
+              <Badge
+                variant={
+                  gesture.action.type === "keyboard" &&
+                  gesture.action.keys.length > 0
+                    ? "default"
+                    : "outline"
+                }
+              >
+                {formatAction(gesture.action)}
+              </Badge>
             </Link>
           )
         })}

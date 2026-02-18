@@ -89,8 +89,14 @@ interface HoldGesturePattern extends GesturePatternBase {
 /** Gesture pattern definition. */
 export type GesturePattern = ReleaseGesturePattern | HoldGesturePattern
 
+/** Keyboard shortcut action. */
+export type KeyboardAction = { type: "keyboard"; keys: string[] }
+
+/** Native scroll-to-bottom action. */
+export type ScrollToBottomAction = { type: "scroll_to_bottom" }
+
 /** An action that can be triggered by a gesture. */
-export type Action = { type: "keyboard"; keys: string[] }
+export type Action = KeyboardAction | ScrollToBottomAction
 
 /** A single gesture binding. */
 export interface GestureBinding {
@@ -219,7 +225,7 @@ export const DEFAULT_BINDINGS: GestureBinding[] = [
       mode: "release",
       sequence: ["up", "down"],
     },
-    action: { type: "keyboard", keys: ["ctrl", "end"] },
+    action: { type: "scroll_to_bottom" },
   },
   {
     id: "next-tab",
