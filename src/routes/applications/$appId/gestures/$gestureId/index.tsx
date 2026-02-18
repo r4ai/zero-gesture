@@ -59,11 +59,13 @@ function useGesture() {
   const gesture = draft.bindings[appId]?.find((item) => item.id === gestureId)
 
   const setGesture = (updatedGesture: NonNullable<typeof gesture>) => {
+    const bindings = draft.bindings[appId]
+    if (!bindings) return
     setDraft({
       ...draft,
       bindings: {
         ...draft.bindings,
-        [appId]: draft.bindings[appId].map((item) =>
+        [appId]: bindings.map((item) =>
           item.id === gestureId ? updatedGesture : item,
         ),
       },
@@ -71,11 +73,13 @@ function useGesture() {
   }
 
   const removeGesture = () => {
+    const bindings = draft.bindings[appId]
+    if (!bindings) return
     setDraft({
       ...draft,
       bindings: {
         ...draft.bindings,
-        [appId]: draft.bindings[appId].filter((item) => item.id !== gestureId),
+        [appId]: bindings.filter((item) => item.id !== gestureId),
       },
     })
   }

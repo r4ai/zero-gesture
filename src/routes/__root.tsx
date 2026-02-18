@@ -17,6 +17,7 @@ import {
   SlidersHorizontal,
   Sun,
 } from "lucide-react"
+import { Suspense } from "react"
 import { Toaster } from "sonner"
 import { ThemeProvider, useTheme } from "@/components/theme-provider"
 import { DropdownMenu, MenuItem } from "@/components/ui/dropdown-menu"
@@ -212,9 +213,11 @@ const RootLayout = () => (
   <QueryClientProvider client={queryClient}>
     <ThemeProvider defaultTheme="system" storageKey="zero-gesture-theme">
       <ConfigEventBridge />
-      <ConfigDraftProvider>
-        <AppLayout />
-      </ConfigDraftProvider>
+      <Suspense>
+        <ConfigDraftProvider>
+          <AppLayout />
+        </ConfigDraftProvider>
+      </Suspense>
       <TanStackRouterDevtools position="top-right" />
       <Toaster />
     </ThemeProvider>

@@ -9,7 +9,7 @@ export const Route = createFileRoute(
 
 function ApplicationsGestureLayout() {
   const { appId, gestureId } = useParams({
-    from: "/applications/$appId/gestures/$gestureId/",
+    from: "/applications/$appId/gestures/$gestureId",
   })
 
   return (

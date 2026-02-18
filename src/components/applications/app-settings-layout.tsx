@@ -1,4 +1,4 @@
-import { Link, useNavigate } from "@tanstack/react-router"
+import { Link, Navigate, useNavigate } from "@tanstack/react-router"
 import { Pencil, Plus } from "lucide-react"
 import { nanoid } from "nanoid"
 import type { ReactNode } from "react"
@@ -97,13 +97,11 @@ interface AppPanelLayoutProps {
 }
 
 export function AppPanelLayout({ appId, children }: AppPanelLayoutProps) {
-  const navigate = useNavigate()
   const { draft } = useConfigDraft()
   const appIds = getAppIdsFromBindings(draft.bindings)
 
   if (!appIds.includes(appId)) {
-    navigate({ to: "/applications" })
-    return null
+    return <Navigate to="/applications" />
   }
 
   return (
@@ -148,6 +146,7 @@ function AppPanel({ appId }: { appId: string }) {
       <div className="flex flex-1 flex-col gap-1 overflow-y-auto p-2">
         {apps.map((app) => {
           const isActive = appId === app.id
+          const firstGesture = draft.bindings[app.id]?.[0]
 
           return (
             <div
@@ -160,11 +159,16 @@ function AppPanel({ appId }: { appId: string }) {
               )}
             >
               <Link
-                to="/applications/$appId/gestures/$gestureId"
-                params={{
-                  appId: app.id,
-                  gestureId: draft.bindings[app.id]?.[0]?.id ?? "",
-                }}
+                to={
+                  firstGesture
+                    ? "/applications/$appId/gestures/$gestureId"
+                    : "/applications/$appId/gestures"
+                }
+                params={
+                  firstGesture
+                    ? { appId: app.id, gestureId: firstGesture.id }
+                    : { appId: app.id }
+                }
                 search={{ tab: "gesture" }}
                 className="flex min-w-0 flex-1 items-center gap-2"
               >
@@ -231,8 +235,7 @@ function GesturePanel({
   const appIds = getAppIdsFromBindings(draft.bindings)
 
   if (!appIds.includes(appId)) {
-    navigate({ to: "/applications" })
-    return null
+    return <Navigate to="/applications" />
   }
 
   const addGesture = () => {
