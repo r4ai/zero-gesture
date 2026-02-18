@@ -193,13 +193,20 @@ unsafe extern "system" fn low_level_mouse_proc(
     }
 
     let msg = w_param as u32;
+    let matched_app = precompute_matched_app(msg, info);
     let suppress = HOOK_STATE.with(|cell| {
-        let mut borrow = cell.borrow_mut();
+        let mut borrow = match cell.try_borrow_mut() {
+            Ok(borrow) => borrow,
+            Err(_) => {
+                warn!("low_level_mouse_proc: HOOK_STATE already borrowed, skipping event");
+                return false;
+            }
+        };
         let hs = match borrow.as_mut() {
             Some(hs) => hs,
             None => return false,
         };
-        process_event(hs, msg, info)
+        process_event(hs, msg, info, matched_app)
     });
 
     if suppress {
@@ -214,27 +221,15 @@ unsafe extern "system" fn low_level_mouse_proc(
 /// Converts Win32 event data into [`MouseEvent`], resolves matched app context,
 /// applies produced side effects, and returns whether the original event should
 /// be suppressed.
-fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> bool {
+fn process_event(
+    hs: &mut HookThreadState,
+    msg: u32,
+    info: &MSLLHOOKSTRUCT,
+    matched_app: Option<String>,
+) -> bool {
     let event = to_mouse_event(msg, info);
     let tick = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount() };
     let pt = (info.pt.x, info.pt.y);
-
-    let matched_app = match (&hs.state, event) {
-        (GestureState::Idle, MouseEvent::ButtonDown(trigger))
-            if hs.config.has_any_binding_for_trigger(trigger) =>
-        {
-            let activated_target =
-                activate_window_at_point(pt.0, pt.1, hs.config.gesture_activation_mode);
-            let window_info = if let Some(hwnd) = activated_target {
-                crate::window_info::get_window_info_by_hwnd(hwnd)
-            } else {
-                crate::window_info::get_foreground_window_info()
-            };
-            debug!("window info: {:?}", window_info);
-            match_app(&hs.config.apps, &window_info).map(|id| id.to_owned())
-        }
-        _ => None,
-    };
 
     let effect = process_event_pure(&mut hs.state, &hs.config, event, pt, tick, matched_app);
 
@@ -262,6 +257,40 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
     }
 
     effect.suppress
+}
+
+/// Resolve app match at gesture start, while avoiding mutable borrow of hook state.
+fn precompute_matched_app(msg: u32, info: &MSLLHOOKSTRUCT) -> Option<String> {
+    let MouseEvent::ButtonDown(trigger) = to_mouse_event(msg, info) else {
+        return None;
+    };
+    let pt = (info.pt.x, info.pt.y);
+
+    let activation_mode = HOOK_STATE.with(|cell| {
+        let borrow = cell.borrow();
+        let hs = borrow.as_ref()?;
+        if !matches!(hs.state, GestureState::Idle) {
+            return None;
+        }
+        if !hs.config.has_any_binding_for_trigger(trigger) {
+            return None;
+        }
+        Some(hs.config.gesture_activation_mode)
+    })?;
+
+    let activated_target = activate_window_at_point(pt.0, pt.1, activation_mode);
+    let window_info = if let Some(hwnd) = activated_target {
+        crate::window_info::get_window_info_by_hwnd(hwnd)
+    } else {
+        crate::window_info::get_foreground_window_info()
+    };
+    debug!("window info: {:?}", window_info);
+
+    HOOK_STATE.with(|cell| {
+        let borrow = cell.borrow();
+        let hs = borrow.as_ref()?;
+        match_app(&hs.config.apps, &window_info).map(|id| id.to_owned())
+    })
 }
 
 /// Convert Win32 mouse message IDs into hook-level [`MouseEvent`].
