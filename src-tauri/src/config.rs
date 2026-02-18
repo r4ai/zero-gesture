@@ -62,6 +62,17 @@ pub enum TriggerButton {
     MiddleClick,
 }
 
+/// How to activate the UI target when a gesture starts.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum GestureActivationMode {
+    /// Legacy behavior: activate only the top-level window at cursor point.
+    Window,
+    /// Preferred behavior: activate the exact UI element under cursor point.
+    #[default]
+    Element,
+}
+
 /// One element inside a gesture sequence.
 ///
 /// A gesture sequence can combine directional movement and mouse inputs.
@@ -215,6 +226,9 @@ pub struct AppConfig {
     /// If movement exceeds this threshold, replay is skipped.
     pub replay_distance_threshold_px: i32,
 
+    /// How to activate the target under cursor when a gesture starts.
+    pub gesture_activation_mode: GestureActivationMode,
+
     /// Font family name for the gesture label overlay.
     pub label_font_family: String,
 
@@ -256,6 +270,10 @@ impl AppConfig {
 
     /// Default cursor travel threshold for replaying unmatched trigger clicks.
     pub const DEFAULT_REPLAY_DISTANCE_THRESHOLD_PX: i32 = 12;
+
+    /// Default activation mode when a gesture starts.
+    pub const DEFAULT_GESTURE_ACTIVATION_MODE: GestureActivationMode =
+        GestureActivationMode::Element;
 
     /// Default font family for the gesture label overlay.
     pub const DEFAULT_LABEL_FONT_FAMILY: &str = "Yu Gothic UI Semibold";
@@ -700,6 +718,7 @@ impl Default for AppConfig {
             direction_switch_confirm_px: Self::DEFAULT_DIRECTION_SWITCH_CONFIRM_PX,
             axis_ambiguity_deadzone_px: Self::DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX,
             replay_distance_threshold_px: Self::DEFAULT_REPLAY_DISTANCE_THRESHOLD_PX,
+            gesture_activation_mode: Self::DEFAULT_GESTURE_ACTIVATION_MODE,
             label_font_family: Self::DEFAULT_LABEL_FONT_FAMILY.to_string(),
             label_font_size: Self::DEFAULT_LABEL_FONT_SIZE,
             label_font_weight: Self::DEFAULT_LABEL_FONT_WEIGHT,
@@ -832,6 +851,10 @@ mod tests {
         assert_eq!(
             cfg.replay_distance_threshold_px,
             AppConfig::DEFAULT_REPLAY_DISTANCE_THRESHOLD_PX
+        );
+        assert_eq!(
+            cfg.gesture_activation_mode,
+            AppConfig::DEFAULT_GESTURE_ACTIVATION_MODE
         );
         assert_eq!(cfg.label_font_family, AppConfig::DEFAULT_LABEL_FONT_FAMILY);
         assert_eq!(cfg.label_font_size, AppConfig::DEFAULT_LABEL_FONT_SIZE);
@@ -1065,7 +1088,19 @@ mod tests {
         let raw = r##"{ "enabled": false }"##;
         let cfg: AppConfig = serde_json::from_str(raw).expect("JSON with enabled=false must parse");
         assert!(!cfg.enabled);
+        assert_eq!(
+            cfg.gesture_activation_mode,
+            AppConfig::DEFAULT_GESTURE_ACTIVATION_MODE
+        );
         assert!(cfg.bindings.contains_key("default"));
+    }
+
+    #[test]
+    fn deserialize_json_with_legacy_activation_mode() {
+        let raw = r##"{ "gesture_activation_mode": "window" }"##;
+        let cfg: AppConfig =
+            serde_json::from_str(raw).expect("JSON with gesture_activation_mode must parse");
+        assert_eq!(cfg.gesture_activation_mode, GestureActivationMode::Window);
     }
 
     #[test]

@@ -223,7 +223,8 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
         (GestureState::Idle, MouseEvent::ButtonDown(trigger))
             if hs.config.has_any_binding_for_trigger(trigger) =>
         {
-            let activated_target = activate_window_at_point(pt.0, pt.1);
+            let activated_target =
+                activate_window_at_point(pt.0, pt.1, hs.config.gesture_activation_mode);
             let window_info = if let Some(hwnd) = activated_target {
                 crate::window_info::get_window_info_by_hwnd(hwnd)
             } else {
@@ -433,10 +434,15 @@ fn make_mouse_input(x: i32, y: i32, flags: u32) -> INPUT {
 /// Activate (bring to foreground) the top-level window at the given screen
 /// coordinates.
 ///
-/// Uses [`WindowFromPoint`] to locate the window under cursor, resolves a
-/// top-level window via [`GetAncestor`] (`GA_ROOT`), and requests activation
-/// with [`SetForegroundWindow`].
-fn activate_window_at_point(x: i32, y: i32) -> Option<windows_sys::Win32::Foundation::HWND> {
+/// Uses [`WindowFromPoint`] to locate the window under cursor, then applies
+/// the configured activation mode:
+/// - `window`: activate the root window only (legacy behavior)
+/// - `element`: activate root window and attempt to focus exact element window
+fn activate_window_at_point(
+    x: i32,
+    y: i32,
+    mode: crate::config::GestureActivationMode,
+) -> Option<windows_sys::Win32::Foundation::HWND> {
     use windows_sys::Win32::Foundation::POINT;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         GetAncestor, SetForegroundWindow, WindowFromPoint, GA_ROOT,
@@ -450,10 +456,66 @@ fn activate_window_at_point(x: i32, y: i32) -> Option<windows_sys::Win32::Founda
         }
 
         let root = GetAncestor(hwnd, GA_ROOT);
-        let target = if root.is_null() { hwnd } else { root };
+        let root_target = if root.is_null() { hwnd } else { root };
 
-        debug!("activate_window_at_point: activating window {target:?} at ({x}, {y})");
-        let _ = SetForegroundWindow(target);
-        Some(target)
+        match mode {
+            crate::config::GestureActivationMode::Window => {
+                debug!(
+                    "activate_window_at_point(window): activating window {root_target:?} at ({x}, {y})"
+                );
+                let _ = SetForegroundWindow(root_target);
+            }
+            crate::config::GestureActivationMode::Element => {
+                debug!(
+                    "activate_window_at_point(element): root={root_target:?}, leaf={hwnd:?} at ({x}, {y})"
+                );
+                activate_element_window(root_target, hwnd);
+            }
+        }
+
+        Some(root_target)
+    }
+}
+
+/// Activate a top-level window and attempt to focus the specific child window.
+fn activate_element_window(
+    root: windows_sys::Win32::Foundation::HWND,
+    leaf: windows_sys::Win32::Foundation::HWND,
+) {
+    use windows_sys::Win32::System::Threading::AttachThreadInput;
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::SetFocus;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowThreadProcessId, SetForegroundWindow,
+    };
+
+    unsafe {
+        let _ = SetForegroundWindow(root);
+
+        let focus_target = if leaf.is_null() { root } else { leaf };
+        if focus_target.is_null() {
+            return;
+        }
+
+        let current_tid = GetCurrentThreadId();
+        let target_tid = GetWindowThreadProcessId(focus_target, std::ptr::null_mut());
+
+        let mut attached = false;
+        if target_tid != 0 && target_tid != current_tid {
+            attached = AttachThreadInput(current_tid, target_tid, 1) != 0;
+            if !attached {
+                debug!(
+                    "activate_element_window: failed to attach thread input (current_tid={current_tid}, target_tid={target_tid})"
+                );
+            }
+        }
+
+        let focused = SetFocus(focus_target);
+        if focused.is_null() && focus_target != root {
+            let _ = SetFocus(root);
+        }
+
+        if attached {
+            let _ = AttachThreadInput(current_tid, target_tid, 0);
+        }
     }
 }
