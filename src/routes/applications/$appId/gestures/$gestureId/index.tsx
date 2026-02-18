@@ -52,7 +52,7 @@ type GestureMode = "hold" | "release"
 
 function getSequenceDescription(mode: GestureMode): string {
   if (mode === "hold") {
-    return "Ordered movement steps recognized while the trigger is held, before the selected step fires. Up to 8 steps."
+    return "Ordered movement, wheel, and click steps recognized while the trigger is held, before the selected step fires. Up to 8 steps."
   }
 
   return "Ordered steps recognized before the action fires when the trigger is released. Up to 8 steps."
