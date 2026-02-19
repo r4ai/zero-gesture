@@ -309,7 +309,7 @@ export function modifierLabel(key: string): string {
  * Hook for capturing modifier state from a `KeyboardEvent`.
  *
  * @example
- * const modifiers = buildModifiersFromEvent(event) // => ["Ctrl", "Alt"]
+ * const modifiers = buildModifiersFromEvent(event) // => ["ctrl", "alt"]
  */
 function buildModifiersFromEvent(event: KeyboardEvent): string[] {
   const next: string[] = []

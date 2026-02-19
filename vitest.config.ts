@@ -36,6 +36,8 @@ export default mergeConfig(
           ],
           test: {
             name: "storybook",
+            include: ["**/*.stories.ts", "**/*.stories.tsx"],
+            exclude: ["src/**/*.test.ts"],
             // Enable browser mode
             browser: {
               enabled: true,
