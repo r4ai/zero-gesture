@@ -153,7 +153,7 @@ export function parseKeys(raw?: string): string[] {
     if (lower === "esc") return "escape"
     if (lower === "del") return "delete"
     if (lower === "pgup") return "pageup"
-    if (lower === "pgdn" || lower === "pagedn") return "pagedown"
+    if (lower === "pgdn") return "pagedown"
 
     // Single characters (letters and numbers)
     if (key.length === 1) {
@@ -241,12 +241,12 @@ export function normalizePressedKey(key: string): string | null {
   }
 
   // Function keys - normalize to lowercase f1-f24
-  if (
-    lower.match(
-      /^f(1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24)$/,
-    )
-  ) {
-    return lower
+  const fnMatch = lower.match(/^f(\d+)$/)
+  if (fnMatch) {
+    const fnNumber = Number(fnMatch[1])
+    if (fnNumber >= 1 && fnNumber <= 24) {
+      return lower
+    }
   }
 
   // Other keys - check if supported
@@ -286,7 +286,7 @@ export function keyLabel(key: string): string {
   if (lower === "pagedown") return "PageDown"
 
   // Single letters - uppercase
-  if (key.length === 1 && key >= "a" && key <= "z") {
+  if (key.length === 1 && lower >= "a" && lower <= "z") {
     return key.toUpperCase()
   }
 
@@ -313,10 +313,10 @@ export function modifierLabel(key: string): string {
  */
 function buildModifiersFromEvent(event: KeyboardEvent): string[] {
   const next: string[] = []
-  if (event.ctrlKey) next.push("Ctrl")
-  if (event.altKey) next.push("Alt")
-  if (event.shiftKey) next.push("Shift")
-  if (event.metaKey) next.push("Win")
+  if (event.ctrlKey) next.push("ctrl")
+  if (event.altKey) next.push("alt")
+  if (event.shiftKey) next.push("shift")
+  if (event.metaKey) next.push("win")
   return next
 }
 

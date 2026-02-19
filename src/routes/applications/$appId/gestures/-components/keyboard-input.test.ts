@@ -141,7 +141,6 @@ describe("keyboard-input", () => {
       expect(parseKeys("del")).toEqual(["delete"])
       expect(parseKeys("pgup")).toEqual(["pageup"])
       expect(parseKeys("pgdn")).toEqual(["pagedown"])
-      expect(parseKeys("pagedn")).toEqual(["pagedown"])
     })
 
     it("should handle space", () => {
