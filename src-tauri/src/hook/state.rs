@@ -532,6 +532,7 @@ fn process_wheel_input(ctx: WheelInputContext<'_>, step: GestureStep, steps: u16
             repeat: steps,
         });
         update_label_direct(ctx.effect, ctx.last_label, Some(binding.label.clone()));
+        ctx.recognizer.reset_sequence();
         return;
     }
 
@@ -1286,6 +1287,80 @@ mod tests {
             effect.request_execute,
             Some(ExecuteRequest {
                 action: specific_action,
+                repeat: 1
+            })
+        );
+    }
+
+    #[test]
+    fn hold_wheel_match_resets_recognized_sequence() {
+        let wildcard_action = key_action("w");
+        let specific_action = key_action("s");
+        let config = test_config_with_hold(
+            Vec::new(),
+            vec![
+                hold_binding(
+                    TriggerButton::Right,
+                    Vec::new(),
+                    GestureStep::WheelUp,
+                    wildcard_action.clone(),
+                    "Any WheelUp",
+                ),
+                hold_binding(
+                    TriggerButton::Right,
+                    vec![GestureStep::Right],
+                    GestureStep::WheelUp,
+                    specific_action.clone(),
+                    "Right WheelUp",
+                ),
+            ],
+        );
+        let mut state = GestureState::Idle;
+
+        process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::ButtonDown(TriggerButton::Right),
+            (100, 100),
+            1000,
+            None,
+        );
+        process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::MouseMove,
+            (150, 100),
+            1010,
+            None,
+        );
+        let first = process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::WheelUp(1),
+            (150, 100),
+            1020,
+            None,
+        );
+        let second = process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::WheelUp(1),
+            (150, 100),
+            1030,
+            None,
+        );
+
+        assert_eq!(
+            first.request_execute,
+            Some(ExecuteRequest {
+                action: specific_action,
+                repeat: 1
+            })
+        );
+        assert_eq!(
+            second.request_execute,
+            Some(ExecuteRequest {
+                action: wildcard_action,
                 repeat: 1
             })
         );
