@@ -4,6 +4,7 @@ import {
   MODIFIER_KEYS,
   modifierLabel,
   normalizePressedKey,
+  parseKeySequence,
   parseKeys,
   SHORTCUT_KEYS,
 } from "./keyboard-input"
@@ -152,6 +153,15 @@ describe("keyboard-input", () => {
       expect(parseKeys("ctrl,alt,delete")).toEqual(["ctrl", "alt", "delete"])
     })
 
+    it("should parse plus-separated keys", () => {
+      expect(parseKeys("ctrl+shift+t")).toEqual(["ctrl", "shift", "t"])
+      expect(parseKeys("Ctrl + Alt + F1")).toEqual(["ctrl", "alt", "f1"])
+    })
+
+    it("should parse whitespace-separated keys", () => {
+      expect(parseKeys("ctrl shift t")).toEqual(["ctrl", "shift", "t"])
+    })
+
     it("should handle spaces around commas", () => {
       expect(parseKeys("ctrl, a, b")).toEqual(["ctrl", "a", "b"])
       expect(parseKeys("  ctrl  ,  alt  ")).toEqual(["ctrl", "alt"])
@@ -170,7 +180,28 @@ describe("keyboard-input", () => {
 
     it("should handle complex combinations", () => {
       expect(parseKeys("Ctrl,Alt,F1")).toEqual(["ctrl", "alt", "f1"])
-      expect(parseKeys("CTRL+SHIFT+T")).toEqual([]) // + is not a separator
+      expect(parseKeys("CTRL+SHIFT+T")).toEqual(["ctrl", "shift", "t"])
+    })
+  })
+
+  describe("parseKeySequence", () => {
+    it("should return empty array for undefined input", () => {
+      expect(parseKeySequence(undefined)).toEqual([])
+    })
+
+    it("should parse comma-separated combos", () => {
+      expect(parseKeySequence("f21+a, ctrl+x, shift+z")).toEqual([
+        ["f21", "a"],
+        ["ctrl", "x"],
+        ["shift", "z"],
+      ])
+    })
+
+    it("should ignore empty combos", () => {
+      expect(parseKeySequence("ctrl+x, , shift+z")).toEqual([
+        ["ctrl", "x"],
+        ["shift", "z"],
+      ])
     })
   })
 

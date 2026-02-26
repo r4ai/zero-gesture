@@ -1,8 +1,9 @@
 import { Check, Keyboard, Loader2, X } from "lucide-react"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { ComboBox, ComboBoxItem } from "@/components/ui/combobox"
 import { Dialog, DialogContent } from "@/components/ui/dialog"
+import type { KeyboardSequence } from "@/types/config"
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -115,13 +116,19 @@ export type KeyboardInputMode = "wait" | "manual"
 // ---------------------------------------------------------------------------
 
 /**
- * Parse a comma-separated key string into an array of normalized key names.
+ * Parse a key-combo string into an array of normalized key names.
+ *
+ * Supported separators:
+ * - `+` (e.g. `Ctrl+Shift+Z`)
+ * - `,` (legacy format)
+ * - whitespace (e.g. `Ctrl Shift Z`)
+ *
  * Normalized key names match the backend (executor.rs) format.
  *
  * @example
- * parseKeys("ctrl,alt,a") // => ["ctrl", "alt", "a"]
- * parseKeys("Ctrl,Alt,A") // => ["ctrl", "alt", "a"]
- * parseKeys("pgup,pgdn")  // => ["pageup", "pagedown"]
+ * parseKeys("ctrl+alt+a") // => ["ctrl", "alt", "a"]
+ * parseKeys("Ctrl + Alt + A") // => ["ctrl", "alt", "a"]
+ * parseKeys("pgup pgdn")  // => ["pageup", "pagedown"]
  */
 export function parseKeys(raw?: string): string[] {
   if (!raw) return []
@@ -184,9 +191,26 @@ export function parseKeys(raw?: string): string[] {
   }
 
   return raw
-    .split(",")
+    .split(/[,+]/)
+    .flatMap((part) => part.trim().split(/\s+/))
     .map((part) => normalize(part))
     .filter((part): part is string => part !== null && part.length > 0)
+}
+
+/**
+ * Parse a key sequence where combos are comma-separated.
+ *
+ * @example
+ * parseKeySequence("f21+a, ctrl+x, shift+z")
+ * // => [["f21", "a"], ["ctrl", "x"], ["shift", "z"]]
+ */
+export function parseKeySequence(raw?: string): KeyboardSequence {
+  if (!raw) return []
+
+  return raw
+    .split(",")
+    .map((combo) => parseKeys(combo))
+    .filter((combo) => combo.length > 0)
 }
 
 /**
@@ -320,13 +344,6 @@ function buildModifiersFromEvent(event: KeyboardEvent): string[] {
   return next
 }
 
-function buildComboFromEvent(event: KeyboardEvent): string[] {
-  const next = buildModifiersFromEvent(event)
-  const main = normalizePressedKey(event.key)
-  if (main) next.push(main)
-  return next
-}
-
 /**
  * Hook that listens to global keyboard events and calls `onConfirm` when the
  * user releases a non-modifier key.  Calls `onCancel` when Escape is pressed.
@@ -352,12 +369,13 @@ export function useKeyCapture({
   onConfirm: (keys: string[]) => void
   onCancel: () => void
 }) {
-  const captureFinishedRef = useRef(false)
+  const pressedNonModifiersRef = useRef<string[]>([])
+  const comboCapturedRef = useRef(false)
 
   useEffect(() => {
     if (!active) return
-
-    captureFinishedRef.current = false
+    pressedNonModifiersRef.current = []
+    comboCapturedRef.current = false
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -365,26 +383,58 @@ export function useKeyCapture({
         onCancel()
         return
       }
-      const next = buildComboFromEvent(event)
+
+      const pressed = pressedNonModifiersRef.current
+      const normalized = normalizePressedKey(event.key)
+      if (normalized && !pressed.includes(normalized)) {
+        pressed.push(normalized)
+      }
+
+      const next = [...buildModifiersFromEvent(event), ...pressed]
       if (next.length === 0) return
       event.preventDefault()
       onPreview(next)
     }
 
     const onKeyUp = (event: KeyboardEvent) => {
-      if (captureFinishedRef.current) return
       if (event.key === "Escape") {
         event.preventDefault()
         onCancel()
         return
       }
+
       const releasedKey = normalizePressedKey(event.key)
-      const modifiersAfterRelease = buildModifiersFromEvent(event)
-      onPreview(modifiersAfterRelease)
-      if (!releasedKey) return
-      const finalized = [...modifiersAfterRelease, releasedKey]
-      captureFinishedRef.current = true
-      onConfirm(finalized)
+      const pressed = pressedNonModifiersRef.current
+      const modifiers = buildModifiersFromEvent(event)
+
+      if (!releasedKey) {
+        const next = [...modifiers, ...pressed]
+        onPreview(next)
+        if (comboCapturedRef.current && next.length === 0) {
+          comboCapturedRef.current = false
+        }
+        return
+      }
+
+      event.preventDefault()
+      const finalized = [...modifiers, ...pressed]
+
+      const releaseIndex = pressed.indexOf(releasedKey)
+      if (releaseIndex >= 0) {
+        pressed.splice(releaseIndex, 1)
+      }
+
+      const previewAfterRelease = [...modifiers, ...pressed]
+      onPreview(previewAfterRelease)
+
+      if (!comboCapturedRef.current && finalized.length > 0) {
+        onConfirm(finalized)
+        comboCapturedRef.current = true
+      }
+
+      if (comboCapturedRef.current && previewAfterRelease.length === 0) {
+        comboCapturedRef.current = false
+      }
     }
 
     window.addEventListener("keydown", onKeyDown)
@@ -418,22 +468,56 @@ function KeyComboPreview({
   }
 
   return (
-    <>
+    <div className="flex flex-wrap items-center justify-center gap-1">
       {keys.map((key, index) => (
-        <div
+        <span
           // biome-ignore lint/suspicious/noArrayIndexKey: Preview order is fixed and display-only.
           key={`${key}-${index}`}
-          className="flex items-center gap-1.5"
+          className="inline-flex items-center gap-1"
         >
-          <span className="inline-flex h-8 min-w-[34px] items-center justify-center rounded-md border border-border-muted bg-background-card px-3 font-semibold text-[14px] text-foreground">
+          <span className="inline-flex h-8 min-w-[30px] items-center justify-center rounded-md border border-border-muted bg-background-card px-2.5 font-semibold text-[14px] text-foreground">
             {keyLabel(key)}
           </span>
           {index < keys.length - 1 && (
-            <span className="text-[14px] text-foreground-muted">+</span>
+            <span className="text-[13px] text-foreground-muted">+</span>
+          )}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+function KeySequencePreview({
+  sequence,
+  activeCombo = [],
+  emptyFallback,
+}: {
+  sequence: KeyboardSequence
+  activeCombo?: string[]
+  emptyFallback?: React.ReactNode
+}) {
+  const displaySequence =
+    activeCombo.length > 0 ? [...sequence, activeCombo] : sequence
+
+  if (displaySequence.length === 0) {
+    return <>{emptyFallback}</>
+  }
+
+  return (
+    <div className="flex flex-wrap items-center justify-center gap-2">
+      {displaySequence.map((combo, comboIndex) => (
+        <div
+          // biome-ignore lint/suspicious/noArrayIndexKey: Sequence order is user-defined and display-only.
+          key={`sequence-${comboIndex}`}
+          className="flex items-center gap-1.5"
+        >
+          <KeyComboPreview keys={combo} />
+          {comboIndex < displaySequence.length - 1 && (
+            <span className="text-[14px] text-foreground-muted">→</span>
           )}
         </div>
       ))}
-    </>
+    </div>
   )
 }
 
@@ -454,35 +538,52 @@ function KeyComboPreview({
  */
 export function WaitKeyInputDialog({
   isOpen,
-  initialKeys = [],
+  initialSequence = [],
   onConfirm,
   onClose,
 }: {
   isOpen: boolean
-  initialKeys?: string[]
-  onConfirm: (keys: string[]) => void
+  initialSequence?: KeyboardSequence
+  onConfirm: (sequence: KeyboardSequence) => void
   onClose: () => void
 }) {
-  const [previewKeys, setPreviewKeys] = useState<string[]>(initialKeys)
+  const [capturedSequence, setCapturedSequence] =
+    useState<KeyboardSequence>(initialSequence)
+  const [activeCombo, setActiveCombo] = useState<string[]>([])
 
-  // `initialKeys` を ref に保持することで、isOpen が true に変わった瞬間の
+  // `initialSequence` を ref に保持することで、isOpen が true に変わった瞬間の
   // 値だけを使ってプレビューをリセットできる
-  const initialKeysRef = useRef(initialKeys)
-  initialKeysRef.current = initialKeys
+  const initialSequenceRef = useRef(initialSequence)
+  initialSequenceRef.current = initialSequence
 
   useEffect(() => {
-    if (isOpen) setPreviewKeys(initialKeysRef.current)
+    if (!isOpen) return
+    setCapturedSequence(initialSequenceRef.current)
+    setActiveCombo([])
   }, [isOpen])
 
   useKeyCapture({
     active: isOpen,
-    onPreview: setPreviewKeys,
+    onPreview: setActiveCombo,
     onConfirm: (keys) => {
-      onConfirm(keys)
-      onClose()
+      setCapturedSequence((previous) => [...previous, keys])
     },
     onCancel: onClose,
   })
+
+  const handleConfirm = () => {
+    onConfirm(capturedSequence)
+    onClose()
+  }
+
+  const removeLastCombo = () => {
+    setCapturedSequence((previous) => previous.slice(0, -1))
+  }
+
+  const clearAll = () => {
+    setCapturedSequence([])
+    setActiveCombo([])
+  }
 
   return (
     <Dialog isOpen={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -506,18 +607,18 @@ export function WaitKeyInputDialog({
 
           <div className="flex flex-col items-center gap-2">
             <h2 className="font-semibold text-[20px] text-foreground">
-              Press a Key Combination
+              Capture Key Sequence
             </h2>
             <p className="max-w-[420px] text-center text-[14px] text-foreground-muted">
-              Press any key combination to assign it as a shortcut.
-              <br />
-              Hold modifier keys (Ctrl, Alt, Shift, Win) together with a key.
+              Press key combinations in order to build the action sequence.
+              <br />A combo is added each time you release a non-modifier key.
             </p>
           </div>
 
-          <div className="flex h-16 w-full items-center justify-center gap-2 rounded-[10px] border border-border-muted bg-background-glass">
-            <KeyComboPreview
-              keys={previewKeys}
+          <div className="flex min-h-16 w-full items-center justify-center rounded-[10px] border border-border-muted bg-background-glass px-4 py-2">
+            <KeySequencePreview
+              sequence={capturedSequence}
+              activeCombo={activeCombo}
               emptyFallback={
                 <>
                   <span className="h-1.5 w-1.5 rounded-full bg-foreground-faint" />
@@ -533,8 +634,35 @@ export function WaitKeyInputDialog({
               Esc
             </span>
             <span className="text-[13px] text-foreground-subtle">
-              Press Esc to cancel
+              Press Esc to cancel capture
             </span>
+          </div>
+
+          <div className="flex w-full justify-end gap-2.5">
+            <Button
+              variant="outline"
+              className="h-9 border-border-muted text-[12px]"
+              onPress={clearAll}
+              isDisabled={capturedSequence.length === 0}
+            >
+              Clear
+            </Button>
+            <Button
+              variant="outline"
+              className="h-9 border-border-muted text-[12px]"
+              onPress={removeLastCombo}
+              isDisabled={capturedSequence.length === 0}
+            >
+              Undo
+            </Button>
+            <Button
+              className="h-9 min-w-[120px] text-[13px]"
+              onPress={handleConfirm}
+              isDisabled={capturedSequence.length === 0}
+            >
+              <Check className="h-3.5 w-3.5" />
+              <span>Assign</span>
+            </Button>
           </div>
         </div>
       </DialogContent>
@@ -555,54 +683,59 @@ export function WaitKeyInputDialog({
  */
 export function ManualKeyInputDialog({
   isOpen,
-  initialKeys = [],
+  initialSequence = [],
   onConfirm,
   onClose,
 }: {
   isOpen: boolean
-  initialKeys?: string[]
-  onConfirm: (keys: string[]) => void
+  initialSequence?: KeyboardSequence
+  onConfirm: (sequence: KeyboardSequence) => void
   onClose: () => void
 }) {
+  const [sequence, setSequence] = useState<KeyboardSequence>(initialSequence)
   const [selectedModifiers, setSelectedModifiers] = useState<Set<string>>(
-    () =>
-      new Set(
-        initialKeys.filter((key) => MODIFIER_KEYS.includes(key as ModifierKey)),
-      ),
+    () => new Set<string>(),
   )
-  const [selectedKey, setSelectedKey] = useState<string>(
-    initialKeys.find((key) => !MODIFIER_KEYS.includes(key as ModifierKey)) ??
-      "",
-  )
+  const [selectedKeys, setSelectedKeys] = useState<string[]>([])
+  const [selectedKeyCandidate, setSelectedKeyCandidate] = useState<string>("")
 
-  // Reset state whenever the dialog opens with new initialKeys
+  const initBuilderFromCombo = useCallback((combo: string[] | undefined) => {
+    const nextCombo = combo ?? []
+    setSelectedModifiers(
+      new Set(
+        nextCombo.filter((key) => MODIFIER_KEYS.includes(key as ModifierKey)),
+      ),
+    )
+    setSelectedKeys(
+      nextCombo.filter((key) => !MODIFIER_KEYS.includes(key as ModifierKey)),
+    )
+    setSelectedKeyCandidate("")
+  }, [])
+
+  // Reset state whenever the dialog opens with new initialSequence
   const prevIsOpen = useRef(false)
   useEffect(() => {
     if (isOpen && !prevIsOpen.current) {
-      setSelectedModifiers(
-        new Set(
-          initialKeys.filter((key) =>
-            MODIFIER_KEYS.includes(key as ModifierKey),
-          ),
-        ),
-      )
-      setSelectedKey(
-        initialKeys.find(
-          (key) => !MODIFIER_KEYS.includes(key as ModifierKey),
-        ) ?? "",
-      )
+      setSequence(initialSequence)
+      const lastCombo = initialSequence[initialSequence.length - 1]
+      initBuilderFromCombo(lastCombo)
     }
     prevIsOpen.current = isOpen
-  }, [isOpen, initialKeys])
+  }, [isOpen, initialSequence, initBuilderFromCombo])
 
   const preview = useMemo(
     () =>
       [
         ...MODIFIER_KEYS.filter((key) => selectedModifiers.has(key)),
-        selectedKey,
+        ...selectedKeys,
       ].filter((part) => part.length > 0),
-    [selectedModifiers, selectedKey],
+    [selectedModifiers, selectedKeys],
   )
+
+  const effectiveSequence = useMemo(() => {
+    if (sequence.length > 0) return sequence
+    return preview.length > 0 ? [preview] : []
+  }, [sequence, preview])
 
   const toggleModifier = (modifier: string) => {
     setSelectedModifiers((previous) => {
@@ -616,8 +749,38 @@ export function ManualKeyInputDialog({
     })
   }
 
+  const addCombo = () => {
+    if (preview.length === 0) return
+    setSequence((previous) => [...previous, preview])
+    setSelectedKeys([])
+    setSelectedKeyCandidate("")
+  }
+
+  const addSelectedKey = () => {
+    if (!selectedKeyCandidate) return
+    setSelectedKeys((previous) => {
+      if (previous.includes(selectedKeyCandidate)) return previous
+      return [...previous, selectedKeyCandidate]
+    })
+    setSelectedKeyCandidate("")
+  }
+
+  const removeSelectedKey = (keyToRemove: string, indexToRemove: number) => {
+    setSelectedKeys((previous) =>
+      previous.filter(
+        (key, index) => !(key === keyToRemove && index === indexToRemove),
+      ),
+    )
+  }
+
+  const removeCombo = (index: number) => {
+    setSequence((previous) =>
+      previous.filter((_, current) => current !== index),
+    )
+  }
+
   const handleConfirm = () => {
-    onConfirm(preview)
+    onConfirm(effectiveSequence)
     onClose()
   }
 
@@ -672,24 +835,69 @@ export function ManualKeyInputDialog({
 
           <div className="flex flex-col gap-2.5">
             <span className="text-[12px] text-foreground-subtle">Key</span>
-            <ComboBox
-              placeholder="Select a key..."
-              selectedKey={selectedKey || null}
-              onSelectionChange={(key) => setSelectedKey(String(key ?? ""))}
-            >
-              {SHORTCUT_KEYS.map((key) => (
-                <ComboBoxItem key={key} id={key} textValue={keyLabel(key)}>
-                  {keyLabel(key)}
-                </ComboBoxItem>
-              ))}
-            </ComboBox>
+            <div className="flex items-center gap-2">
+              <div className="flex-1">
+                <ComboBox
+                  placeholder="Select a key..."
+                  selectedKey={selectedKeyCandidate || null}
+                  onSelectionChange={(key) =>
+                    setSelectedKeyCandidate(String(key ?? ""))
+                  }
+                >
+                  {SHORTCUT_KEYS.map((key) => (
+                    <ComboBoxItem key={key} id={key} textValue={keyLabel(key)}>
+                      {keyLabel(key)}
+                    </ComboBoxItem>
+                  ))}
+                </ComboBox>
+              </div>
+              <Button
+                variant="outline"
+                className="h-9 border-border-muted px-3 text-[12px]"
+                onPress={addSelectedKey}
+                isDisabled={
+                  !selectedKeyCandidate ||
+                  selectedKeys.includes(selectedKeyCandidate)
+                }
+              >
+                Add Key
+              </Button>
+            </div>
+            {selectedKeys.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {selectedKeys.map((key, index) => (
+                  <button
+                    // biome-ignore lint/suspicious/noArrayIndexKey: Selected key order is user-defined.
+                    key={`selected-${key}-${index}`}
+                    type="button"
+                    className="inline-flex h-8 items-center gap-1 rounded-md border border-border-muted bg-background-card px-2.5 font-semibold text-[13px] text-foreground"
+                    onClick={() => removeSelectedKey(key, index)}
+                  >
+                    <span>{keyLabel(key)}</span>
+                    <X className="h-3.5 w-3.5 text-foreground-subtle hover:text-destructive" />
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="h-px bg-border" />
 
           <div className="flex flex-col gap-2.5">
-            <span className="text-[12px] text-foreground-subtle">Preview</span>
-            <div className="flex h-14 items-center justify-center gap-1.5 rounded-[10px] border border-border-muted bg-background-glass">
+            <div className="flex items-center justify-between">
+              <span className="text-[12px] text-foreground-subtle">
+                Preview
+              </span>
+              <Button
+                variant="outline"
+                className="h-8 border-border-muted text-[12px]"
+                onPress={addCombo}
+                isDisabled={preview.length === 0}
+              >
+                Add Combo
+              </Button>
+            </div>
+            <div className="flex min-h-14 items-center justify-center rounded-[10px] border border-border-muted bg-background-glass p-2">
               <KeyComboPreview
                 keys={preview}
                 emptyFallback={
@@ -698,6 +906,35 @@ export function ManualKeyInputDialog({
                   </span>
                 }
               />
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-2.5">
+            <span className="text-[12px] text-foreground-subtle">Sequence</span>
+            <div className="flex min-h-14 flex-wrap items-center gap-2 rounded-[10px] border border-border-muted bg-background-glass p-2">
+              {sequence.length > 0 ? (
+                sequence.map((combo, index) => (
+                  <div
+                    // biome-ignore lint/suspicious/noArrayIndexKey: Sequence order is user-defined and stable in this view.
+                    key={`manual-sequence-${index}`}
+                    className="flex items-center gap-2 rounded-md border border-border-muted bg-background-card px-2 py-1"
+                  >
+                    <KeyComboPreview keys={combo} />
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 text-foreground-muted hover:bg-destructive-subtle hover:text-destructive"
+                      onPress={() => removeCombo(index)}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                ))
+              ) : (
+                <span className="text-[13px] text-foreground-faint">
+                  No combos added (Assign will use current preview)
+                </span>
+              )}
             </div>
           </div>
 
@@ -712,7 +949,7 @@ export function ManualKeyInputDialog({
             <Button
               className="h-9 w-[120px] text-[13px]"
               onPress={handleConfirm}
-              isDisabled={preview.length === 0}
+              isDisabled={effectiveSequence.length === 0}
             >
               <Check className="h-3.5 w-3.5" />
               <span>Assign</span>

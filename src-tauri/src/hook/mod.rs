@@ -280,6 +280,7 @@ mod tests {
     fn keyboard_action(key: &str) -> crate::executor::Action {
         crate::executor::Action::Keyboard {
             keys: vec![key.to_string()],
+            sequence: Vec::new(),
         }
     }
 

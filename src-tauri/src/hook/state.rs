@@ -625,6 +625,7 @@ mod tests {
     fn key_action(key: &str) -> Action {
         Action::Keyboard {
             keys: vec![key.to_string()],
+            sequence: Vec::new(),
         }
     }
 
@@ -740,6 +741,7 @@ mod tests {
     fn executes_action_on_trigger_up_when_sequence_matches() {
         let action = Action::Keyboard {
             keys: vec!["ctrl".to_string(), "r".to_string()],
+            sequence: Vec::new(),
         };
         let config = test_config(vec![binding(
             TriggerButton::Right,

@@ -6,7 +6,12 @@ import { twMerge } from "tailwind-merge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { useConfigDraft } from "@/contexts/config-draft"
-import type { AppDefinition, GestureBinding } from "@/types/config"
+import {
+  type AppDefinition,
+  type GestureBinding,
+  getKeyboardSequence,
+  type KeyboardSequence,
+} from "@/types/config"
 
 interface AppSettingsLayoutProps {
   appId: string
@@ -63,10 +68,26 @@ export function formatGestureSequence(steps: string[]): string {
 
 /**
  * Format keyboard keys for display.
- * e.g., ["ctrl", "z"] -> "Ctrl+Z"
+ * e.g., [["ctrl", "z"], ["shift", "z"]] -> "Ctrl+Z → Shift+Z"
  */
-export function formatKeys(keys: string[]): string {
-  return keys.map((key) => key.charAt(0).toUpperCase() + key.slice(1)).join("+")
+export function formatKeys(sequence: KeyboardSequence): string {
+  const formatKey = (key: string): string => {
+    const lower = key.toLowerCase()
+    if (lower === "ctrl") return "Ctrl"
+    if (lower === "alt") return "Alt"
+    if (lower === "shift") return "Shift"
+    if (lower === "win") return "Win"
+    if (lower === "pageup") return "PageUp"
+    if (lower === "pagedown") return "PageDown"
+    if (/^f\d+$/.test(lower)) return lower.toUpperCase()
+    if (lower.length === 1 && lower >= "a" && lower <= "z")
+      return lower.toUpperCase()
+    return lower.charAt(0).toUpperCase() + lower.slice(1)
+  }
+
+  return sequence
+    .map((combo) => combo.map((key) => formatKey(key)).join("+"))
+    .join(" → ")
 }
 
 /**
@@ -291,9 +312,9 @@ function GesturePanel({
               )}
             >
               <span className="text-foreground text-sm">{gesture.label}</span>
-              {gesture.action.keys.length > 0 ? (
+              {getKeyboardSequence(gesture.action).length > 0 ? (
                 <Badge variant="default">
-                  {formatKeys(gesture.action.keys)}
+                  {formatKeys(getKeyboardSequence(gesture.action))}
                 </Badge>
               ) : (
                 <Badge variant="outline">—</Badge>

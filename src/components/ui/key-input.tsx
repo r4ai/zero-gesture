@@ -1,12 +1,13 @@
 import { Keyboard, X } from "lucide-react"
+import type { KeyboardSequence } from "@/types/config"
 import { Badge } from "./badge"
 import { Button } from "./button"
 
 export interface KeyInputProps {
-  /** Array of keys currently in the shortcut */
-  keys: string[]
-  /** Callback when keys change */
-  onChange: (keys: string[]) => void
+  /** Ordered key combos currently configured in the shortcut sequence */
+  sequence: KeyboardSequence
+  /** Callback when sequence changes */
+  onChange: (sequence: KeyboardSequence) => void
   /** Callback when main input area is pressed */
   onPress?: () => void
   /** Callback when keyboard icon button is pressed */
@@ -21,19 +22,37 @@ export interface KeyInputProps {
 
 /**
  * Key input component for keyboard shortcuts
- * Displays keys as badges with plus separators
+ * Displays key combos as badges with plus separators and combo sequence arrows.
  */
 export function KeyInput({
-  keys,
+  sequence,
   onChange,
   onPress,
   onKeyboardPress,
   placeholder = "Enter shortcut...",
-  hint = "Enter modifiers and a key (e.g. Ctrl+Shift+A)",
+  hint = "Enter one or more combos (e.g. F21+A, Ctrl+X, Shift+Z)",
   isDisabled = false,
 }: KeyInputProps) {
+  const hasSequence = sequence.length > 0
+
   const handleClear = () => {
     onChange([])
+  }
+
+  const formatDisplayKey = (key: string): string => {
+    if (!key) return ""
+    const lower = key.toLowerCase()
+
+    if (lower === "ctrl") return "Ctrl"
+    if (lower === "alt") return "Alt"
+    if (lower === "shift") return "Shift"
+    if (lower === "win") return "Win"
+    if (lower === "pageup") return "PageUp"
+    if (lower === "pagedown") return "PageDown"
+    if (/^f\d+$/.test(lower)) return lower.toUpperCase()
+    if (lower.length === 1 && lower >= "a" && lower <= "z")
+      return lower.toUpperCase()
+    return lower.charAt(0).toUpperCase() + lower.slice(1)
   }
 
   return (
@@ -46,19 +65,34 @@ export function KeyInput({
           onClick={onPress}
           disabled={isDisabled}
         >
-          {keys.length > 0 ? (
-            <div className="flex flex-1 items-center gap-1.5 overflow-hidden">
-              {keys.map((key, index) => (
+          {hasSequence ? (
+            <div className="flex flex-1 flex-wrap items-center gap-1.5 overflow-hidden">
+              {sequence.map((combo, comboIndex) => (
                 <div
-                  // biome-ignore lint/suspicious/noArrayIndexKey: Keys are display-only and order is fixed
-                  key={`${key}-${index}`}
+                  // biome-ignore lint/suspicious/noArrayIndexKey: Sequence entries are display-only and order is fixed.
+                  key={`combo-${comboIndex}`}
                   className="flex items-center gap-1.5"
                 >
-                  <Badge className="text-foreground" variant="key">
-                    {key}
-                  </Badge>
-                  {index < keys.length - 1 && (
-                    <span className="text-[12px] text-foreground-muted">+</span>
+                  {combo.map((key, keyIndex) => (
+                    <div
+                      // biome-ignore lint/suspicious/noArrayIndexKey: Keys are display-only and order is fixed.
+                      key={`${comboIndex}-${key}-${keyIndex}`}
+                      className="flex items-center gap-1.5"
+                    >
+                      <Badge className="text-foreground" variant="key">
+                        {formatDisplayKey(key)}
+                      </Badge>
+                      {keyIndex < combo.length - 1 && (
+                        <span className="text-[12px] text-foreground-muted">
+                          +
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                  {comboIndex < sequence.length - 1 && (
+                    <span className="px-0.5 text-[12px] text-foreground-muted">
+                      →
+                    </span>
                   )}
                 </div>
               ))}
@@ -79,7 +113,7 @@ export function KeyInput({
           >
             <Keyboard className="h-3.5 w-3.5 text-foreground" />
           </Button>
-          {keys.length > 0 && (
+          {hasSequence && (
             <Button
               variant="outline"
               size="icon"
