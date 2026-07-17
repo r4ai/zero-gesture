@@ -43,7 +43,7 @@
     "@storybook/addon-docs": "^10.5.2",
     "@storybook/addon-themes": "^10.5.2",
     "@storybook/addon-vitest": "^10.5.2",
-    "@storybook/react": "^10.2.8",
+    "@storybook/react": "^10.5.2",
     "@storybook/react-vite": "^10.2.8",
     "@tanstack/router-plugin": "^1.168.20",
     "@tauri-apps/cli": "^2.11.4",
