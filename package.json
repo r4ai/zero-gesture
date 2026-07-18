@@ -24,7 +24,7 @@
     "@tauri-apps/plugin-dialog": "~2.7.1",
     "@tauri-apps/plugin-log": "~2.9.0",
     "@tauri-apps/plugin-opener": "^2.5.4",
-    "lucide-react": "^1.0.1",
+    "lucide-react": "^1.25.0",
     "nanoid": "^6.0.0",
     "react": "^19.2.7",
     "react-aria-components": "^1.19.0",
