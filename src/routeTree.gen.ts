@@ -10,10 +10,10 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
-import { Route as GeneralIndexRouteImport } from './routes/general/index'
-import { Route as ApplicationsIndexRouteImport } from './routes/applications/index'
 import { Route as AdvancedIndexRouteImport } from './routes/advanced/index'
+import { Route as ApplicationsIndexRouteImport } from './routes/applications/index'
 import { Route as ApplicationsAppIdRouteRouteImport } from './routes/applications/$appId/route'
+import { Route as GeneralIndexRouteImport } from './routes/general/index'
 import { Route as ApplicationsAppIdEditRouteImport } from './routes/applications/$appId/edit'
 import { Route as ApplicationsAppIdGesturesIndexRouteImport } from './routes/applications/$appId/gestures/index'
 import { Route as ApplicationsAppIdGesturesGestureIdRouteRouteImport } from './routes/applications/$appId/gestures/$gestureId/route'
@@ -24,9 +24,9 @@ const SettingsRoute = SettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
-const GeneralIndexRoute = GeneralIndexRouteImport.update({
-  id: '/general/',
-  path: '/general/',
+const AdvancedIndexRoute = AdvancedIndexRouteImport.update({
+  id: '/advanced/',
+  path: '/advanced/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApplicationsIndexRoute = ApplicationsIndexRouteImport.update({
@@ -34,14 +34,14 @@ const ApplicationsIndexRoute = ApplicationsIndexRouteImport.update({
   path: '/applications/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AdvancedIndexRoute = AdvancedIndexRouteImport.update({
-  id: '/advanced/',
-  path: '/advanced/',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ApplicationsAppIdRouteRoute = ApplicationsAppIdRouteRouteImport.update({
   id: '/applications/$appId',
   path: '/applications/$appId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const GeneralIndexRoute = GeneralIndexRouteImport.update({
+  id: '/general/',
+  path: '/general/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApplicationsAppIdEditRoute = ApplicationsAppIdEditRouteImport.update({
@@ -153,11 +153,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/general/': {
-      id: '/general/'
-      path: '/general'
-      fullPath: '/general/'
-      preLoaderRoute: typeof GeneralIndexRouteImport
+    '/advanced/': {
+      id: '/advanced/'
+      path: '/advanced'
+      fullPath: '/advanced/'
+      preLoaderRoute: typeof AdvancedIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/applications/': {
@@ -167,18 +167,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApplicationsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/advanced/': {
-      id: '/advanced/'
-      path: '/advanced'
-      fullPath: '/advanced/'
-      preLoaderRoute: typeof AdvancedIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/applications/$appId': {
       id: '/applications/$appId'
       path: '/applications/$appId'
       fullPath: '/applications/$appId'
       preLoaderRoute: typeof ApplicationsAppIdRouteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/general/': {
+      id: '/general/'
+      path: '/general'
+      fullPath: '/general/'
+      preLoaderRoute: typeof GeneralIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/applications/$appId/edit': {
