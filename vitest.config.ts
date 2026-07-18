@@ -31,12 +31,11 @@ export default mergeConfig(
               configDir: path.join(dirname, ".storybook"),
               // This should match your package.json script to run Storybook
               // The --no-open flag will skip the automatic opening of a browser
-              storybookScript: "yarn storybook --no-open",
+              storybookScript: "pnpm storybook --no-open",
             }),
           ],
           test: {
             name: "storybook",
-            include: ["**/*.stories.ts", "**/*.stories.tsx"],
             exclude: ["src/**/*.test.ts"],
             // Enable browser mode
             browser: {
@@ -46,7 +45,6 @@ export default mergeConfig(
               headless: true,
               instances: [{ browser: "chromium" }],
             },
-            setupFiles: ["./.storybook/vitest.setup.ts"],
           },
         },
       ],
