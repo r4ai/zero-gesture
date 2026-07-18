@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Zero Gesture",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.0",
   "identifier": "dev.r4ai.zero-gesture",
   "build": {
     "beforeDevCommand": "pnpm dev",

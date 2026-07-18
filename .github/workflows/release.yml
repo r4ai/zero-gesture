@@ -1,0 +1,126 @@
+name: Release Windows installer
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish Windows installers
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Verify tag belongs to main
+        shell: pwsh
+        run: |
+          git fetch origin main --depth=1
+          git merge-base --is-ancestor $env:GITHUB_SHA origin/main
+          if ($LASTEXITCODE -ne 0) {
+            throw "Release tag commit is not contained in main."
+          }
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061 # v4.2.0
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify alpha tag and draft release
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v0\.\d+\.\d+-alpha\.\d+$') {
+            throw "Only v0.x.y-alpha.N tags can be published by this workflow."
+          }
+
+          pnpm release:check-version
+
+          $release = $null
+          foreach ($attempt in 1..12) {
+            try {
+              $release = gh release view $env:RELEASE_TAG --json id,isDraft,isPrerelease | ConvertFrom-Json
+              break
+            } catch {
+              if ($attempt -eq 12) {
+                throw "The draft GitHub Release for $env:RELEASE_TAG was not created within 60 seconds."
+              }
+              Start-Sleep -Seconds 5
+            }
+          }
+
+          if (-not $release.isDraft -or -not $release.isPrerelease) {
+            throw "The GitHub Release for $env:RELEASE_TAG must be an alpha draft pre-release."
+          }
+
+      - name: Run release checks
+        shell: pwsh
+        run: |
+          pnpm check
+          pnpm typecheck
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+          cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+          cargo test --manifest-path src-tauri/Cargo.toml --all-targets
+
+      - name: Build NSIS and MSI installers
+        run: pnpm tauri build --bundles nsis,msi --ci
+
+      - name: Attach installers and publish pre-release
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $assets = Get-ChildItem src-tauri/target/release/bundle -Recurse -File |
+            Where-Object { $_.Extension -in '.exe', '.msi' }
+
+          if ($assets.Count -ne 2) {
+            throw "Expected exactly one NSIS installer and one MSI installer; found $($assets.Count)."
+          }
+
+          $checksumPath = Join-Path $env:RUNNER_TEMP 'SHA256SUMS.txt'
+          $checksums = $assets |
+            Get-FileHash -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLowerInvariant()) *$($_.Path | Split-Path -Leaf)" }
+          Set-Content -Path $checksumPath -Value $checksums -NoNewline
+
+          $uploadAssets = @($assets.FullName) + $checksumPath
+          gh release upload $env:RELEASE_TAG @uploadAssets --clobber
+
+          $release = gh release view $env:RELEASE_TAG --json id | ConvertFrom-Json
+          gh api --method PATCH "repos/$env:GITHUB_REPOSITORY/releases/$($release.id)" `
+            -f draft=false `
+            -f prerelease=true `
+            -f make_latest=false
