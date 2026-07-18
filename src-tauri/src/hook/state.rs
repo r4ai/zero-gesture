@@ -22,6 +22,7 @@ pub(super) struct HookConfig {
     pub(super) direction_switch_confirm_px: i32,
     pub(super) axis_ambiguity_deadzone_px: i32,
     pub(super) replay_distance_threshold_px: i32,
+    pub(super) gesture_activation_mode: crate::config::GestureActivationMode,
     pub(super) max_gesture_steps: usize,
     /// Compiled app definitions for per-app matching.
     pub(super) apps: Vec<super::app_match::CompiledApp>,
@@ -672,6 +673,7 @@ mod tests {
             direction_switch_confirm_px: 1,
             axis_ambiguity_deadzone_px: 0,
             replay_distance_threshold_px: 8,
+            gesture_activation_mode: crate::config::GestureActivationMode::Element,
             max_gesture_steps: 8,
             apps: Vec::<CompiledApp>::new(),
             binding_sets: HashMap::from([(
@@ -1407,6 +1409,7 @@ mod tests {
             direction_switch_confirm_px: 1,
             axis_ambiguity_deadzone_px: 0,
             replay_distance_threshold_px: 8,
+            gesture_activation_mode: crate::config::GestureActivationMode::Element,
             max_gesture_steps: 8,
             apps: Vec::<CompiledApp>::new(),
             binding_sets: HashMap::from([

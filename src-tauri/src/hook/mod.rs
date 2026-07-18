@@ -250,6 +250,7 @@ pub fn spawn(
             direction_switch_confirm_px: cfg.direction_switch_confirm_px,
             axis_ambiguity_deadzone_px: cfg.axis_ambiguity_deadzone_px,
             replay_distance_threshold_px: cfg.replay_distance_threshold_px,
+            gesture_activation_mode: cfg.gesture_activation_mode,
             max_gesture_steps: AppConfig::MAX_GESTURE_STEPS,
             apps,
             binding_sets,

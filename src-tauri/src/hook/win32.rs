@@ -193,13 +193,20 @@ unsafe extern "system" fn low_level_mouse_proc(
     }
 
     let msg = w_param as u32;
+    let matched_app = precompute_matched_app(msg, info);
     let suppress = HOOK_STATE.with(|cell| {
-        let mut borrow = cell.borrow_mut();
+        let mut borrow = match cell.try_borrow_mut() {
+            Ok(borrow) => borrow,
+            Err(_) => {
+                warn!("low_level_mouse_proc: HOOK_STATE already borrowed, skipping event");
+                return false;
+            }
+        };
         let hs = match borrow.as_mut() {
             Some(hs) => hs,
             None => return false,
         };
-        process_event(hs, msg, info)
+        process_event(hs, msg, info, matched_app)
     });
 
     if suppress {
@@ -214,26 +221,15 @@ unsafe extern "system" fn low_level_mouse_proc(
 /// Converts Win32 event data into [`MouseEvent`], resolves matched app context,
 /// applies produced side effects, and returns whether the original event should
 /// be suppressed.
-fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> bool {
+fn process_event(
+    hs: &mut HookThreadState,
+    msg: u32,
+    info: &MSLLHOOKSTRUCT,
+    matched_app: Option<String>,
+) -> bool {
     let event = to_mouse_event(msg, info);
     let tick = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount() };
     let pt = (info.pt.x, info.pt.y);
-
-    let matched_app = match (&hs.state, event) {
-        (GestureState::Idle, MouseEvent::ButtonDown(trigger))
-            if hs.config.has_any_binding_for_trigger(trigger) =>
-        {
-            let activated_target = activate_window_at_point(pt.0, pt.1);
-            let window_info = if let Some(hwnd) = activated_target {
-                crate::window_info::get_window_info_by_hwnd(hwnd)
-            } else {
-                crate::window_info::get_foreground_window_info()
-            };
-            debug!("window info: {:?}", window_info);
-            match_app(&hs.config.apps, &window_info).map(|id| id.to_owned())
-        }
-        _ => None,
-    };
 
     let effect = process_event_pure(&mut hs.state, &hs.config, event, pt, tick, matched_app);
 
@@ -261,6 +257,40 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
     }
 
     effect.suppress
+}
+
+/// Resolve app match at gesture start, while avoiding mutable borrow of hook state.
+fn precompute_matched_app(msg: u32, info: &MSLLHOOKSTRUCT) -> Option<String> {
+    let MouseEvent::ButtonDown(trigger) = to_mouse_event(msg, info) else {
+        return None;
+    };
+    let pt = (info.pt.x, info.pt.y);
+
+    let activation_mode = HOOK_STATE.with(|cell| {
+        let borrow = cell.try_borrow().ok()?;
+        let hs = borrow.as_ref()?;
+        if !matches!(hs.state, GestureState::Idle) {
+            return None;
+        }
+        if !hs.config.has_any_binding_for_trigger(trigger) {
+            return None;
+        }
+        Some(hs.config.gesture_activation_mode)
+    })?;
+
+    let activated_target = activate_window_at_point(pt.0, pt.1, activation_mode);
+    let window_info = if let Some(hwnd) = activated_target {
+        crate::window_info::get_window_info_by_hwnd(hwnd)
+    } else {
+        crate::window_info::get_foreground_window_info()
+    };
+    debug!("window info: {:?}", window_info);
+
+    HOOK_STATE.with(|cell| {
+        let borrow = cell.try_borrow().ok()?;
+        let hs = borrow.as_ref()?;
+        match_app(&hs.config.apps, &window_info).map(|id| id.to_owned())
+    })
 }
 
 /// Convert Win32 mouse message IDs into hook-level [`MouseEvent`].
@@ -433,10 +463,15 @@ fn make_mouse_input(x: i32, y: i32, flags: u32) -> INPUT {
 /// Activate (bring to foreground) the top-level window at the given screen
 /// coordinates.
 ///
-/// Uses [`WindowFromPoint`] to locate the window under cursor, resolves a
-/// top-level window via [`GetAncestor`] (`GA_ROOT`), and requests activation
-/// with [`SetForegroundWindow`].
-fn activate_window_at_point(x: i32, y: i32) -> Option<windows_sys::Win32::Foundation::HWND> {
+/// Uses [`WindowFromPoint`] to locate the window under cursor, then applies
+/// the configured activation mode:
+/// - `window`: activate the root window only (legacy behavior)
+/// - `element`: activate root window and attempt to focus exact element window
+fn activate_window_at_point(
+    x: i32,
+    y: i32,
+    mode: crate::config::GestureActivationMode,
+) -> Option<windows_sys::Win32::Foundation::HWND> {
     use windows_sys::Win32::Foundation::POINT;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         GetAncestor, SetForegroundWindow, WindowFromPoint, GA_ROOT,
@@ -450,10 +485,96 @@ fn activate_window_at_point(x: i32, y: i32) -> Option<windows_sys::Win32::Founda
         }
 
         let root = GetAncestor(hwnd, GA_ROOT);
-        let target = if root.is_null() { hwnd } else { root };
+        let root_target = if root.is_null() { hwnd } else { root };
 
-        debug!("activate_window_at_point: activating window {target:?} at ({x}, {y})");
-        let _ = SetForegroundWindow(target);
-        Some(target)
+        match mode {
+            crate::config::GestureActivationMode::Window => {
+                debug!(
+                    "activate_window_at_point(window): activating window {root_target:?} at ({x}, {y})"
+                );
+                let _ = SetForegroundWindow(root_target);
+            }
+            crate::config::GestureActivationMode::Element => {
+                debug!(
+                    "activate_window_at_point(element): root={root_target:?}, leaf={hwnd:?} at ({x}, {y})"
+                );
+                activate_element_window(root_target, hwnd);
+            }
+        }
+
+        Some(root_target)
+    }
+}
+
+/// Activate a top-level window and attempt to focus the specific child window.
+fn activate_element_window(
+    root: windows_sys::Win32::Foundation::HWND,
+    leaf: windows_sys::Win32::Foundation::HWND,
+) {
+    use windows_sys::Win32::System::Threading::AttachThreadInput;
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::SetFocus;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowThreadProcessId, SetForegroundWindow,
+    };
+
+    unsafe {
+        let _ = SetForegroundWindow(root);
+
+        let focus_target = if leaf.is_null() { root } else { leaf };
+        if focus_target.is_null() {
+            return;
+        }
+
+        // Best effort: let UI Automation focus the element represented by this HWND.
+        // This can clear in-page text focus in some apps where plain SetFocus(HWND)
+        // is not enough.
+        if try_uia_focus_by_hwnd(focus_target) {
+            return;
+        }
+
+        let current_tid = GetCurrentThreadId();
+        let target_tid = GetWindowThreadProcessId(focus_target, std::ptr::null_mut());
+
+        let mut attached = false;
+        if target_tid != 0 && target_tid != current_tid {
+            attached = AttachThreadInput(current_tid, target_tid, 1) != 0;
+            if !attached {
+                debug!(
+                    "activate_element_window: failed to attach thread input (current_tid={current_tid}, target_tid={target_tid})"
+                );
+            }
+        }
+
+        let focused = SetFocus(focus_target);
+        if focused.is_null() && focus_target != root {
+            let _ = SetFocus(root);
+        }
+
+        if attached {
+            let _ = AttachThreadInput(current_tid, target_tid, 0);
+        }
+    }
+}
+
+/// Try to focus a UI Automation node resolved from HWND.
+fn try_uia_focus_by_hwnd(hwnd: windows_sys::Win32::Foundation::HWND) -> bool {
+    use windows_sys::Win32::UI::Accessibility::{UiaNodeFromHandle, UiaNodeRelease, UiaSetFocus};
+
+    unsafe {
+        let mut node = std::ptr::null_mut();
+        let hr = UiaNodeFromHandle(hwnd, &mut node);
+        if hr < 0 || node.is_null() {
+            return false;
+        }
+
+        let focus_hr = UiaSetFocus(node);
+        let _ = UiaNodeRelease(node);
+        if focus_hr < 0 {
+            debug!("try_uia_focus_by_hwnd: UiaSetFocus failed (hr={focus_hr:#x})");
+            return false;
+        }
+
+        debug!("try_uia_focus_by_hwnd: focused UIA node for hwnd={hwnd:?}");
+        true
     }
 }

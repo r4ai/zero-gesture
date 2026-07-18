@@ -54,6 +54,10 @@ export type HoldStep = (typeof HOLD_STEPS)[number]
 export const GESTURE_MODES = ["release", "hold"] as const
 export type GestureMode = (typeof GESTURE_MODES)[number]
 
+/** How to activate the target under cursor when a gesture starts. */
+export const GESTURE_ACTIVATION_MODES = ["element", "window"] as const
+export type GestureActivationMode = (typeof GESTURE_ACTIVATION_MODES)[number]
+
 /** Base properties shared by all gesture patterns. */
 interface GesturePatternBase {
   /** Button that starts this gesture. */
@@ -132,6 +136,9 @@ export interface AppConfig {
    * If movement exceeds this threshold, replay is skipped.
    */
   replay_distance_threshold_px: number
+
+  /** How to activate the target under cursor when a gesture starts. */
+  gesture_activation_mode: GestureActivationMode
 
   /** Font family name for the gesture label overlay. */
   label_font_family: string
@@ -273,6 +280,7 @@ export const DEFAULTS = {
   direction_switch_confirm_px: 8,
   axis_ambiguity_deadzone_px: 2,
   replay_distance_threshold_px: 12,
+  gesture_activation_mode: "element",
   label_font_family: "Yu Gothic UI Semibold",
   label_font_size: 36.0,
   label_font_weight: 400,
