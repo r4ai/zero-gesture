@@ -89,8 +89,89 @@ interface HoldGesturePattern extends GesturePatternBase {
 /** Gesture pattern definition. */
 export type GesturePattern = ReleaseGesturePattern | HoldGesturePattern
 
+/** Ordered key names pressed together as one keyboard combo. */
+export type KeyboardCombo = string[]
+
+/**
+ * Ordered keyboard combos pressed in sequence.
+ *
+ * Example:
+ * - `[["ctrl", "x"], ["shift", "z"]]` => `Ctrl + X` then `Shift + Z`
+ */
+export type KeyboardSequence = KeyboardCombo[]
+
+/** Keyboard action payload. */
+export type KeyboardAction = {
+  type: "keyboard"
+  /**
+   * Legacy single-combo format (still supported for backward compatibility).
+   * Newer multi-combo UI keeps this in sync with the first combo in `sequence`.
+   */
+  keys: KeyboardCombo
+  /**
+   * Optional multi-combo format for sequential input.
+   * If empty/missing, `keys` is treated as a single combo.
+   */
+  sequence?: KeyboardSequence
+}
+
 /** An action that can be triggered by a gesture. */
-export type Action = { type: "keyboard"; keys: string[] }
+export type Action = KeyboardAction
+
+/**
+ * Remove invalid/empty entries from one combo while preserving order.
+ */
+function normalizeKeyboardCombo(combo: KeyboardCombo): KeyboardCombo {
+  return combo.map((key) => key.trim()).filter((key) => key.length > 0)
+}
+
+/**
+ * Remove empty combos from a key sequence while preserving order.
+ */
+export function normalizeKeyboardSequence(
+  sequence: KeyboardSequence | undefined,
+): KeyboardSequence {
+  if (!sequence) return []
+
+  return sequence
+    .map((combo) => normalizeKeyboardCombo(combo))
+    .filter((combo) => combo.length > 0)
+}
+
+/**
+ * Returns a normalized key sequence from a keyboard action.
+ *
+ * - Prefers `sequence` when present.
+ * - Falls back to legacy `keys` as a single combo.
+ */
+export function getKeyboardSequence(action: KeyboardAction): KeyboardSequence {
+  const normalizedSequence = normalizeKeyboardSequence(action.sequence)
+  if (normalizedSequence.length > 0) {
+    return normalizedSequence
+  }
+
+  const fallback = normalizeKeyboardCombo(action.keys ?? [])
+  return fallback.length > 0 ? [fallback] : []
+}
+
+/**
+ * Returns a keyboard action updated with a normalized key sequence.
+ *
+ * Keeps `keys` synced to the first combo for backward compatibility with older configs.
+ */
+export function withKeyboardSequence(
+  action: KeyboardAction,
+  sequence: KeyboardSequence,
+): KeyboardAction {
+  const normalizedSequence = normalizeKeyboardSequence(sequence)
+  const firstCombo = normalizedSequence[0] ?? []
+
+  return {
+    ...action,
+    keys: firstCombo,
+    sequence: normalizedSequence,
+  }
+}
 
 /** A single gesture binding. */
 export interface GestureBinding {

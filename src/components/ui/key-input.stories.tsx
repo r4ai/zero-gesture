@@ -12,11 +12,11 @@ export default meta
 type Story = StoryObj<typeof KeyInput>
 
 const KeyInputWithState = (
-  props: Omit<React.ComponentProps<typeof KeyInput>, "keys" | "onChange">,
+  props: Omit<React.ComponentProps<typeof KeyInput>, "sequence" | "onChange">,
 ) => {
-  const [keys, setKeys] = useState<string[]>([])
+  const [sequence, setSequence] = useState<string[][]>([])
 
-  return <KeyInput keys={keys} onChange={setKeys} {...props} />
+  return <KeyInput sequence={sequence} onChange={setSequence} {...props} />
 }
 
 export const Default: Story = {
@@ -25,15 +25,18 @@ export const Default: Story = {
 
 export const WithKeys: Story = {
   render: () => {
-    const [keys, setKeys] = useState<string[]>(["Ctrl", "Shift", "A"])
-    return <KeyInput keys={keys} onChange={setKeys} />
+    const [sequence, setSequence] = useState<string[][]>([
+      ["ctrl", "shift", "a"],
+      ["f21", "a"],
+    ])
+    return <KeyInput sequence={sequence} onChange={setSequence} />
   },
 }
 
 export const Disabled: Story = {
   render: () => {
-    const [keys, setKeys] = useState<string[]>(["Ctrl", "C"])
-    return <KeyInput keys={keys} onChange={setKeys} isDisabled />
+    const [sequence, setSequence] = useState<string[][]>([["ctrl", "c"]])
+    return <KeyInput sequence={sequence} onChange={setSequence} isDisabled />
   },
 }
 

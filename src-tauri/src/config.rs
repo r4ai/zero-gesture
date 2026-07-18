@@ -564,6 +564,7 @@ impl AppConfig {
                 },
                 action: Action::Keyboard {
                     keys: vec!["alt".to_string(), "left".to_string()],
+                    sequence: Vec::new(),
                 },
                 label: Some("Back".to_string()),
             },
@@ -577,6 +578,7 @@ impl AppConfig {
                 },
                 action: Action::Keyboard {
                     keys: vec!["alt".to_string(), "right".to_string()],
+                    sequence: Vec::new(),
                 },
                 label: Some("Forward".to_string()),
             },
@@ -590,6 +592,7 @@ impl AppConfig {
                 },
                 action: Action::Keyboard {
                     keys: vec!["pageup".to_string()],
+                    sequence: Vec::new(),
                 },
                 label: Some("Scroll Up".to_string()),
             },
@@ -603,6 +606,7 @@ impl AppConfig {
                 },
                 action: Action::Keyboard {
                     keys: vec!["pagedown".to_string()],
+                    sequence: Vec::new(),
                 },
                 label: Some("Scroll Down".to_string()),
             },
@@ -616,6 +620,7 @@ impl AppConfig {
                 },
                 action: Action::Keyboard {
                     keys: vec!["ctrl".to_string(), "home".to_string()],
+                    sequence: Vec::new(),
                 },
                 label: Some("Top of Page".to_string()),
             },
@@ -629,6 +634,7 @@ impl AppConfig {
                 },
                 action: Action::Keyboard {
                     keys: vec!["ctrl".to_string(), "end".to_string()],
+                    sequence: Vec::new(),
                 },
                 label: Some("Bottom of Page".to_string()),
             },
@@ -642,6 +648,7 @@ impl AppConfig {
                 },
                 action: Action::Keyboard {
                     keys: vec!["ctrl".to_string(), "tab".to_string()],
+                    sequence: Vec::new(),
                 },
                 label: Some("Next Tab".to_string()),
             },
@@ -655,6 +662,7 @@ impl AppConfig {
                 },
                 action: Action::Keyboard {
                     keys: vec!["ctrl".to_string(), "shift".to_string(), "tab".to_string()],
+                    sequence: Vec::new(),
                 },
                 label: Some("Previous Tab".to_string()),
             },
@@ -668,6 +676,7 @@ impl AppConfig {
                 },
                 action: Action::Keyboard {
                     keys: vec!["ctrl".to_string(), "r".to_string()],
+                    sequence: Vec::new(),
                 },
                 label: Some("Reload".to_string()),
             },
@@ -681,6 +690,7 @@ impl AppConfig {
                 },
                 action: Action::Keyboard {
                     keys: vec!["ctrl".to_string(), "w".to_string()],
+                    sequence: Vec::new(),
                 },
                 label: Some("Close Tab".to_string()),
             },
@@ -775,6 +785,7 @@ mod tests {
     fn keyboard_action(key: &str) -> Action {
         Action::Keyboard {
             keys: vec![key.to_string()],
+            sequence: Vec::new(),
         }
     }
 
@@ -900,7 +911,7 @@ mod tests {
                 .into_iter()
                 .map(ToString::to_string)
                 .collect::<Vec<_>>();
-            let Action::Keyboard { keys: actual } = &binding.action;
+            let Action::Keyboard { keys: actual, .. } = &binding.action;
             assert_eq!(actual, &expected_keys);
         }
     }

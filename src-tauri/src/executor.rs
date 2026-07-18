@@ -17,8 +17,38 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Action {
-    /// Simulate a keyboard shortcut by pressing the given keys simultaneously.
-    Keyboard { keys: Vec<String> },
+    /// Simulate keyboard shortcut combo(s).
+    ///
+    /// Backward-compatible payload:
+    /// - `keys`: legacy single combo
+    /// - `sequence`: ordered list of combos for sequential input
+    ///
+    /// If `sequence` is non-empty it is used; otherwise `keys` is treated as
+    /// one combo.
+    Keyboard {
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        keys: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        sequence: Vec<Vec<String>>,
+    },
+}
+
+fn keyboard_combos<'a>(keys: &'a [String], sequence: &'a [Vec<String>]) -> Vec<&'a [String]> {
+    let normalized_sequence: Vec<&[String]> = sequence
+        .iter()
+        .map(Vec::as_slice)
+        .filter(|combo| !combo.is_empty())
+        .collect();
+
+    if !normalized_sequence.is_empty() {
+        return normalized_sequence;
+    }
+
+    if !keys.is_empty() {
+        vec![keys]
+    } else {
+        Vec::new()
+    }
 }
 
 /// Parse a human-readable key name into a Win32 virtual-key code.
@@ -104,26 +134,33 @@ pub fn parse_key(name: &str) -> Option<u16> {
 ///
 /// let action = Action::Keyboard {
 ///     keys: vec!["alt".into(), "left".into()],
+///     sequence: vec![],
 /// };
 /// assert_eq!(generate_label(&action), "Alt + Left");
 /// ```
 pub fn generate_label(action: &Action) -> String {
     match action {
-        Action::Keyboard { keys } => keys
-            .iter()
-            .map(|k| {
-                let mut chars = k.chars();
-                match chars.next() {
-                    Some(c) => {
-                        let mut s = c.to_uppercase().to_string();
-                        s.push_str(chars.as_str());
-                        s
-                    }
-                    None => String::new(),
-                }
+        Action::Keyboard { keys, sequence } => keyboard_combos(keys, sequence)
+            .into_iter()
+            .map(|combo| {
+                combo
+                    .iter()
+                    .map(|k| {
+                        let mut chars = k.chars();
+                        match chars.next() {
+                            Some(c) => {
+                                let mut s = c.to_uppercase().to_string();
+                                s.push_str(chars.as_str());
+                                s
+                            }
+                            None => String::new(),
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" + ")
             })
             .collect::<Vec<_>>()
-            .join(" + "),
+            .join(" -> "),
     }
 }
 
@@ -140,70 +177,86 @@ pub fn generate_label(action: &Action) -> String {
 /// real keyboard events into the focused window.
 pub fn execute(action: &Action) {
     match action {
-        Action::Keyboard { keys } => execute_keyboard(keys),
+        Action::Keyboard { keys, sequence } => execute_keyboard(keys, sequence),
     }
 }
 
 #[cfg(windows)]
-fn execute_keyboard(keys: &[String]) {
+fn execute_keyboard(keys: &[String], sequence: &[Vec<String>]) {
+    use std::time::Duration;
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, KEYEVENTF_KEYUP};
 
-    let vks: Vec<u16> = keys
-        .iter()
-        .filter_map(|k| {
-            let vk = parse_key(k);
-            if vk.is_none() {
-                warn!("Unknown key name in binding: {:?}", k);
-            }
-            vk
-        })
-        .collect();
-
-    if vks.is_empty() {
+    let combos = keyboard_combos(keys, sequence);
+    if combos.is_empty() {
         return;
     }
 
-    // Build input array: key-downs in order, then key-ups in reverse.
-    let mut inputs: Vec<INPUT> = Vec::with_capacity(vks.len() * 2);
+    for (index, combo) in combos.iter().enumerate() {
+        let vks: Vec<u16> = combo
+            .iter()
+            .filter_map(|k| {
+                let vk = parse_key(k);
+                if vk.is_none() {
+                    warn!("Unknown key name in binding: {:?}", k);
+                }
+                vk
+            })
+            .collect();
 
-    for &vk in &vks {
-        inputs.push(make_keyboard_input(vk, 0));
-    }
-    for &vk in vks.iter().rev() {
-        inputs.push(make_keyboard_input(vk, KEYEVENTF_KEYUP));
-    }
+        if vks.is_empty() {
+            continue;
+        }
 
-    debug!(
-        "Sending keyboard input: {} key(s), {} events",
-        vks.len(),
-        inputs.len()
-    );
+        // Build input array: key-downs in order, then key-ups in reverse.
+        let mut inputs: Vec<INPUT> = Vec::with_capacity(vks.len() * 2);
 
-    let expected_events = inputs.len() as u32;
-    let sent_events = unsafe {
-        SendInput(
-            expected_events,
-            inputs.as_ptr(),
-            std::mem::size_of::<INPUT>() as i32,
-        )
-    };
+        for &vk in &vks {
+            inputs.push(make_keyboard_input(vk, 0));
+        }
+        for &vk in vks.iter().rev() {
+            inputs.push(make_keyboard_input(vk, KEYEVENTF_KEYUP));
+        }
 
-    if sent_events == 0 {
-        warn!(
-            "SendInput failed to inject any keyboard events (expected {} events)",
-            expected_events
+        debug!(
+            "Sending keyboard input combo {}/{}: {} key(s), {} events",
+            index + 1,
+            combos.len(),
+            vks.len(),
+            inputs.len()
         );
-    } else if sent_events < expected_events {
-        warn!(
-            "SendInput injected only {} of {} keyboard events",
-            sent_events, expected_events
-        );
+
+        let expected_events = inputs.len() as u32;
+        let sent_events = unsafe {
+            SendInput(
+                expected_events,
+                inputs.as_ptr(),
+                std::mem::size_of::<INPUT>() as i32,
+            )
+        };
+
+        if sent_events == 0 {
+            warn!(
+                "SendInput failed to inject any keyboard events (expected {} events)",
+                expected_events
+            );
+        } else if sent_events < expected_events {
+            warn!(
+                "SendInput injected only {} of {} keyboard events",
+                sent_events, expected_events
+            );
+        }
+
+        // Add a tiny gap between combos so apps reliably receive sequential input.
+        if index + 1 < combos.len() {
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 }
 
 #[cfg(not(windows))]
-fn execute_keyboard(keys: &[String]) {
+fn execute_keyboard(keys: &[String], sequence: &[Vec<String>]) {
     let _ = keys;
+    let _ = sequence;
     warn!("Keyboard action execution is only supported on Windows");
 }
 
@@ -269,6 +322,7 @@ mod tests {
     fn action_keyboard_serialization_roundtrip() {
         let action = Action::Keyboard {
             keys: vec!["alt".to_string(), "left".to_string()],
+            sequence: Vec::new(),
         };
         let json = serde_json::to_string(&action).unwrap();
         let deserialized: Action = serde_json::from_str(&json).unwrap();
@@ -282,9 +336,39 @@ mod tests {
         assert_eq!(
             action,
             Action::Keyboard {
-                keys: vec!["ctrl".to_string(), "w".to_string()]
+                keys: vec!["ctrl".to_string(), "w".to_string()],
+                sequence: Vec::new(),
             }
         );
+    }
+
+    #[test]
+    fn action_keyboard_deserialize_sequence_from_json() {
+        let json = r#"{"type":"keyboard","sequence":[["ctrl","x"],["shift","z"]]}"#;
+        let action: Action = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            action,
+            Action::Keyboard {
+                keys: Vec::new(),
+                sequence: vec![
+                    vec!["ctrl".to_string(), "x".to_string()],
+                    vec!["shift".to_string(), "z".to_string()]
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn generate_label_uses_sequence_when_present() {
+        let action = Action::Keyboard {
+            keys: vec!["ctrl".to_string(), "a".to_string()],
+            sequence: vec![
+                vec!["f21".to_string(), "a".to_string()],
+                vec!["ctrl".to_string(), "x".to_string()],
+            ],
+        };
+
+        assert_eq!(generate_label(&action), "F21 + A -> Ctrl + X");
     }
 
     #[cfg(windows)]

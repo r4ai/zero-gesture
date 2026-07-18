@@ -12,10 +12,13 @@ import {
   GESTURE_MODES,
   GESTURE_STEPS,
   type GestureStep,
+  getKeyboardSequence,
   HOLD_STEPS,
   type HoldStep,
+  type KeyboardSequence,
   TRIGGER_BUTTONS,
   type TriggerButton,
+  withKeyboardSequence,
 } from "@/types/config"
 import { GestureNotFound } from "../-components/gesture-not-found"
 import {
@@ -171,11 +174,11 @@ function ActionTabContent() {
     })
   }
 
-  const keys = gesture.action.keys ?? []
-  const onKeysChange = (updatedKeys: string[]) => {
+  const sequence = getKeyboardSequence(gesture.action)
+  const onSequenceChange = (updatedSequence: KeyboardSequence) => {
     setGesture({
       ...gesture,
-      action: { ...gesture.action, keys: updatedKeys },
+      action: withKeyboardSequence(gesture.action, updatedSequence),
     })
   }
 
@@ -211,8 +214,8 @@ function ActionTabContent() {
       <div className="h-px bg-border" />
 
       <KeyInput
-        keys={keys}
-        onChange={onKeysChange}
+        sequence={sequence}
+        onChange={onSequenceChange}
         onPress={() => openKeyboardInput("wait")}
         onKeyboardPress={() => openKeyboardInput("manual")}
       />
@@ -509,12 +512,12 @@ function ActionEditPage() {
     return <GestureNotFound />
   }
 
-  const keys = gesture.action.keys ?? []
+  const sequence = getKeyboardSequence(gesture.action)
 
-  const handleKeysConfirm = (updatedKeys: string[]) => {
+  const handleSequenceConfirm = (updatedSequence: KeyboardSequence) => {
     setGesture({
       ...gesture,
-      action: { ...gesture.action, keys: updatedKeys },
+      action: withKeyboardSequence(gesture.action, updatedSequence),
     })
     closeKeyboardInput()
   }
@@ -542,14 +545,14 @@ function ActionEditPage() {
 
       <WaitKeyInputDialog
         isOpen={keyboardMode === "wait"}
-        initialKeys={keys}
-        onConfirm={handleKeysConfirm}
+        initialSequence={sequence}
+        onConfirm={handleSequenceConfirm}
         onClose={closeKeyboardInput}
       />
       <ManualKeyInputDialog
         isOpen={keyboardMode === "manual"}
-        initialKeys={keys}
-        onConfirm={handleKeysConfirm}
+        initialSequence={sequence}
+        onConfirm={handleSequenceConfirm}
         onClose={closeKeyboardInput}
       />
     </>
