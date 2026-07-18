@@ -45,7 +45,7 @@
     "@storybook/addon-vitest": "^10.5.2",
     "@storybook/react": "^10.5.2",
     "@storybook/react-vite": "^10.5.2",
-    "@tanstack/router-plugin": "^1.168.20",
+    "@tanstack/router-plugin": "^1.168.22",
     "@tauri-apps/cli": "^2.11.4",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.17",
