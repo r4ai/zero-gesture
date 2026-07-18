@@ -1,7 +1,7 @@
 {
   "name": "zero-gesture",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,6 +11,7 @@
     "tauri": "tauri",
     "check": "biome check",
     "check:write": "biome check --write",
+    "release:check-version": "node scripts/check-release-version.mjs",
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build"
   },

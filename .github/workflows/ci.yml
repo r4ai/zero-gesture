@@ -38,6 +38,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Check release version synchronization
+        run: pnpm release:check-version
+
       - name: Tauri build (no bundle)
         run: pnpm tauri build --debug --no-bundle --ci
 

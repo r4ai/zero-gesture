@@ -1,6 +1,6 @@
 [package]
 name = "zero-gesture"
-version = "0.1.0"
+version = "0.1.0-alpha.0"
 description = "Zero Gesture desktop app"
 authors = ["you"]
 edition = "2021"

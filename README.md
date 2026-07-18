@@ -44,6 +44,18 @@ A lightweight mouse gesture app for Windows.
 
 - [Architecture](./docs/architecture.md)
 - [Development Guide](./docs/development.md)
+- [Release Guide](./docs/releasing.md)
+
+## Alpha releases
+
+Windows x64 alpha installers are distributed from the repository's
+[GitHub Releases](https://github.com/r4ai/zero-gesture/releases) page. Download
+the NSIS `.exe` for typical installations, or the `.msi` for managed Windows
+deployments. Verify the downloaded file against the accompanying
+`SHA256SUMS.txt` before installation.
+
+The installers are currently unsigned, so Windows SmartScreen may show a
+warning. Only install release assets published from this repository.
 
 ### Environment Variables
 
