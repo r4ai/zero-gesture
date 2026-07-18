@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@react-aria/optimize-locales-plugin':
-        specifier: ^1.1.5
-        version: 1.1.5
+        specifier: ^2.0.0
+        version: 2.0.0
       '@tailwindcss/vite':
         specifier: ^4.3.3
         version: 4.3.3(vite@7.3.1(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.21.0))
@@ -1089,8 +1089,8 @@ packages:
   '@polka/url@1.0.0-next.29':
     resolution: {integrity: sha512-wwQAWhWSuHaag8c4q/KN/vCoeOJYshAIvMQwD4GpSb3OiZklFfvAgmj0VCBBImRpuF/aFgIRzllXlVX93Jevww==}
 
-  '@react-aria/optimize-locales-plugin@1.1.5':
-    resolution: {integrity: sha512-X8Y2Jm8pxNGQ3yBtiSZ8u3tn7YKg+xKUNZZWEFXiNR0Cd2Hu25NMEIUs2xoX+6gP6UbFBhwl3erEbnJRSIaHcw==}
+  '@react-aria/optimize-locales-plugin@2.0.0':
+    resolution: {integrity: sha512-tXQiC+ud+EDzJfwlbTY6J33pU51V+PMB4PcxYN6PYHGlRpq938zq6IKhquPJkVGqKLTnOeMtSjns/yvRR5wfww==}
 
   '@react-types/shared@3.36.0':
     resolution: {integrity: sha512-DkP/H0C2YjjS7gZWKNqOmU8a16qHPjQNdzMwmTq9SzplM6Iw0kVMTZ0OIoe6FOgGqa+FwMsE2QbPjh/n3g/jXQ==}
@@ -2745,10 +2745,6 @@ packages:
     resolution: {integrity: sha512-gptHNQghINnc/vTGIk0SOFGFNXw7JVrlRUtConJRlvaw6DuX0wO5Jeko9sWrMBhh+PsYAZ7oXAiOnf/UKogyiw==}
     engines: {node: '>= 10.0.0'}
 
-  unplugin@1.16.1:
-    resolution: {integrity: sha512-4/u/j4FrCKdi17jaxuJA0jClGxB1AvU2hw/IuayPc4ay1XGaJs/rbb4v5WKwAjNifjmXK9PIFyuPiaK8azyR9w==}
-    engines: {node: '>=14.0.0'}
-
   unplugin@2.3.11:
     resolution: {integrity: sha512-5uKD0nqiYVzlmCRs01Fhs2BdkEgBS3SAVP6ndrBsuK42iC2+JHyxM05Rm9G8+5mkmRtzMZGY8Ct5+mliZxU/Ww==}
     engines: {node: '>=18.12.0'}
@@ -3554,9 +3550,9 @@ snapshots:
 
   '@polka/url@1.0.0-next.29': {}
 
-  '@react-aria/optimize-locales-plugin@1.1.5':
+  '@react-aria/optimize-locales-plugin@2.0.0':
     dependencies:
-      unplugin: 1.16.1
+      unplugin: 2.3.11
 
   '@react-types/shared@3.36.0(react@19.2.7)':
     dependencies:
@@ -5133,11 +5129,6 @@ snapshots:
   undici-types@7.18.2: {}
 
   universalify@2.0.1: {}
-
-  unplugin@1.16.1:
-    dependencies:
-      acorn: 8.15.0
-      webpack-virtual-modules: 0.6.2
 
   unplugin@2.3.11:
     dependencies:
