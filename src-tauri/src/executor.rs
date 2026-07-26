@@ -5,21 +5,8 @@
 //! `SendInput` API.
 
 use log::{debug, warn};
-use serde::{Deserialize, Serialize};
 
-/// An action that can be triggered by a gesture.
-///
-/// Uses serde's internally-tagged representation so that the JSON looks like:
-///
-/// ```json
-/// { "type": "keyboard", "keys": ["alt", "left"] }
-/// ```
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub enum Action {
-    /// Simulate a keyboard shortcut by pressing the given keys simultaneously.
-    Keyboard { keys: Vec<String> },
-}
+use crate::config::Action;
 
 /// Parse a human-readable key name into a Win32 virtual-key code.
 ///
@@ -100,7 +87,7 @@ pub fn parse_key(name: &str) -> Option<u16> {
 /// # Examples
 ///
 /// ```
-/// use zero_gesture_lib::executor::{Action, generate_label};
+/// use zero_gesture_lib::{config::Action, executor::generate_label};
 ///
 /// let action = Action::Keyboard {
 ///     keys: vec!["alt".into(), "left".into()],
