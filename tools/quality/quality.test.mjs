@@ -69,6 +69,12 @@ test("classification includes product/test/support and explicitly excludes gener
     classification: "support",
     mode: "declarative",
   })
+  assert.deepEqual(classifySource("tests/types.d.ts"), {
+    path: "tests/types.d.ts",
+    language: "typescript",
+    classification: "support",
+    mode: "declarative",
+  })
   assert.equal(classifySource("src/routeTree.gen.ts").mode, "generated")
   assert.equal(classifySource("target/debug/generated.rs").mode, "generated")
   assert.equal(classifySource("loose.ts").classification, "unclassified")

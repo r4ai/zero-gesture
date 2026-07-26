@@ -80,6 +80,15 @@ export function classifySource(input) {
   }
 
   const declarative = language === "typescript" && file.endsWith(".d.ts")
+  if (declarative) {
+    return {
+      path: file,
+      language,
+      classification: "support",
+      mode: "declarative",
+    }
+  }
+
   const test =
     SCOPE.testSegments.some((segment) => segments.includes(segment)) ||
     SCOPE.testMarkers.some((marker) => filename.includes(marker)) ||
@@ -88,7 +97,6 @@ export function classifySource(input) {
     return { path: file, language, classification: "test", mode: "analyzed" }
 
   const support =
-    declarative ||
     SCOPE.supportFiles.includes(file) ||
     SCOPE.supportPrefixes.some((prefix) => file.startsWith(prefix))
   if (support) {
@@ -96,7 +104,7 @@ export function classifySource(input) {
       path: file,
       language,
       classification: "support",
-      mode: declarative ? "declarative" : "analyzed",
+      mode: "analyzed",
     }
   }
 
