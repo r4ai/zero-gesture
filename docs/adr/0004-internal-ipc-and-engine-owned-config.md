@@ -19,11 +19,13 @@ transportは次を使う。
 
 | Platform | Transport | Access control |
 | --- | --- | --- |
-| Windows | Named Pipe | current user SIDだけを許可するACL |
+| Windows | Named Pipe | current user SIDだけを許可するDACLと`PIPE_REJECT_REMOTE_CLIENTS` |
 | macOS | Unix Domain Socket | user-only runtime directory、directory `0700`、peer UID検証 |
 
 localhost TCP、HTTP、WebSocketは使わない。
 network interfaceやfirewallへ露出させない。
+Windowsではpipe作成時に`PIPE_REJECT_REMOTE_CLIENTS`を必須にし、同じcredentialでもremote clientを拒否する。
+current user以外を拒否するsecurity descriptorとremote接続拒否の両方をintegration testで検証する。
 
 ## Framing and envelope
 
@@ -92,13 +94,18 @@ methodごとにtyped requestへdecodeし、境界通過後にJSON objectやdynam
 EngineのConfig ownerだけが次の順で更新する。
 
 1. frame、schema version、expected revisionを検証する。
-2. platform capabilityを含むsemantic validationを一度だけ行う。
-3. immutable runtime snapshotへcompileする。
-4. user config directory内のtemporary fileへserializeし、flushしてatomic replaceする。
-5. revisionを一つ進め、Inputへlatest snapshotをpublishする。
-6. committed revisionをSettingsへ返す。
+2. platform capabilityを含むsemantic validationを一度だけ行い、次revisionのimmutable runtime snapshotへcompileする。
+3. Inputに`PrepareConfig(revision, snapshot)`を送り、commit専用delivery slotをreserveしたackを得る。Inputはまだactive snapshotを変更しない。
+4. active fileと同じdirectoryのtemporary fileへserializeし、flush/fsyncする。
+5. temporary fileをactive fileへatomic replaceし、必要なdirectory metadataを永続化する。
+6. reserved slotへallocationもfailureもない`Commit(revision)`を送り、Inputの次snapshotを切り替える。
+7. committed revisionをSettingsへ返す。
 
 1から4の失敗時はdiskとrunning snapshotを変更しない。
+slotをreserveできなければdiskへ書き始めず、requestを失敗させる。
+atomic replace後にdelivery/actor failureが起きることはprotocol invariant違反であり、memory-only rollbackやsuccess responseをせず、Engineをterminateしてinputをfail-openにする。
+正常実行中にreplace後failureを追加しないため、replace後から`Commit`までに残る中断はprocess crashだけである。
+replace前にcrashした場合は旧active file、replace後にcrashした場合は新active fileをrestart時の正本とし、Input snapshotはdiskから再構築して収束する。
 compile後のsnapshotはvalidとして扱い、ownerごとに再validationしない。
 Settingsのexpected revisionが古い場合はconflictとして拒否し、last-write-winsにしない。
 
@@ -131,6 +138,7 @@ upgrade経路は新versionのinstallerをuserが実行する再インストー�
 - IPC disconnectはEngineのgesture operationを停止しない。
 - malformed clientはそのconnectionだけを閉じ、Engineをpanicさせない。
 - config persistence失敗をmemory-only successとして返さない。
+- config replace前後のcrash後はactive fileを正本としてsnapshotを再構築する。
 - stale revisionは現行documentを上書きしない。
 - endpoint access controlを設定できない場合、serverを公開せずEngineをdegradedにする。
 - protocol mismatch時にSettingsはraw file editへfallbackしない。

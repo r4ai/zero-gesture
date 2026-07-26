@@ -90,7 +90,7 @@ TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成
 - **Technology:** `windows-sys` crate (Win32 API, GDI)
 - **Responsibility:**
   - **Window Creation:** `WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW` スタイルの全画面透明ウィンドウを作成。
-  - **Rendering:** Hook Threadから送られてくる座標データを元に、GDI（`Polyline` + バックバッファビットマップ）を用いてラインを描画する。Direct2Dは未実装（常にerrorを返すstubのみ）。
+  - **Rendering:** Hook Threadから送られてくる座標データを元に、GDI（`Polyline` + バックバッファビットマップ）を用いてラインを描画する。移行でもGDIを維持し、別rendererの採用は性能契約の未達を測定した後に別ADRで判断する。Direct2Dは未実装（常にerrorを返すstubのみ）。
   - **Lifecycle:** ジェスチャー中のみ可視化（`ShowWindow`）し、終了後は非表示＆描画クリアを行うことでリソースを節約。
 
 ### 3.4. Settings UI (The "Interface")
@@ -183,4 +183,4 @@ TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成
 
 - **Blocking:** 目標設計ではHook callbackをpure state transitionに限定する。現行callbackはconfigured trigger down時のwindow activation/query/app matching、overlay channel送信、action/replay queueingを同期実行しており、ADR 0002に従って移行する必要がある。
 - **Memory Safety:** `unsafe` ブロックを多用するWin32 API部分は、Rustのラッパー関数で適切に抽象化し、メモリリークや未定義動作を防ぐ。
-- **Drawing:** 現在はGDI（`Polyline` + バックバッファ）だけを使用する。`direct2d.rs`は未実装stubであり、採用は計測と別実装判断を必要とする。
+- **Drawing:** 現在とWindows移行中はGDI（`Polyline` + バックバッファ）を使用する。`direct2d.rs`は未実装stubであり、性能契約の未達を測定した場合だけ別ADR/PRでrenderer変更を検討する。macOSのAppKit/Core Animation adapterはこのWindows判断と分離する。

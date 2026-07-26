@@ -96,6 +96,19 @@ application selectorは共通IDへcompileする。
 
 利用できないselectorはplatform capabilityとしてvalidation errorにし、matchしない値へ黙って変換しない。
 
+platform overrideはschemaで列挙したtyped fieldだけを許可する。
+unknown field、汎用JSON map、generic merge、recursive deep mergeは使わない。
+effective configはallowlistの各fieldについて次の規則だけで作る。
+
+- overrideがmissingなら`shared`のfieldを使う。
+- overrideが`Some(value)`なら`shared`の同じfieldを明示的に置換する。
+- arrayとobjectはfield全体を置換し、要素追加、key単位merge、暗黙継承をしない。
+- sharedに表現できないWindows固有matcher/keyは`platforms.windows`へ、macOS固有matcher/keyは`platforms.macos`へ移す。
+
+allowlistの具体的なfield mappingはschema実装PRで型として固定するが、この優先順位とwhole-field replacementは変更しない。
+legacy v1の両platformで意味が同じ値は`shared`へ移し、Windows固有のmatcher、physical key、bindingだけをWindows overrideへ移す。
+移行時に分類できない値は黙って共有せず、field pathを含むmigration errorにする。
+
 ## Supported platforms
 
 初期support matrixは次で固定する。
@@ -117,7 +130,7 @@ macOS version numberを長期contractに固定しない。
 - `WH_MOUSE_LL`
 - `SendInput`
 - Win32 foreground/window identity
-- Direct2D/DirectComposition native overlay
+- 現行GDI native overlay
 - Tauri native tray
 - Named Pipe
 
@@ -137,6 +150,9 @@ shim採用には、直接bindingで満たせないcontractと追加されるbuil
 
 native overlayはWebView、Canvas、Skiaを常駐Engineへ入れない。
 platform adapterがdisplay scale、multi-display origin、macOSの座標反転を吸収する。
+Windowsは移行中も現行GDI rendererを維持する。
+performance acceptanceを満たさないことを測定で実証した場合だけ、別ADRと独立PRでrenderer変更を判断する。
+macOSのAppKit/Core Animation rendererはWindows renderer変更とは別のadapter実装である。
 
 ## macOS permissions and distribution
 
