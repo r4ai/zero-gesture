@@ -228,7 +228,7 @@ upgrade経路は新versionのinstallerをuserが実行する再インストー�
 - 通常のprocess crash後はreplace前なら旧、replace後なら新active fileからsnapshotを再構築する。
 - replace後かつmetadata sync前のsystem/power crashはold/newを保証せず、valid candidateを一意に選べない場合はdisabled/fail-openでdiagnostic recoveryへ移る。
 - stale revisionは現行documentを上書きしない。
-- endpoint access controlを設定できない場合、serverを公開せずEngineをdegradedにする。
+- endpoint access controlを設定できない場合は[ADR 0001のEngine startup failure contract](0001-tauri-two-process-modes.md#failure-conditions)を適用する。
 - protocol mismatch時にSettingsはraw file editへfallbackしない。
 
 ## Consequences

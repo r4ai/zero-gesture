@@ -52,7 +52,7 @@ LaunchAgentの引数、user拒否状態、再インストール後の登録を�
 
 ## Failure conditions
 
-- Engine起動時にsingleton endpointを安全に所有できない場合、hookをinstallせず終了する。
+- Engine起動時にsingleton endpointを安全に取得できない、またはendpoint access controlを設定できない場合、IPC serverを公開せず、hook/event tapをinstallせず、設定fileを変更せず、diagnosticを残してnon-zero終了する。
 - SettingsがEngineへ接続できない場合、設定編集をoffline成功に見せず、Engine unavailableを表示する。
 - Engine processが停止した場合、OS hook/event tapの解放によりinputを通す。
 - Settings close後にWebView processが残る実装は不合格とする。
