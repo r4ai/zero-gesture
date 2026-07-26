@@ -177,6 +177,11 @@ architecture contract本文は専門ADRのlinked sectionだけを正とする。
 
 ## P01 machine-readable contract gate
 
+P01の実行順と責務分割は[ADR 0006](0006-reproducible-static-quality-kpis.md)で追補する。
+P01aは再現可能な静的quality/KPIと既存test実行だけを導入し、この節のmanifest、logical test分類、`O`、`O_v`、`U`、`T`はP01bまで未測定のままとする。
+runtime CPU、RSS、callback/action latency harnessはEngine/process前提が整うP01cまで延期する。
+以下のcontractとexit条件自体は変更しない。
+
 P01はversioned machine-readable manifestを導入し、そこで初めて全project contractをatomizeする。
 上表の全source IDとlinked sectionを対象とし、独立して反証可能なnormative statementごとに一つのentryを作る。
 各entryはstable atomic ID、source ID、section anchor、scope、owner PR、verification evidenceまたは明示gapを記録する。

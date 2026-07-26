@@ -10,11 +10,13 @@ ADRは実装の詳細設計ではなく、後続PRが守る外部契約、不変
 | [0003](./0003-portable-domain-and-native-platforms.md) | Accepted | platform-neutral domainとOS固有adapterを分離し、Apple Silicon/macOSを直接配布で支える |
 | [0004](./0004-internal-ipc-and-engine-owned-config.md) | Accepted | 内部local IPCを境界にし、Engineを設定のsingle writerにする |
 | [0005](./0005-quality-contracts-and-delivery-plan.md) | Accepted | Windows互換、privacy、性能、複雑度、テスト義務、PR依存順を品質ゲートにする |
+| [0006](./0006-reproducible-static-quality-kpis.md) | Accepted | P01を分割し、canonical CIで再現可能な静的quality/KPIを先に測定する |
 
 ## Reading order
 
 まずADR 0001でprocess境界を確認し、ADR 0002で常駐process内部の所有権と障害時挙動を確認する。
 ADR 0003はdomainとplatformの境界、ADR 0004はprocess間の契約と永続化、ADR 0005はそれらを検証する方法を定める。
+ADR 0006はADR 0005の契約を再定義せず、P01aの静的測定範囲と後続P01b/P01cへの分割を定める。
 
 ## Status policy
 

@@ -8,6 +8,146 @@ on:
   workflow_dispatch:
 
 jobs:
+  quality:
+    name: Static Quality and KPI
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: 24
+
+      - name: Test quality CLI fixtures
+        run: node --test tools/quality/quality.test.mjs
+
+      - name: Select merge-base quality CLI
+        id: quality-cli
+        shell: bash
+        env:
+          BOOTSTRAP_BASE: 139bca96b118ecebc31c69b1d9bd553b3edbbf4e
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_REF: ${{ github.base_ref }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            base_sha="$(git merge-base HEAD "origin/$PR_BASE_REF")"
+          elif [[ -n "$PUSH_BEFORE" && ! "$PUSH_BEFORE" =~ ^0+$ ]]; then
+            base_sha="$PUSH_BEFORE"
+          else
+            base_sha="$(git rev-parse HEAD^)"
+          fi
+
+          quality_cli="$RUNNER_TEMP/quality.mjs"
+          quality_requirements="$RUNNER_TEMP/quality-requirements.txt"
+          if git cat-file -e "$base_sha:tools/quality/quality.mjs"; then
+            git show "$base_sha:tools/quality/quality.mjs" > "$quality_cli"
+            git show "$base_sha:tools/quality/requirements.txt" > "$quality_requirements"
+            cli_source="merge-base"
+          elif [[ "$base_sha" == "$BOOTSTRAP_BASE" ]]; then
+            cp tools/quality/quality.mjs "$quality_cli"
+            cp tools/quality/requirements.txt "$quality_requirements"
+            cli_source="head-bootstrap"
+          else
+            echo "merge base lacks the quality CLI outside the P01a bootstrap" >&2
+            exit 1
+          fi
+
+          echo "base-sha=$base_sha" >> "$GITHUB_OUTPUT"
+          echo "cli=$quality_cli" >> "$GITHUB_OUTPUT"
+          echo "requirements=$quality_requirements" >> "$GITHUB_OUTPUT"
+          echo "cli-source=$cli_source" >> "$GITHUB_OUTPUT"
+
+      - name: Install canonical analyzer
+        shell: bash
+        env:
+          QUALITY_REQUIREMENTS: ${{ steps.quality-cli.outputs.requirements }}
+        run: |
+          test "$(uname -m)" = "x86_64"
+          python3 -m venv "$RUNNER_TEMP/quality-bca"
+          "$RUNNER_TEMP/quality-bca/bin/python" -m pip install \
+            --disable-pip-version-check \
+            --no-deps \
+            --only-binary=:all: \
+            --require-hashes \
+            --requirement "$QUALITY_REQUIREMENTS"
+          "$RUNNER_TEMP/quality-bca/bin/bca" --version
+          echo "BCA=$RUNNER_TEMP/quality-bca/bin/bca" >> "$GITHUB_ENV"
+
+      - name: Measure base and head
+        shell: bash
+        env:
+          BASE_SHA: ${{ steps.quality-cli.outputs.base-sha }}
+          CLI_SOURCE: ${{ steps.quality-cli.outputs.cli-source }}
+          QUALITY_CLI: ${{ steps.quality-cli.outputs.cli }}
+        run: |
+          base_worktree="$RUNNER_TEMP/quality-base-worktree"
+          head_sha="$(git rev-parse HEAD)"
+          git worktree add --detach "$base_worktree" "$BASE_SHA"
+          mkdir -p quality-artifacts
+
+          node "$QUALITY_CLI" snapshot \
+            --repo "$base_worktree" \
+            --out "$GITHUB_WORKSPACE/quality-artifacts/base" \
+            --bca "$BCA" \
+            --revision "$BASE_SHA" \
+            --cli-source "$CLI_SOURCE"
+          node "$QUALITY_CLI" snapshot \
+            --repo "$GITHUB_WORKSPACE" \
+            --out "$GITHUB_WORKSPACE/quality-artifacts/head" \
+            --bca "$BCA" \
+            --revision "$head_sha" \
+            --cli-source "$CLI_SOURCE"
+          node "$QUALITY_CLI" snapshot \
+            --repo "$GITHUB_WORKSPACE" \
+            --out "$RUNNER_TEMP/quality-repro" \
+            --bca "$BCA" \
+            --revision "$head_sha" \
+            --cli-source "$CLI_SOURCE"
+          cmp \
+            quality-artifacts/head/summary.json \
+            "$RUNNER_TEMP/quality-repro/summary.json"
+
+          node "$QUALITY_CLI" compare \
+            --base quality-artifacts/base/summary.json \
+            --head quality-artifacts/head/summary.json \
+            --output quality-artifacts/comparison.json \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload base quality artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: quality-base-${{ github.run_id }}
+          path: quality-artifacts/base
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload head quality artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: quality-head-${{ github.run_id }}
+          path: quality-artifacts/head
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload quality comparison
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: quality-delta-${{ github.run_id }}
+          path: quality-artifacts/comparison.json
+          if-no-files-found: error
+          retention-days: 14
+
   tauri-build:
     name: Tauri Build
     runs-on: windows-latest
@@ -167,3 +307,37 @@ jobs:
 
       - name: Frontend typecheck
         run: pnpm typecheck
+
+      - name: Frontend build
+        run: pnpm build
+
+  frontend-test:
+    name: Frontend Tests
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061 # v4.2.0
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run Vitest unit tests
+        run: pnpm test:unit
+
+      - name: Run Storybook Chromium tests
+        run: pnpm test:storybook
