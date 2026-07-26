@@ -224,10 +224,19 @@ jobs:
   rust-test:
     name: Rust Test
     runs-on: windows-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: 24
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -236,6 +245,16 @@ jobs:
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           workspaces: src-tauri -> target
+
+      - name: List and validate contract evidence
+        shell: pwsh
+        env:
+          CARGO_TERM_COLOR: never
+        run: |
+          $cargoTests = Join-Path $env:RUNNER_TEMP "cargo-tests.txt"
+          cargo test --manifest-path src-tauri/Cargo.toml --all-targets -- --list |
+            Out-File -Encoding utf8 $cargoTests
+          node tools/contracts/check.mjs --cargo-list $cargoTests
 
       - name: Run tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --all-targets

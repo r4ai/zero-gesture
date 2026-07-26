@@ -40,10 +40,12 @@ The selected evidence is already runnable in the existing Cargo test target, exc
 No production seam or runtime behavior is changed.
 
 `tools/contracts/check.mjs` is deliberately specific to this manifest.
-It uses only Node standard-library modules and rejects an unexpected shape, empty or malformed fields, duplicate IDs or obligations, a runner other than `cargo-test`, a missing or escaping Rust evidence path, and an evidence name that is not present as a `#[test]` function.
+It uses only Node standard-library modules and rejects an unexpected shape, empty or malformed fields, duplicate IDs, obligations, or evidence pairs, a runner other than `cargo-test`, a missing or escaping Rust evidence path, and an evidence name that is not present as a `#[test]` function.
+When the Rust Test job supplies `cargo test --all-targets -- --list` output, every evidence test must also appear there exactly once.
 It is not a JSON Schema, a contract DSL, or a registry of future evidence types.
-`contracts:check` runs the validator and its three direct failure tests.
+`contracts:check` runs the validator and its five direct failure tests.
 The existing least-privilege quality job runs that command, while the existing Windows Rust test job runs every referenced test.
+The path check does not resolve symlinks; repository-controlled input in no-secret, read-only CI makes that an accepted residual risk for this phase.
 
 Within this deliberately bounded inventory, `O = 15`, `O_v = 15`, and `U = 0`.
 There are 15 unit-level logical cases, so `T = T_u = 15` and `T_i = T_e = 0`.

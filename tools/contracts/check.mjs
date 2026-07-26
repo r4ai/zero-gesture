@@ -66,7 +66,14 @@ function rustTestPattern(name) {
   return new RegExp(`#\\s*\\[\\s*test\\s*\\]\\s*fn\\s+${escaped}\\s*\\(`)
 }
 
-export function validateManifest(manifest, repoRoot = REPO_ROOT) {
+function cargoTestName(contractCase) {
+  const moduleName = contractCase.evidence_file
+    .slice("src-tauri/src/".length, -".rs".length)
+    .replaceAll("/", "::")
+  return `${moduleName}::tests::${contractCase.evidence_name}: test`
+}
+
+export function validateManifest(manifest, repoRoot = REPO_ROOT, cargoList) {
   if (
     manifest === null ||
     typeof manifest !== "object" ||
@@ -81,6 +88,7 @@ export function validateManifest(manifest, repoRoot = REPO_ROOT) {
 
   const ids = new Set()
   const obligations = new Set()
+  const evidencePairs = new Set()
 
   for (const [index, contractCase] of manifest.cases.entries()) {
     const location = `manifest.cases[${index}]`
@@ -109,6 +117,12 @@ export function validateManifest(manifest, repoRoot = REPO_ROOT) {
     }
     obligations.add(contractCase.obligation)
 
+    const evidencePair = `${contractCase.evidence_file}:${contractCase.evidence_name}`
+    if (evidencePairs.has(evidencePair)) {
+      fail(`duplicate evidence: ${evidencePair}`)
+    }
+    evidencePairs.add(evidencePair)
+
     if (!ALLOWED_RUNNERS.has(contractCase.runner)) {
       fail(`${location}.runner is not allowed: ${contractCase.runner}`)
     }
@@ -127,27 +141,46 @@ export function validateManifest(manifest, repoRoot = REPO_ROOT) {
         `${location}.evidence_name is not a #[test] function in ${contractCase.evidence_file}: ${contractCase.evidence_name}`,
       )
     }
+
+    if (cargoList !== undefined) {
+      const expected = cargoTestName(contractCase)
+      const listedCount = cargoList
+        .split(/\r?\n/)
+        .filter((line) => line.trim() === expected).length
+      if (listedCount !== 1) {
+        fail(
+          `${location}.evidence_name must appear exactly once in the Cargo test list: ${expected} (found ${listedCount})`,
+        )
+      }
+    }
   }
 
   return manifest.cases.length
 }
 
-export function validateManifestText(text, repoRoot = REPO_ROOT) {
+export function validateManifestText(text, repoRoot = REPO_ROOT, cargoList) {
   let manifest
   try {
     manifest = JSON.parse(text)
   } catch (error) {
     fail(`manifest must be valid JSON: ${error.message}`)
   }
-  return validateManifest(manifest, repoRoot)
+  return validateManifest(manifest, repoRoot, cargoList)
 }
 
 function main() {
-  const manifestPath = path.resolve(
+  const args = process.argv.slice(2)
+  if (args.length !== 0 && (args.length !== 2 || args[0] !== "--cargo-list")) {
+    fail("usage: check.mjs [--cargo-list <path>]")
+  }
+  const cargoList =
+    args.length === 0 ? undefined : readFileSync(args[1], "utf8")
+  const manifestPath = path.resolve(REPO_ROOT, DEFAULT_MANIFEST)
+  const count = validateManifestText(
+    readFileSync(manifestPath, "utf8"),
     REPO_ROOT,
-    process.argv[2] ?? DEFAULT_MANIFEST,
+    cargoList,
   )
-  const count = validateManifestText(readFileSync(manifestPath, "utf8"))
   console.log(`Validated ${count} P02 Windows contract cases.`)
 }
 

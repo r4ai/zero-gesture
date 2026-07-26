@@ -16,7 +16,7 @@
     },
     {
       "id": "P02-WIN-003",
-      "obligation": "Pointer movement is passed while an active gesture accumulates movement.",
+      "obligation": "Pointer movement is passed while the gesture session remains active.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/hook/state.rs",
       "evidence_name": "mouse_move_is_passed_while_gesture_is_active"

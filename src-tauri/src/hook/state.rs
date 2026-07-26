@@ -1174,13 +1174,14 @@ mod tests {
 
     #[test]
     fn hold_wheel_usage_disables_unmatched_trigger_replay() {
+        let action = key_action("pagedown");
         let config = test_config_with_hold(
             Vec::new(),
             vec![hold_binding(
                 TriggerButton::Right,
                 Vec::new(),
                 GestureStep::WheelDown,
-                key_action("pagedown"),
+                action.clone(),
                 "PageDown",
             )],
         );
@@ -1194,7 +1195,7 @@ mod tests {
             1000,
             None,
         );
-        process_event_pure(
+        let hold_effect = process_event_pure(
             &mut state,
             &config,
             MouseEvent::WheelDown(1),
@@ -1202,6 +1203,11 @@ mod tests {
             1010,
             None,
         );
+        assert_eq!(
+            hold_effect.request_execute,
+            Some(ExecuteRequest { action, repeat: 1 })
+        );
+
         let effect = process_event_pure(
             &mut state,
             &config,
