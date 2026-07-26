@@ -123,19 +123,27 @@ transport境界はまずlength prefixとenvelopeを含むencoded frame全体が1
 さらにEngine全体でactive config transferは一つ、upload temporary fileの合計bytesは64 MiB以下に固定する。
 `BeginConfigUpload`で宣言値がbudgetを超える場合と、実際のdecoded bytesが宣言値またはbudgetを超える場合は`ResourceLimit`でabortする。
 zero-based indexを厳密な順序で処理し、checked arithmeticで累積lengthを検証する。
-downloadはrevisionをpinし、uploadはfinish時にも`expected_revision`を再検証する。
-`ApplyConfig`/`ImportConfig`はtransfer purposeとexpected revisionが一致しないcompleted uploadを拒否する。
+downloadはrevisionをpinする。
 
 uploadはEngine-owned temporary fileへ逐次writeし、downloadはclientが一chunkずつpullする。
 serialized document全体を一bufferへ読むheap allocation、chunk queue、declared total sizeによる事前allocationをしない。
-finish時にactual lengthとSHA-256をdescriptorへ照合してからtemporary fileをstreaming JSON decodeし、Config transactionへ進む。
+`FinishConfigUpload`は全chunkがcanonical Base64、strict order、declared length、SHA-256を満たすことだけを検証し、purpose、expected revision、descriptor、temporary pathを持つimmutable completed uploadにする。
+completed uploadはConfig transactionを開始せず、同じEngine-wide transfer slotとtemporary disk budgetを保持する。
+`ApplyConfig`/`ImportConfig`だけがpurposeとexpected revisionの一致するcompleted uploadをatomically takeして一度だけ消費し、temporary fileのstreaming JSON decodeからConfig transactionを開始する。
+request mismatch、decode/validation failure、明示abort、idle timeout、connection closeではtemporary fileを削除し、transfer slotとdisk budgetを解放してactive configを変更しない。
+transaction開始後もatomic replaceまたはterminal failureでtemporary fileを処理し終えるまで、同じslotとbudget chargeを保持する。
 順序違反、duplicate、length超過、不一致hash、idle timeout、明示abort、connection closeではtransferをabortし、不完全temporary fileを削除してactive configを変更しない。
 
-Config ownerはdecode/compileを同時に一件だけ実行し、immutable snapshotはactiveとpreparedの最大二revisionだけを保持する。
-Config compiler固有のchecked counterで、両snapshotが所有するheap allocationと現在のdecode/compile scratch allocationを合計64 MiB以下に制限する。
+Config ownerはdecode/compileを同時に一件だけ実行し、全owner・全generationを合わせてimmutable snapshotを最大二revisionだけ保持する。
+snapshotを直接pinできる非Config ownerは、進行中gestureを所有するInputだけとし、他ownerはgeneration IDまたは必要なderived valueだけを受け取る。
+Config ownerはactiveとcandidate/preparedの二固定accounting slotだけを持ち、Inputのgenerationとpin countを既存`PrepareConfig` responseで確認する。
+Inputが旧generationをpinしている場合は`PrepareConfig`を`Busy`で拒否し、candidateを破棄してactive configを変更しない。
+Inputが`PrepareConfig`を受理した後はterminal `Commit | Abort`まで新しいtriggerをpassし、新しいgeneration pinを作らない。
+これによりInputが保持するgenerationを含めて第三revisionを作らず、Commit後はpinのない旧activeを解放してcandidateをactive slotへ移す。
+Config compiler固有のchecked counterで、全slotが所有するheap allocationと現在のdecode/compile scratch allocationを合計64 MiB以下に制限する。
 container capacity、decoded string/action payload、index、scratch bufferをallocation前に加算してfallible reserveし、超過は`ResourceLimit`としてcandidateだけを破棄する。
 temporary fileの64 MiB disk budgetと、この64 MiB accounted memory budgetは別々のEngine aggregate ceilingであり、通常時allocationまたはidle RSSの目標値ではない。
-process全体の汎用resource managerや任意blob用budget frameworkは作らない。
+動的generation table、汎用refcount/resource manager、任意blob用budget frameworkは作らない。
 
 config schema自体にはlogical total-size上限を追加しないが、64 MiBを超える既存valid v1 documentのactive化とcompileは互換性の明示例外とする。
 その場合も元fileを変更、削除、truncate、暗黙default化せず、gestureをdisableしてinputをfail-openにする。
@@ -148,8 +156,8 @@ storage、budget、fallible decode failureはactive configを変更しない非�
 
 EngineのConfig ownerだけが次の順で更新する。
 
-1. request、schema version、expected revisionを検証する。`ApplyConfig`/`ImportConfig`では完了済みuploadのpurpose、length、hashも検証する。
-2. platform capabilityを含むsemantic validationを一度だけ行い、次revisionのimmutable runtime snapshotへcompileする。
+1. `ApplyConfig`/`ImportConfig` requestがcompleted uploadをatomically takeし、purpose、expected revision、descriptorを検証して一度だけ消費する。
+2. temporary fileをstreaming decodeし、schema versionとplatform capabilityを含むsemantic validationを一度だけ行い、次revisionのimmutable runtime snapshotへcompileする。
 3. Inputに`PrepareConfig(revision, snapshot)`を送り、terminal `Commit | Abort`専用delivery slotをreserveしたackを得る。Inputはまだactive snapshotを変更しない。
 4. active fileと同じdirectoryのtemporary fileへserializeし、flush/fsyncする。
 5. temporary fileをactive fileへatomic replaceする。この成功をlogical commit pointとする。
