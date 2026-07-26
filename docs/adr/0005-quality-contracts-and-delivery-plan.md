@@ -59,12 +59,12 @@ CPUは一つのlogical coreを完全使用した値を100%としてprocess CPU t
 | Engine idle CPU mean | `< 0.2%` |
 | Engine memory p95 | Windows `< 20 MiB`; macOS `< 30 MiB` |
 | Input callback own elapsed time | p99 `< 100 us`; p99.9 `< 500 us` |
-| Terminal input event to OS injection API call | p99 `< 2 ms` |
+| Accepted action-producing input event to OS injection API call | p99 `< 2 ms` |
 | Callback allocations, waits, IPC, file I/O, context queries | `0` |
 | App受領済みinput、accepted action、replay、render lifecycle、committed config、shutdownのsilent loss | `0`; 中間render pointとmetrics sampleだけcoalesce/drop可 |
 
 callback timeはentryからpass/suppress return直前までのapp own elapsed timeとし、OS scheduling delayを混ぜない。
-action latencyはrelease/hold terminal eventから`SendInput`/`CGEventPost`呼び出し直前までとする。
+action latencyは、[ADR 0003のaction-producing transition](0003-portable-domain-and-native-platforms.md#platform-neutral-domain-contract)である`ContinueWithAction`または`FinishWithAction`としてacceptされたphysical eventのcallback entryから、`SendInput`/`CGEventPost`呼び出し直前までとする。
 
 Renderer停止、full queue、IPC flood/disconnect、blocked log sink、slow config persistence、Executor failure、permission revoke、sleep/wakeをfault-injectionする。
 どのcaseでもInput callbackは上限を守るか新規抑止を停止し、Zero Gestureがpointer/keyboard operationを重くしない。
@@ -131,7 +131,7 @@ render smokeのgreenをbehavioral contract verificationへ換算しない。
 
 - general `enabled`のload、cold start、enable/disable、worker lifecycle
 - trayのenable/disable toggle、enabled label同期、Settings menuとleft-clickによるSettings起動、hook/overlayを停止して終了するgraceful Quit
-- validなdefault/v1 configurationのvalidation、save/load、observable behaviorを保つmigration
+- [ADR 0004のresource budgetへadmitされた](0004-internal-ipc-and-engine-owned-config.md#config-document-transfer)valid default/v1 configurationのvalidation、save/load、observable behaviorを保つmigration
 - invalid fileのread/JSON/validation failureではsilent default/correctionを保存せず、fileを非破壊のままlast known validを維持するかEngineをdisabled/fail-openにしてdiagnostic recoveryへ移る
 - application definitionとmatcherのcreate/read/update/delete、label、OR matching、default fallback、app-specific precedence
 - matcher target/method/value、process name、window class、title、exact/contains/regexの意味
@@ -157,33 +157,29 @@ Direct2D/DirectCompositionをこの移行の先行要件にしない。
 - window captureのstart/cancel、対応するcapture IDのresultだけを対象matcher draftへ反映し、stale/cancelled resultを無視すること
 - typed `OpenConfigDirectory`でEngine-owned config pathをOS file managerに開き、arbitrary pathを送らないこと
 
-## New architecture requirements
+## Architecture contract source index
 
-- 同じTauri executableのEngine/Settings別process mode、Engineのwindow/WebView 0、Settings close時のprocess exit
-- userごとのEngine単一起動、Settings crash/disconnectからのEngine独立、Engineだけのinput権限とconfig/IPC ownership
-- bounded typed message passing、single-owner state、Input callbackのnormalize/evaluate→essential credit reserve/send→best-effort render→return順序、fail-open
-- 各抑止対象hold event直前のnonblocking action credit、credit不足eventのpass、trigger down抑止済みなら`Replay`/未抑止なら`Cancel`、hold中physical upでのbalanced replay、accepted actionのsilent loss 0
-- callback外Context workerのpointer sample、window/binding/target事前解決、point tolerance/age/generation/handle validityでのfresh判定、session-bound target
-- target activationとactionを同じbounded FIFO Executor laneへ載せ、activation result成功後だけactionをacceptし、activation credit不足/pending/failure/owner deathではevent passと`Replay|Cancel`にすること
-- fresh Contextでapp-specific matchなしの場合だけdefault bindingを使い、snapshotがmissing/stale/timeout/invalidならtriggerをpassして現行callback内同期query/activationを保存しないこと
-- OS/Tauri/IPCから独立したdomainとWindows/macOS native adapter、同じcanonical traceの同じdomain effect
-- non-terminal `Continue|ContinueWithAction(ActionId, repeat)`とterminal `Complete|FinishWithAction(ActionId)|Replay(Trigger)|Cancel`のclosed transition enum、独立したrender effect
-- schema version、application/binding以外のtyped overrideのwhole-field replacement、record単位`Shared|Windows|Macos` variant、lossless migration、platform capability validation
-- authenticated local IPC、protocol/revision conflict、一般frame 1 MiB上限、config専用bounded chunk transfer、Windows pipeのcurrent-user DACLとremote rejection、macOS socketのmode/peer UID
-- configのvalidate/compile、terminal `Commit | Abort`付きInput reservation、temp fsync、atomic replace、metadata sync、reserved `Commit`、success responseの順序
-- replace前failureの`Abort`、replace後metadata sync failureの`SuccessWithDurabilityWarning`、reserved `Commit` invariant違反時のterminate/restart
-- 通常のprocess crashはreplace前=旧/replace後=新active file、replace後metadata sync前のsystem/power crashはold/new不確定としてvalid candidate recoveryまたはdisabled/fail-openにすること
-- typed `OpenConfigDirectory` request/responseでEngine-owned pathだけをOS file managerに開くこと
-- Engine-owned window capture、replacement/early cancel/stale resultのtyped protocol
-- user-run reinstallでconfigを保持し、automatic updater責務を持たないこと
-- Apple Siliconとrelease時点の最新macOS、署名/notarization、Input Monitoring/Accessibility、権限不足時のfail-open
-- WindowsはGDIを維持し、macOSは別のAppKit/Core Animation native adapterを持つこと。renderer lifecycle failure/actor deathではheadless継続せず、必要なら`Replay`、それ以外は`Cancel`、Input bypass、Engine clean restartとすること
-- logging/privacy、performance acceptance、fault injection、diagnostic cause isolation
+architecture contract本文は専門ADRのlinked sectionだけを正とする。
+次のIDはP01 manifestが参照するstable handleであり、このADRに契約を再定義しない。
+
+| Contract source ID | Authoritative sections |
+| --- | --- |
+| `ARCH-PROCESS` | [ADR 0001 Decision](0001-tauri-two-process-modes.md#decision)、[External contract](0001-tauri-two-process-modes.md#external-contract)、[Failure conditions](0001-tauri-two-process-modes.md#failure-conditions)、[Packaging spike gate](0001-tauri-two-process-modes.md#packaging-spike-gate) |
+| `ARCH-MESSAGE` | [ADR 0002 Decision](0002-message-passing-and-fail-open.md#decision)、[Input callback exception](0002-message-passing-and-fail-open.md#input-callback-exception)、[Backpressure](0002-message-passing-and-fail-open.md#backpressure)、[Fail-open invariant](0002-message-passing-and-fail-open.md#fail-open-invariant)、[State invariants](0002-message-passing-and-fail-open.md#state-invariants) |
+| `ARCH-DOMAIN` | [ADR 0003 Decision](0003-portable-domain-and-native-platforms.md#decision)、[Platform-neutral domain contract](0003-portable-domain-and-native-platforms.md#platform-neutral-domain-contract)、[Configuration schema](0003-portable-domain-and-native-platforms.md#configuration-schema) |
+| `ARCH-NATIVE` | [ADR 0003 Supported platforms](0003-portable-domain-and-native-platforms.md#supported-platforms)、[Native adapters](0003-portable-domain-and-native-platforms.md#native-adapters)、[macOS permissions and distribution](0003-portable-domain-and-native-platforms.md#macos-permissions-and-distribution)、[Failure conditions](0003-portable-domain-and-native-platforms.md#failure-conditions) |
+| `ARCH-IPC` | [ADR 0004 Decision](0004-internal-ipc-and-engine-owned-config.md#decision)、[Framing and envelope](0004-internal-ipc-and-engine-owned-config.md#framing-and-envelope)、[Minimal request surface](0004-internal-ipc-and-engine-owned-config.md#minimal-request-surface) |
+| `ARCH-CONFIG` | [ADR 0004 Config document transfer](0004-internal-ipc-and-engine-owned-config.md#config-document-transfer)、[Config transaction](0004-internal-ipc-and-engine-owned-config.md#config-transaction)、[Migration and reinstall preservation](0004-internal-ipc-and-engine-owned-config.md#migration-and-reinstall-preservation)、[Availability and failure conditions](0004-internal-ipc-and-engine-owned-config.md#availability-and-failure-conditions) |
+| `QUALITY-LOGGING` | [Logging and privacy contract](#logging-and-privacy-contract) |
+| `QUALITY-PERFORMANCE` | [Performance acceptance](#performance-acceptance) |
+| `PRESERVE-WINDOWS` | [Windows Engine](#windows-engine) |
+| `PRESERVE-SETTINGS` | [Settings](#settings) |
 
 ## P01 machine-readable contract gate
 
 P01はversioned machine-readable manifestを導入し、そこで初めて全project contractをatomizeする。
-各entryは一つの独立して反証可能なpredicateだけを持ち、stable ID、scope、source、owner PR、verification evidenceまたは明示gapを記録する。
+上表の全source IDとlinked sectionを対象とし、独立して反証可能なnormative statementごとに一つのentryを作る。
+各entryはstable atomic ID、source ID、section anchor、scope、owner PR、verification evidenceまたは明示gapを記録する。
 
 - compound predicateをschema validationまたはreviewで分割する。
 - duplicate IDとduplicate semantic predicateを検出する。
@@ -191,23 +187,13 @@ P01はversioned machine-readable manifestを導入し、そこで初めて全pro
 - 一つのtestが複数predicateを検証してもよいが、各predicateのassertion/evidenceを個別に示す。
 - failing、missing、stale evidenceをgreenへ換算しない。
 - preservation requirementとnew architecture requirementを同じversioned scopeで監査する。
+- linked sectionのnormative sentence、table row、state branchをsamplingせず全て列挙する。
+- P01以後にlinked sectionを変更するPRは対応するatomic entryも同時に変更する。
 
 P01のexit gateは、manifest schemaとscopeがreview済みで、全entryがevidenceまたは明示gapへmapされ、定義したscope内で`U=0`であることとする。
 この時点で初めて`O`、`O_v`、`U`を算出する。
 logical test manifestも同じfailure-reason規則で整備し、`T`、`T_u`、`T_i`、`T_e`、`P`、`D`を非nullにする。
 versioned measurement scriptとraw artifactの再生成もP01のexit gateに含める。
-
-P01 manifestは少なくとも次を独立predicateへ分ける。
-
-- hold action後のsession継続、連続wheelごとのaction、multi-notch `repeat`、trigger upの`Complete`とno replay
-- hold/release action credit成功、credit不足時のevent passと`Replay|Cancel`分岐、hold中physical upのbalanced replay、accepted action loss 0
-- Context cacheのpoint tolerance、age、generation、handle validity、fresh時開始、各stale/missing時pass
-- same-session FIFOでのactivation attempt/result先行、success後action acceptance、activation credit不足/pending/failure/owner deathのno-acceptと`Replay|Cancel`
-- renderer lifecycle enqueue failureとactor death、Input-owned sessionの`Replay|Cancel`、Input bypass、新規gesture禁止、clean restart、point coalescing
-- config `Prepare`後の`Commit | Abort`、replace前failure、replace後durability warning、reserved delivery invariant、process crashとsystem/power crash recovery
-- config upload/downloadのchunk size、single in-flight、stream ID/revision/order/length/hash、abort/timeout、oversized valid v1の非破壊recovery/export
-- invalid config startup、last known valid維持、file非破壊、diagnostic recovery
-- typed `OpenConfigDirectory`のEngine-owned pathとarbitrary-path拒否
 
 ## Minimum test policy
 
@@ -227,7 +213,7 @@ P01 manifestは少なくとも次を独立predicateへ分ける。
 | --- | --- | --- | --- |
 | P00 | ADR foundation (this PR) | none | decision、高レベルrequirement、未測定項目がreview済み |
 | P01 | contract manifest、test/performance/complexity harness | P00 | versioned manifest、`U=0`、logical test分類、再現可能script/raw artifact |
-| P02 | platform-neutral domainとschema v2 migration | P01 | shared trace/config tests、valid v1 behavior parity、invalid-config recovery exception |
+| P02 | platform-neutral domainとschema v2 migration | P01 | shared trace/config tests、[ADR 0004のcompatibility scope](0004-internal-ipc-and-engine-owned-config.md#config-document-transfer)内のvalid v1 behavior parityと明示exception |
 | P03 | same-executable process modes、IPC、Engine config owner | P02 | process/IPC/config/capture evidence、WebView 0、reinstall preservation |
 | P04 | Windows owners/adaptersとfail-open移行 | P03 | 影響するmanifest requirement、fault matrix、Windows budgets |
 | P05 | macOS same-binary packaging spike | P03 | ADR 0001 spike gate、signed/notarized artifact |

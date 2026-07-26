@@ -91,7 +91,10 @@ Executorはactivationを試行し、そのsession専用のpreallocated result sl
 FIFOと`SessionId`によりactivation attempt/resultは同sessionのaction acceptanceより先になり、stale resultは無視する。
 Inputはresultを待たず、`Ready`を観測したaction-producing eventだけaction creditをreserveできる。
 `Failed`またはowner deathの通知はactionをacceptせずsessionを終了し、trigger down抑止済みなら`Replay(Trigger)`、未抑止なら`Cancel`とする。
-action-producing event時にまだ`Pending`またはaction credit不足でも、actionをacceptせずそのeventをpassして同じ`Replay|Cancel`規則を使う。
+action-producing event時にまだ`Pending`またはaction credit不足でもactionをacceptしない。
+`ContinueWithAction` eventはpassし、trigger down抑止済みなら`Replay(Trigger)`、未抑止なら`Cancel`とする。
+ただしtrigger down抑止済みで、対応するphysical trigger upが`FinishWithAction`になるeventでは、そのupも抑止して直ちに`Replay(Trigger)`する。
+trigger downを抑止していない`FinishWithAction` eventだけはupをpassして`Cancel`する。
 activationとaction以外へ再利用する汎用ack frameworkは作らない。
 
 ## Backpressure
@@ -102,7 +105,7 @@ backpressure policyはmessage種別ごとに固定する。
 | --- | --- |
 | Input to Renderer points | intermediate pointをcoalesceし、latest pointを優先する |
 | Input to Renderer lifecycle | lossless control laneへ送る。enqueue failureまたはRenderer actor deathではcurrent sessionを必要かつ可能ならterminal `Replay`、それ以外は`Cancel`とし、Inputをbypassへ移す。新規gestureを開始せず、SupervisorがEngineをclean terminate/restartしてOS overlay resourceを破棄する |
-| Input to Executor | target `Ready`後もgesture開始時に長期action creditを取らない。`ContinueWithAction`または`FinishWithAction`で抑止する各eventの直前に一枠reserveする。取れなければそのeventをpassして`Replay|Cancel`へ遷移する。reserve後にacceptedとなったactionはsame-session FIFOのreserved slotへinfallibleに送り、silent lossを0にする |
+| Input to Executor | target `Ready`後もgesture開始時に長期action creditを取らない。`ContinueWithAction`または`FinishWithAction`で抑止する各eventの直前に一枠reserveする。取れなければ原則eventをpassして`Replay|Cancel`へ遷移するが、down抑止済みのphysical trigger upだけは抑止して直ちに`Replay`する。reserve後にacceptedとなったactionはsame-session FIFOのreserved slotへinfallibleに送り、silent lossを0にする |
 | Input replay | preallocated emergency slotへ保持する。schedule不能なら新規抑止を停止し、terminal degraded stateとして報告する |
 | Config to Input | disk更新前にrevisionのdelivery slotをprepare/reserveしてackを得る。予約は必ずterminal `Commit`または`Abort`で閉じる。atomic replace後はreserved slotへinfallibleな`Commit`を送り、actor invariant違反はprocessをterminate/restartしてinputをfail-openにする |
 | Supervisor shutdown | 専用control laneへ保持する。送信失敗はowner終了として扱い、supervisorがresource解放とjoinを完了する |
@@ -132,7 +135,7 @@ Zero Gestureが正しい抑止とactionを期限内に保証できない場合�
 trigger downを抑止済みでsessionを完了できない場合は`Replay(Trigger)`を選び、固定上限の緊急経路で元のdown/upを一度だけreplayする。
 physical triggerがまだdownならInputはrecognition sessionを終了して新規gestureを開始せず、他eventをpassしながら対応するphysical upを待つ。
 そのupを抑止してからsynthetic down/upを一度だけ送り、button pairをbalanceしてbypassへ移る。
-physical upを既に観測済みなら直ちに同じreplayを送る。
+failureを対応するphysical upのcallbackで検出した場合も、そのupをOSへpassせず抑止してから直ちに同じreplayを送る。
 trigger downを抑止していない`Cancel`ではphysical upを含む後続eventを変更せずpassする。
 replayも保証できない状態では、新規抑止を即時停止してdiagnostic faultを残す。
 無限retryやsilent fallbackは行わない。

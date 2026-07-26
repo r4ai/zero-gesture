@@ -30,8 +30,8 @@ current user以外を拒否するsecurity descriptorとremote接続拒否の両�
 ## Framing and envelope
 
 frameはlittle-endian `u32` byte lengthとUTF-8 JSON bodyで構成する。
-最大frameは1 MiBとし、lengthを検証してから一度だけallocate/readする。
-zero length、上限超過、不正UTF-8、不正JSON、unknown version、unknown requestは明示errorでconnectionを閉じる。
+4 byteのlength prefixを含むencoded frame全体は1 MiB未満とし、checked additionでlengthを検証してからbodyを一度だけallocate/readする。
+zero length、上限以上、不正UTF-8、不正JSON、unknown version、unknown requestは明示errorでconnectionを閉じる。
 
 request envelopeは次を持つ。
 
@@ -66,7 +66,7 @@ SetEnabled(expected_revision, enabled)
 ImportConfig(expected_revision, config_transfer_id)
 ExportConfig
 BeginConfigUpload(Apply | Import, expected_revision, total_bytes, sha256)
-AppendConfigChunk(transfer_id, index, bytes)
+AppendConfigChunk(transfer_id, index, chunk_b64)
 FinishConfigUpload(transfer_id)
 ReadConfigChunk(transfer_id, index)
 AbortConfigTransfer(transfer_id)
@@ -107,15 +107,21 @@ methodごとにtyped requestへdecodeし、境界通過後にJSON objectやdynam
 
 ```text
 BeginConfigUpload(Apply | Import, expected_revision, total_bytes, sha256) -> transfer_id
-AppendConfigChunk(transfer_id, index, bytes) -> next_index
+AppendConfigChunk(transfer_id, index, chunk_b64) -> next_index
 FinishConfigUpload(transfer_id)
 GetSnapshot | ExportConfig -> transfer_id, revision, total_bytes, sha256
-ReadConfigChunk(transfer_id, index) -> bytes, next_index
+ReadConfigChunk(transfer_id, index) -> chunk_b64, next_index
 AbortConfigTransfer(transfer_id)
 ```
 
-chunk payloadは最大256 KiBとし、JSON encodingとenvelopeを含むframe全体を1 MiB未満に保つ。
+`chunk_b64`はRFC 4648 standard Base64 alphabetと必須paddingを使うcanonical string一種類に固定し、whitespace、別alphabet、不正padding、非canonical encodingを拒否する。
+transport境界はまずlength prefixとenvelopeを含むencoded frame全体が1 MiB未満であることを検証し、次に`chunk_b64`をdecodeしてpayloadが256 KiB以下であることを別々に検証する。
+`total_bytes`、chunkの累積length、SHA-256はBase64 textではなくdecoded config bytesを対象とする。
+送信側もdecoded payloadを256 KiB以下に切り、length prefixとenvelopeを含むencoded frameが1 MiB未満であることを検証してから送る。
+
 `transfer_id`はconnection-scopedで、一connectionにつきactive config transferは一つ、未acknowledged chunkも一つに限定する。
+さらにEngine全体でactive config transferは一つ、upload temporary fileの合計bytesは64 MiB以下に固定する。
+`BeginConfigUpload`で宣言値がbudgetを超える場合と、実際のdecoded bytesが宣言値またはbudgetを超える場合は`ResourceLimit`でabortする。
 zero-based indexを厳密な順序で処理し、checked arithmeticで累積lengthを検証する。
 downloadはrevisionをpinし、uploadはfinish時にも`expected_revision`を再検証する。
 `ApplyConfig`/`ImportConfig`はtransfer purposeとexpected revisionが一致しないcompleted uploadを拒否する。
@@ -125,9 +131,17 @@ serialized document全体を一bufferへ読むheap allocation、chunk queue、de
 finish時にactual lengthとSHA-256をdescriptorへ照合してからtemporary fileをstreaming JSON decodeし、Config transactionへ進む。
 順序違反、duplicate、length超過、不一致hash、idle timeout、明示abort、connection closeではtransferをabortし、不完全temporary fileを削除してactive configを変更しない。
 
-P00は現行valid v1 documentへ新しいlogical total-size上限を設けない。
-storageまたはfallible decode failureは非破壊errorにする。
-後続実装がactivation用memory budgetを設ける場合も、上限超過のvalid v1 fileを上書きせず、chunked recovery/exportを可能なまま維持する。
+Config ownerはdecode/compileを同時に一件だけ実行し、immutable snapshotはactiveとpreparedの最大二revisionだけを保持する。
+Config compiler固有のchecked counterで、両snapshotが所有するheap allocationと現在のdecode/compile scratch allocationを合計64 MiB以下に制限する。
+container capacity、decoded string/action payload、index、scratch bufferをallocation前に加算してfallible reserveし、超過は`ResourceLimit`としてcandidateだけを破棄する。
+temporary fileの64 MiB disk budgetと、この64 MiB accounted memory budgetは別々のEngine aggregate ceilingであり、通常時allocationまたはidle RSSの目標値ではない。
+process全体の汎用resource managerや任意blob用budget frameworkは作らない。
+
+config schema自体にはlogical total-size上限を追加しないが、64 MiBを超える既存valid v1 documentのactive化とcompileは互換性の明示例外とする。
+その場合も元fileを変更、削除、truncate、暗黙default化せず、gestureをdisableしてinputをfail-openにする。
+`GetSnapshot`/`ExportConfig`はsnapshotへのdecodeや再serializeを行わず、元fileのpinned read-only handleから直接chunkをpullできるため、bytesをlosslessにrecovery/exportできる。
+storage、budget、fallible decode failureはactive configを変更しない非破壊errorにする。
+このceilingはP04の実測で再評価し、値を変更する場合はADR amendmentを必須にする。
 このprotocolを任意blobや複数streamの汎用frameworkへ拡張しない。
 
 ## Config transaction
@@ -162,7 +176,8 @@ gesture開始時にInputがsnapshotを保持する。
 新schemaの不正値はdefaultへ黙って補正せず、field pathを含むvalidation errorとして返す。
 legacy migrationだけがversionごとの明示変換を行える。
 
-validなlegacy v1 documentはobservable behaviorを保ってschema v2へmigrationする。
+[Config document transfer](#config-document-transfer)のresource budgetへadmitされたvalid legacy v1 documentは、observable behaviorを保ってschema v2へmigrationする。
+budget超過documentのactive化とcompileは、同節で定義したbyte-preserving recovery/exportだけを保証する明示的なcompatibility exceptionである。
 一方、現行のread/JSON/validation failure時のsilent defaultとsilent correctionはpreservationからの意図的compatibility exceptionとする。
 
 - startupでvalid snapshotが一つもない場合、Engineをdisabled/fail-openにする。
