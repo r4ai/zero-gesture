@@ -1,5 +1,10 @@
 # Zero Gesture Architecture Design Document
 
+> [!NOTE]
+> この文書は移行前のWindows実装を説明する。
+> 採用済みのマルチプラットフォーム目標設計と移行ゲートは
+> [ADR index](./adr/README.md) を正とする。
+
 ## 1. Overview
 
 Zero Gesture は、Windows専用の高性能マウスジェスチャーツールです。
@@ -8,7 +13,7 @@ Zero Gesture は、Windows専用の高性能マウスジェスチャーツール
 ### Core Philosophy
 
 - **Zero-Latency Hook:** マウス入力の監視と遮断は、OSのネイティブAPIを直接叩き、最小限のオーバーヘッドで行う。
-- **Native Rendering:** ジェスチャー軌跡（Trail）の描画にはWebviewを使用せず、Direct2D/GDIを用いて透明なオーバーレイウィンドウに直接描画する。
+- **Native Rendering:** ジェスチャー軌跡（Trail）の描画にはWebviewを使用せず、現行実装はGDIで透明なオーバーレイウィンドウに直接描画する。`direct2d.rs`は常に初期化errorを返す未実装stubである。
 - **On-Demand Webview:** 設定画面が必要な時のみWebviewをロードし、通常時はメモリから解放する。
 
 ---
@@ -47,7 +52,7 @@ graph TD
     end
 
     User((User Input)) --> HM
-    EX -->|SendInput/Shell| OS((Windows OS))
+    EX -->|"SendInput (keyboard only)"| OS((Windows OS))
 ```
 
 ---
@@ -74,8 +79,9 @@ UIスレッドのブロックを防ぐため、独立したスレッドでマウ
   - **Low-Level Mouse Hook:** `WH_MOUSE_LL` を使用してマウスイベントをフック。
   - **Event Suppression:** ジェスチャー開始トリガー（例: 右クリック）を検知した場合、OSへのイベント伝播をブロック（`1`をreturn）し、コンテキストメニューの出現を防ぐ。
   - **Gesture Recognition:** マウスの移動ベクトルを計算し、定義されたジェスチャー（例: `Right` -> `Down`）と照合する。
-  - **Communication:** \* 描画座標を `crossbeam-channel` 経由で **Overlay Thread** へ送信。
-    - ジェスチャー確定時、アクション（キー送信、コマンド実行）を実行。
+  - **Context Resolution:** configured trigger down時、callback内で`WindowFromPoint`、foreground fallback、window情報取得、app matching、target activationを同期実行する。これは移行対象の既知hot-path debtである。目標設計ではcallback外Context workerがpointer sampleからcontext/binding/targetを事前解決し、fresh cacheがないtriggerをpassする意図的な安全変更を行う。
+  - **Communication:** 描画commandを`crossbeam-channel`経由で **Overlay Thread** へ送信する。
+  - **Action:** callbackでactionをqueueへ積み、同じHook Threadのmessage loopへpostしてcallback復帰後にkeyboard actionだけを実行する。
 
 ### 3.3. Overlay Thread (The "Visuals")
 
@@ -84,7 +90,7 @@ TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成
 - **Technology:** `windows-sys` crate (Win32 API, GDI)
 - **Responsibility:**
   - **Window Creation:** `WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW` スタイルの全画面透明ウィンドウを作成。
-  - **Rendering:** Hook Threadから送られてくる座標データを元に、GDI（`Polyline` + バックバッファビットマップ）を用いてラインを描画。Direct2Dは未実装（スタブのみ）。
+  - **Rendering:** Hook Threadから送られてくる座標データを元に、GDI（`Polyline` + バックバッファビットマップ）を用いてラインを描画する。移行でもGDIを維持し、別rendererの採用は性能契約の未達を測定した後に別ADRで判断する。Direct2Dは未実装（常にerrorを返すstubのみ）。
   - **Lifecycle:** ジェスチャー中のみ可視化（`ShowWindow`）し、終了後は非表示＆描画クリアを行うことでリソースを節約。
 
 ### 3.4. Settings UI (The "Interface")
@@ -175,6 +181,6 @@ TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成
 
 ## 7. Performance Considerations
 
-- **Blocking:** Hookプロシージャ内での重い処理は厳禁。座標計算とチャネル送信のみを行い、即座に `CallNextHookEx` またはリターンを行う。
+- **Blocking:** 目標設計ではHook callbackをnormalize/evaluate、essential creditのnonblocking reserve/send、best-effort render send、pass/suppress returnの順に限定する。現行callbackはconfigured trigger down時のwindow activation/query/app matching、overlay channel送信、action/replay queueingを同期実行しており、ADR 0002に従って移行する必要がある。
 - **Memory Safety:** `unsafe` ブロックを多用するWin32 API部分は、Rustのラッパー関数で適切に抽象化し、メモリリークや未定義動作を防ぐ。
-- **Drawing:** 現在はGDI（`Polyline` + バックバッファ）を使用。将来的にDirect2Dへ移行することでCPU使用率の低下と高DPI品質の向上を図る。
+- **Drawing:** 現在とWindows移行中はGDI（`Polyline` + バックバッファ）を使用する。`direct2d.rs`は未実装stubであり、性能契約の未達を測定した場合だけ別ADR/PRでrenderer変更を検討する。macOSのAppKit/Core Animation adapterはこのWindows判断と分離する。

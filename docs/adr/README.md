@@ -1,0 +1,23 @@
+# Architecture Decision Records
+
+このディレクトリは、Zero Gestureのマルチプラットフォーム化で採用した意思決定を記録する。
+ADRは実装の詳細設計ではなく、後続PRが守る外部契約、不変条件、失敗条件、検証ゲートを定める。
+
+| ADR | Status | Decision |
+| --- | --- | --- |
+| [0001](./0001-tauri-two-process-modes.md) | Accepted | 同一Tauri executableをEngine modeとSettings modeの別processとして起動する |
+| [0002](./0002-message-passing-and-fail-open.md) | Accepted | 単一所有者と型付きmessage passingを使い、入力経路はfail-openにする |
+| [0003](./0003-portable-domain-and-native-platforms.md) | Accepted | platform-neutral domainとOS固有adapterを分離し、Apple Silicon/macOSを直接配布で支える |
+| [0004](./0004-internal-ipc-and-engine-owned-config.md) | Accepted | 内部local IPCを境界にし、Engineを設定のsingle writerにする |
+| [0005](./0005-quality-contracts-and-delivery-plan.md) | Accepted | Windows互換、privacy、性能、複雑度、テスト義務、PR依存順を品質ゲートにする |
+
+## Reading order
+
+まずADR 0001でprocess境界を確認し、ADR 0002で常駐process内部の所有権と障害時挙動を確認する。
+ADR 0003はdomainとplatformの境界、ADR 0004はprocess間の契約と永続化、ADR 0005はそれらを検証する方法を定める。
+
+## Status policy
+
+- `Accepted`: 後続実装が守る決定である。
+- `Superseded`: 新しいADRへのリンクを残し、履歴として保持する。
+- 実装上の制約でAcceptedな決定を変更する場合、コードだけで例外を作らず、新しいADRで根拠と影響を記録する。
