@@ -49,13 +49,16 @@ domain outputは次のproduct typeで表す。
 ```text
 Decision {
   disposition: Pass | Suppress,
-  terminal: Continue | Execute(ActionId) | Replay(Trigger) | Cancel,
+  transition: Continue | Execute(ActionId) | Replay(Trigger) | Cancel,
   render: None | RenderDelta,
 }
 ```
 
-actionとreplayを別々の`Option`にせず、terminal effectの排他性をclosed enumで表す。
-render effectはterminal decisionと独立しており、visual backpressureでdomain terminal stateを変えない。
+actionとreplayを別々の`Option`にせず、session transitionの排他性をclosed enumで表す。
+`Continue`はnon-terminal、`Execute`、`Replay`、`Cancel`はterminal variantである。
+Input ownerがrecognition sessionとtransition適用を所有する。
+render effectはtransitionと別fieldにし、中間pointのdrop/coalesceだけはsession transitionを変えない。
+renderer lifecycle/control enqueue failureまたはactor deathはvisual-only backpressureではなく、Inputを`Replay`または`Cancel`へ遷移させるowner faultである。
 
 既存Windowsの次の意味を共通contractとして維持する。
 
@@ -80,9 +83,15 @@ render effectはterminal decisionと独立しており、visual backpressureでd
   "schema_version": 2,
   "shared": {
     "recognition": {},
-    "appearance": {},
-    "bindings": []
+    "appearance": {}
   },
+  "applications": [
+    { "platform": "windows", "application": {} }
+  ],
+  "bindings": [
+    { "platform": "shared", "binding": {} },
+    { "platform": "windows", "binding": {} }
+  ],
   "platforms": {
     "windows": {},
     "macos": {}
@@ -109,15 +118,20 @@ application selectorは共通IDへcompileする。
 
 platform overrideはschemaで列挙したtyped fieldだけを許可する。
 unknown field、汎用JSON map、generic merge、recursive deep mergeは使わない。
-effective configはallowlistの各fieldについて次の規則だけで作る。
+application/binding以外のallowlist fieldは次の規則だけでeffective configを作る。
 
 - overrideがmissingなら`shared`のfieldを使う。
 - overrideが`Some(value)`なら`shared`の同じfieldを明示的に置換する。
 - arrayとobjectはfield全体を置換し、要素追加、key単位merge、暗黙継承をしない。
-- sharedに表現できないWindows固有matcher/keyは`platforms.windows`へ、macOS固有matcher/keyは`platforms.macos`へ移す。
 
-allowlistの具体的なfield mappingはschema実装PRで型として固定するが、この優先順位とwhole-field replacementは変更しない。
-legacy v1の両platformで意味が同じ値は`shared`へ移し、Windows固有のmatcher、physical key、bindingだけをWindows overrideへ移す。
+application definitionとbindingはplatform array overrideの対象にせず、それぞれ一つのordered collectionでrecordごとのtyped discriminated unionにする。
+`Shared(T)`、`Windows(T)`、`Macos(T)`だけを許可し、current platformでは`Shared`と該当variantをdocument順にcompileする。
+`Shared` applicationはportable selectorだけ、`Shared` bindingはlogical keyだけを持ち、`Shared` applicationだけを参照できる。
+platform固有matcher/keyを含むrecordとplatform固有applicationを参照するbindingは、record全体を同じplatform variantにする。
+
+allowlistの具体的なnon-binding field mappingはschema実装PRで型として固定するが、上記の優先順位、whole-field replacement、binding variant規則は変更しない。
+legacy v1 application/bindingがportableなら`Shared`、Windows固有matcher/keyを一つでも含むかWindows applicationを参照するならrecord全体を`Windows`へ移す。
+混在recordを分割または再構成せず、stable ID、参照、gesture binding順序、matcher、gesture、actionをそのまま保持する。
 移行時に分類できない値は黙って共有せず、field pathを含むmigration errorにする。
 
 ## Supported platforms
@@ -179,7 +193,7 @@ Settingsはpermission状態とSystem Settingsへの案内を表示するが、�
 ## Failure conditions
 
 - platform eventをcanonical eventへ変換できない場合はそのeventを通す。
-- app contextを期限内に解決できない場合はdefault bindingだけを使用する。staleな別app identityを使わない。
+- freshなContext snapshotでapp-specific matchなしと確定した場合だけdefault `BindingSetId`を使う。contextがmissing/stale、timeout、handle invalidの場合はdefaultへfallbackせずtriggerをpassする。
 - key/actionをplatformで表現できないconfigは保存境界で拒否する。
 - native renderer初期化失敗、lifecycle enqueue failure、actor deathではcurrent sessionを必要かつ可能なら`Replay`、それ以外は`Cancel`とし、Inputをbypassへ移して新規gestureを開始しない。SupervisorがEngineをclean terminate/restartしてoverlay resourceを破棄し、headless gesture継続はしない。
 - permissionを要求しないAPIを誤って呼ぶ実装はrelease gateで拒否する。

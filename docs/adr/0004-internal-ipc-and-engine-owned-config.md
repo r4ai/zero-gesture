@@ -103,7 +103,7 @@ EngineのConfig ownerだけが次の順で更新する。
 2. platform capabilityを含むsemantic validationを一度だけ行い、次revisionのimmutable runtime snapshotへcompileする。
 3. Inputに`PrepareConfig(revision, snapshot)`を送り、terminal `Commit | Abort`専用delivery slotをreserveしたackを得る。Inputはまだactive snapshotを変更しない。
 4. active fileと同じdirectoryのtemporary fileへserializeし、flush/fsyncする。
-5. temporary fileをactive fileへatomic replaceする。この成功をlogical durable commit pointとする。
+5. temporary fileをactive fileへatomic replaceする。この成功をlogical commit pointとする。
 6. directory metadata syncを試みる。
 7. reserved slotへallocationもfailureもない`Commit(revision)`を送り、Inputの次snapshotを切り替える。
 8. metadata sync成功時は`Success(revision)`、失敗時は`SuccessWithDurabilityWarning(revision, reason)`をSettingsへ返す。
@@ -112,7 +112,11 @@ EngineのConfig ownerだけが次の順で更新する。
 slotをreserveできなければtemporary fileへ書き始めない。
 atomic replace後はrollbackできないため、directory metadata sync failureでも`Commit`を続行し、diagnosticを残してfailure responseへ戻さない。
 reserved `Commit` deliveryのfailureはprotocol invariant違反であり、Engineをterminate/restartしてinputをfail-openにする。restart時はnew active fileを正本にする。
-crashがatomic replace前なら旧active file、replace後なら新active fileをrestart時の正本とし、Input snapshotをdiskから再構築する。
+通常のprocess crashでは、atomic replace前なら旧active file、replace後なら新active fileをrestart時の正本とし、Input snapshotをdiskから再構築する。
+system/power crashがatomic replace成功後かつdirectory metadata sync成功前に起きた場合、filesystem上で旧file、新file、または不完全なmetadataのどれが残るかを保証しない。
+restart recoveryはactive/temporary/backupのvalidityとrevisionを検査し、一意に選べるvalid candidateだけを採用する。
+一意に復旧できなければfileを上書きせずEngineをdisabled/fail-openにし、diagnostic recoveryを要求する。
+metadata sync成功後のsystem/power crash durabilityはplatform/filesystemが提供する保証の範囲とする。
 compile後のsnapshotはvalidとして扱い、ownerごとに再validationしない。
 Settingsのexpected revisionが古い場合はconflictとして拒否し、last-write-winsにしない。
 
@@ -154,7 +158,8 @@ upgrade経路は新versionのinstallerをuserが実行する再インストー�
 - malformed clientはそのconnectionだけを閉じ、Engineをpanicさせない。
 - atomic replace前のconfig persistence失敗をmemory-only successとして返さない。
 - atomic replace後のmetadata sync failureはrollback不能なのでdurability warning付きsuccessとして返す。
-- config replace前後のcrash後はactive fileを正本としてsnapshotを再構築する。
+- 通常のprocess crash後はreplace前なら旧、replace後なら新active fileからsnapshotを再構築する。
+- replace後かつmetadata sync前のsystem/power crashはold/newを保証せず、valid candidateを一意に選べない場合はdisabled/fail-openでdiagnostic recoveryへ移る。
 - stale revisionは現行documentを上書きしない。
 - endpoint access controlを設定できない場合、serverを公開せずEngineをdegradedにする。
 - protocol mismatch時にSettingsはraw file editへfallbackしない。

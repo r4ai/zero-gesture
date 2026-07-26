@@ -89,7 +89,7 @@ backpressure policyはmessage種別ごとに固定する。
 | --- | --- |
 | Input to Renderer points | intermediate pointをcoalesceし、latest pointを優先する |
 | Input to Renderer lifecycle | lossless control laneへ送る。enqueue failureまたはRenderer actor deathではcurrent sessionを必要かつ可能ならterminal `Replay`、それ以外は`Cancel`とし、Inputをbypassへ移す。新規gestureを開始せず、SupervisorがEngineをclean terminate/restartしてOS overlay resourceを破棄する |
-| Input to Executor | gesture開始時に長期creditを取らない。抑止してactionを発生させる各event、特にhold wheelの直前にnonblockingで一枠reserveする。取れなければそのeventをpassし、sessionをterminal `Cancel`してfail-openにする。reserve後にacceptedとなったactionはreserved slotへinfallibleに送り、silent lossを0にする |
+| Input to Executor | gesture開始時に長期creditを取らない。抑止してactionを発生させる各event、特にhold wheelの直前にnonblockingで一枠reserveする。取れなければそのeventをpassし、trigger down抑止済みなら`Replay(Trigger)`、未抑止なら`Cancel`へ遷移する。reserve後にacceptedとなったactionはreserved slotへinfallibleに送り、silent lossを0にする |
 | Input replay | preallocated emergency slotへ保持する。schedule不能なら新規抑止を停止し、terminal degraded stateとして報告する |
 | Config to Input | disk更新前にrevisionのdelivery slotをprepare/reserveしてackを得る。予約は必ずterminal `Commit`または`Abort`で閉じる。atomic replace後はreserved slotへinfallibleな`Commit`を送り、actor invariant違反はprocessをterminate/restartしてinputをfail-openにする |
 | Supervisor shutdown | 専用control laneへ保持する。送信失敗はowner終了として扱い、supervisorがresource解放とjoinを完了する |
@@ -116,7 +116,11 @@ Zero Gestureが正しい抑止とactionを期限内に保証できない場合�
 - FFI callbackからRust panicやforeign exceptionを越境させない。
 - injected eventにはself tagを付け、同じgestureとして再捕捉しない。
 
-trigger downを抑止済みでsessionを完了できない場合は、固定上限の緊急経路で元のdown/upを一度だけreplayする。
+trigger downを抑止済みでsessionを完了できない場合は`Replay(Trigger)`を選び、固定上限の緊急経路で元のdown/upを一度だけreplayする。
+physical triggerがまだdownならInputはrecognition sessionを終了して新規gestureを開始せず、他eventをpassしながら対応するphysical upを待つ。
+そのupを抑止してからsynthetic down/upを一度だけ送り、button pairをbalanceしてbypassへ移る。
+physical upを既に観測済みなら直ちに同じreplayを送る。
+trigger downを抑止していない`Cancel`ではphysical upを含む後続eventを変更せずpassする。
 replayも保証できない状態では、新規抑止を即時停止してdiagnostic faultを残す。
 無限retryやsilent fallbackは行わない。
 
@@ -125,7 +129,7 @@ replayも保証できない状態では、新規抑止を即時停止してdiagn
 - 一つのmutable factを複数ownerへ保存しない。
 - Engine全体を包むglobal mutable stateを作らない。
 - owner間で共有するconfigはimmutable snapshotであり、revisionとgenerationは一つの値から導出する。
-- gestureのterminal decisionは`Continue`、`Execute`、`Replay`、`Cancel`のclosed enum一つで表し、同時に二つを選ばない。
+- gesture transitionは`Continue`、`Execute`、`Replay`、`Cancel`のclosed enum一つで表し、terminal variantの`Execute`、`Replay`、`Cancel`を同時に二つ選ばない。
 - Renderer generationはInput generationより進まず、終了済みgenerationを再表示しない。
 - prepared config revisionは最大一つで、`Commit`、`Abort`、またはprocess終了によってだけ解放する。
 - accepted action、render lifecycle、replay、committed config、shutdownをsilent dropしない。

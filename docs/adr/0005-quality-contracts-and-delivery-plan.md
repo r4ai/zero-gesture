@@ -130,6 +130,7 @@ render smokeのgreenをbehavioral contract verificationへ換算しない。
 ### Windows Engine
 
 - general `enabled`のload、cold start、enable/disable、worker lifecycle
+- trayのenable/disable toggle、enabled label同期、Settings menuとleft-clickによるSettings起動、hook/overlayを停止して終了するgraceful Quit
 - validなdefault/v1 configurationのvalidation、save/load、observable behaviorを保つmigration
 - invalid fileのread/JSON/validation failureではsilent default/correctionを保存せず、fileを非破壊のままlast known validを維持するかEngineをdisabled/fail-openにしてdiagnostic recoveryへ移る
 - application definitionとmatcherのcreate/read/update/delete、label、OR matching、default fallback、app-specific precedence
@@ -152,7 +153,7 @@ Direct2D/DirectCompositionをこの移行の先行要件にしない。
 - gestureのCRUD、並べ替え、label、trigger、release/hold mode、sequence、hold step編集
 - shortcut preset、modifier/key catalog、manual shortcut編集、空/不正shortcutの扱い
 - initial load、save、stale revision/conflict、backend errorをsuccess表示しないこと
-- draft保持と破棄、import preview/apply/error、export内容とfailure
+- draft保持と破棄、import apply/error、export内容とfailure
 - window captureのstart/cancel、対応するcapture IDのresultだけを対象matcher draftへ反映し、stale/cancelled resultを無視すること
 - typed `OpenConfigDirectory`でEngine-owned config pathをOS file managerに開き、arbitrary pathを送らないこと
 
@@ -161,16 +162,16 @@ Direct2D/DirectCompositionをこの移行の先行要件にしない。
 - 同じTauri executableのEngine/Settings別process mode、Engineのwindow/WebView 0、Settings close時のprocess exit
 - userごとのEngine単一起動、Settings crash/disconnectからのEngine独立、Engineだけのinput権限とconfig/IPC ownership
 - bounded typed message passing、single-owner state、Input callbackのnormalize/evaluate→essential credit reserve/send→best-effort render→return順序、fail-open
-- 各抑止対象hold event直前のnonblocking action credit、credit不足eventのpassとterminal cancel、accepted actionのsilent loss 0
+- 各抑止対象hold event直前のnonblocking action credit、credit不足eventのpass、trigger down抑止済みなら`Replay`/未抑止なら`Cancel`、hold中physical upでのbalanced replay、accepted actionのsilent loss 0
 - callback外Context workerのpointer sample、window/binding/target事前解決、point tolerance/age/generation/handle validityでのfresh判定、cached `BindingSetId`開始とasync target activation
-- Context snapshotがmissing/stale/invalidならtriggerをpassし、現行callback内同期query/activationは意図的に保存しないこと
+- fresh Contextでapp-specific matchなしの場合だけdefault bindingを使い、snapshotがmissing/stale/timeout/invalidならtriggerをpassして現行callback内同期query/activationを保存しないこと
 - OS/Tauri/IPCから独立したdomainとWindows/macOS native adapter、同じcanonical traceの同じdomain effect
-- `Continue | Execute(ActionId) | Replay(Trigger) | Cancel`のclosed terminal enumと、独立したrender effect
-- schema version、typed platform override、whole-field replacement、明示migration、platform capability validation
+- `Continue | Execute(ActionId) | Replay(Trigger) | Cancel`のclosed transition enum、terminal variant `Execute|Replay|Cancel`、独立したrender effect
+- schema version、application/binding以外のtyped overrideのwhole-field replacement、record単位`Shared|Windows|Macos` variant、lossless migration、platform capability validation
 - authenticated local IPC、protocol/revision conflict、1 MiB frame上限、Windows pipeのcurrent-user DACLとremote rejection、macOS socketのmode/peer UID
 - configのvalidate/compile、terminal `Commit | Abort`付きInput reservation、temp fsync、atomic replace、metadata sync、reserved `Commit`、success responseの順序
 - replace前failureの`Abort`、replace後metadata sync failureの`SuccessWithDurabilityWarning`、reserved `Commit` invariant違反時のterminate/restart
-- replace前crashは旧active file、replace後crashは新active fileをrestart時の正本にしてsnapshotを再構築すること
+- 通常のprocess crashはreplace前=旧/replace後=新active file、replace後metadata sync前のsystem/power crashはold/new不確定としてvalid candidate recoveryまたはdisabled/fail-openにすること
 - typed `OpenConfigDirectory` request/responseでEngine-owned pathだけをOS file managerに開くこと
 - Engine-owned window capture、replacement/early cancel/stale resultのtyped protocol
 - user-run reinstallでconfigを保持し、automatic updater責務を持たないこと
@@ -197,10 +198,10 @@ versioned measurement scriptとraw artifactの再生成もP01のexit gateに含�
 
 P01 manifestは少なくとも次を独立predicateへ分ける。
 
-- hold eventごとのcredit成功、credit不足時のpass/cancel、accepted action loss 0
+- hold eventごとのcredit成功、credit不足時のevent passと`Replay|Cancel`分岐、hold中physical upのbalanced replay、accepted action loss 0
 - Context cacheのpoint tolerance、age、generation、handle validity、fresh時開始、各stale/missing時pass、async activation
-- renderer lifecycle enqueue failureとactor death、current cancel/replay、Input bypass、新規gesture禁止、clean restart、point coalescing
-- config `Prepare`後の`Commit | Abort`、replace前failure、replace後durability warning、reserved delivery invariant、replace前後crash
+- renderer lifecycle enqueue failureとactor death、Input-owned sessionの`Replay|Cancel`、Input bypass、新規gesture禁止、clean restart、point coalescing
+- config `Prepare`後の`Commit | Abort`、replace前failure、replace後durability warning、reserved delivery invariant、process crashとsystem/power crash recovery
 - invalid config startup、last known valid維持、file非破壊、diagnostic recovery
 - typed `OpenConfigDirectory`のEngine-owned pathとarbitrary-path拒否
 
