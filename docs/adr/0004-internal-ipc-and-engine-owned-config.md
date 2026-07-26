@@ -132,10 +132,11 @@ uploadはEngine-owned temporary fileへ逐次writeし、downloadはclientが一c
 serialized document全体を一bufferへ読むheap allocation、chunk queue、declared total sizeによる事前allocationをしない。
 `FinishConfigUpload`は全chunkがcanonical Base64、strict order、declared length、SHA-256を満たすことだけを検証し、purpose、expected revision、descriptor、temporary pathを持つimmutable completed uploadにする。
 completed uploadはConfig transactionを開始せず、同じEngine-wide transfer slotとtemporary disk budgetを保持する。
-`ApplyConfig`/`ImportConfig`だけがpurposeとexpected revisionの一致するcompleted uploadをatomically takeして一度だけ消費し、temporary fileのstreaming JSON decodeからConfig transactionを開始する。
-request mismatch、decode/validation failure、明示abort、idle timeout、connection closeではtemporary fileを削除し、transfer slotとdisk budgetを解放してactive configを変更しない。
-transaction開始後は`Applied`またはterminal recoveryまでtransfer slotを保持し、temporary disk budgetはatomic replaceまたはfailure cleanupでfileを処理し終えるまで保持する。
-順序違反、duplicate、length超過、不一致hash、idle timeout、明示abort、connection closeではtransferをabortし、不完全temporary fileを削除してactive configを変更しない。
+`ApplyConfig`/`ImportConfig`だけがpurposeとexpected revisionの一致するcompleted uploadをConfig transactionのuploaded mutation sourceへ渡せる。`SetEnabled`はconfig transferを使わない。
+uploaded transaction開始後は`Applied`またはterminal recoveryまでtransfer slotを保持し、temporary disk budgetはatomic replaceまたはfailure cleanupでfileを処理し終えるまで保持する。
+logical commit point前のuploaded mutationにrequest mismatch、decode/validation failure、明示abort、idle timeout、connection closeが生じた場合はtransactionをabortし、temporary fileを削除してslotとdisk budgetを解放し、active configを変更しない。
+atomic replace後のclient abort、timeout、connection close、response enqueue failureはclient responseだけを破棄する。Config ownerはrollbackせず`Commit`から`Applied`、必要なretired tracking、resource releaseまで完遂する。
+incomplete transferの順序違反、duplicate、length超過、不一致hash、idle timeout、明示abort、connection closeではtransferをabortし、不完全temporary fileを削除してactive configを変更しない。
 
 Config ownerはdecode/compileを同時に一件だけ実行し、stateを`active + (candidate | retired)`の最大二revisionへ固定する。
 snapshotを直接pinできる非Config ownerは、進行中gestureを所有するInputだけとし、他ownerはgeneration IDまたは必要なderived valueだけを受け取る。
@@ -143,12 +144,12 @@ candidateとretiredは排他であり、retiredが存在する間は次transacti
 candidate compileはactiveとcandidateの二slotとして計上し、旧activeをpinする進行中gestureを中断しない。
 `Commit` delivery後もConfigはcandidateとtransactionを保持し、Inputが新generationへactive pointerをswapして`Applied(new_generation, retired_old_pin_count)`を返すまでsuccessを返さず次transactionを開始しない。
 `Applied`後にcandidateをactiveへ移し、old pin countが0なら旧activeを解放し、1以上なら同じ第二slotをretiredへ移す。
-Inputは旧generationを使う最後のgesture完了時に`GenerationReleased(old_generation)`を送り、Configだけがretiredとそのbudget chargeを解放する。
-Input owner death、`Applied`不能、generation不一致はreserved `Commit` invariant failureとしてEngineをterminate/restartし、diskから一世代だけを再構築する。
+`PrepareConfig`は`Commit`前に、唯一のretired generation用preallocated lossless release/control slotも既存essential control laneから一枠reserveする。Input pointer swap時からConfigの旧snapshot解放までreservationを保持し、pin countが0なら`Applied`処理で解放し、1以上なら最後の旧gesture完了時に同じ枠で`GenerationReleased(old_generation)`を送り、Configだけがretiredとbudget chargeを解放する。
+reserved slotへのenqueue不能、Config owner failure、Input owner death、`Applied`不能、generation不一致はprotocol invariant failureとし、新しいgestureとconfig更新を停止してEngineをfail-openでterminate/restartし、diskから一世代だけを再構築する。
 Config compiler固有のchecked counterで、Inputがpinするretiredを含む全owner・全generationのsnapshot heap allocationと現在のdecode/compile scratch allocationを合計64 MiB以下に制限する。
 container capacity、decoded string/action payload、index、scratch bufferをallocation前に加算してfallible reserveし、超過は`ResourceLimit`としてcandidateだけを破棄する。
 temporary fileの64 MiB disk budgetと、この64 MiB accounted memory budgetは別々のEngine aggregate ceilingであり、通常時allocationまたはidle RSSの目標値ではない。
-二slotを超えるgeneration table、汎用RCU/refcount/resource manager、任意blob用budget frameworkは作らない。
+二slotを超えるgeneration table、汎用RCU/refcount/resource manager、reliable bus、任意blob用budget frameworkは作らない。
 
 config schema自体にはlogical total-size上限を追加しないが、64 MiBを超える既存valid v1 documentのactive化とcompileは互換性の明示例外とする。
 その場合も元fileを変更、削除、truncate、暗黙default化せず、gestureをdisableしてinputをfail-openにする。
@@ -161,9 +162,11 @@ storage、budget、fallible decode failureはactive configを変更しない非�
 
 EngineのConfig ownerだけが次の順で更新する。
 
-1. `ApplyConfig`/`ImportConfig` requestがcompleted uploadをatomically takeし、purpose、expected revision、descriptorを検証して一度だけ消費する。
-2. temporary fileをstreaming decodeし、schema versionとplatform capabilityを含むsemantic validationを一度だけ行い、次revisionのimmutable runtime snapshotへcompileする。
-3. Inputに`PrepareConfig(revision, snapshot)`を送り、terminal `Commit | Abort`専用delivery slotをreserveしたackを得る。Inputはまだactive snapshotを変更しない。
+Settings IPCとEngine trayからの変更は境界で共通のexpected revisionと`ConfigMutationSource::Uploaded(Apply | Import, completed_upload) | SetEnabled(enabled)`のclosed enum一つへnormalizeする。
+
+1. expected revisionを検証する。`Uploaded`はpurposeとdescriptorを検証してcompleted uploadをatomically takeし一度だけ消費し、`SetEnabled`はactive schema documentとsnapshotから`enabled`だけを置換したcandidate documentを生成する。
+2. sourceをcandidate documentへnormalizeし、schema versionとplatform capabilityを含むsemantic validationを一度だけ行い、次revisionのimmutable runtime snapshotへcompileする。`Uploaded`のJSONだけをtemporary fileからstreaming decodeする。
+3. Inputに`PrepareConfig(revision, snapshot)`を送り、terminal `Commit | Abort`専用delivery slotとretired release/control slotをreserveしたackを得る。Inputはまだactive snapshotを変更しない。
 4. active fileと同じdirectoryのtemporary fileへserializeし、flush/fsyncする。
 5. temporary fileをactive fileへatomic replaceする。この成功をlogical commit pointとする。
 6. directory metadata syncを試みる。

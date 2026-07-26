@@ -97,15 +97,16 @@ activationとaction以外へ再利用する汎用ack frameworkは作らない。
 
 Inputはrecognition transitionと別に、一session一枠のpreallocated action completion recordのlifecycleとcaptured triggerを所有する。
 record内のphaseはExecutorだけが書くmonotonic atomicであり、Inputはterminal resultまたはExecutor owner death後に読む。
+recordはInputだけが更新する`physical_up: NotObserved | ObservedAndSuppressed`も初期値`NotObserved`で持ち、pending中に対応するphysical upが来た場合だけ抑止して後者へ進め、他eventはpassする。
 action-producing eventを抑止する前に、Executor credit、completion record、captured-trigger replay obligationを全てreserveする。
-一枠がpending中は同sessionの次actionをacceptせず、hold sessionはterminal result後に同じ空き枠を再利用する。
+一枠がpendingまたはReplay cleanup中は同sessionの次actionをacceptせず、hold sessionはterminal cleanup後に同じ空き枠を再利用する。
 
 accepted actionは`PendingBeforeInjection`から、Executorのterminal resultで`Completed | FailedBeforeInjection | FailedAfterInjection`のどれか一つへ閉じる。
 Executorは最初のOS injection API callへ入る直前にpreallocated result slotを`InjectionStarted`へ進め、この更新とcallの間ではcooperative stopを受け付けない。
 Executor owner deathまたはterminal lane closeでは、Inputはstableなphaseが`PendingBeforeInjection`なら`FailedBeforeInjection`、`InjectionStarted`なら`FailedAfterInjection`として同じterminal policyを適用する。
-`InjectionStarted`前の停止またはzero-event failureだけを`FailedBeforeInjection`とし、Inputはcompletion recordのcaptured triggerへ[captured-trigger failure rule](#captured-trigger-failure-rule)を適用する。
+`InjectionStarted`前の停止またはzero-event failureだけを`FailedBeforeInjection`とし、Inputはcompletion recordのcaptured triggerへ[captured-trigger failure rule](#captured-trigger-failure-rule)を適用する。`ObservedAndSuppressed`なら既存reserved emergency slotへsynthetic down/upを即時enqueueしてReplayを完了し、`NotObserved`なら対応upを待って抑止してから同じpairをenqueueする。他eventはpassし、新しいqueueは追加しない。
 `InjectionStarted`後の停止、partial injection、結果不明は`FailedAfterInjection`とし、triggerをreplayして二重実行せず、terminal diagnosticを記録してInput bypassとExecutor recoveryへ進む。
-`FinishWithAction`がrecognition sessionを閉じても、Inputはこのrecordをterminal resultまで保持する。
+`FinishWithAction`がrecognition sessionを閉じても、Inputはこのrecordをterminal resultと必要なReplay cleanupが完了するまで保持する。
 汎用journal、複数action ledger、永続queueは追加しない。
 
 ## Backpressure
@@ -161,7 +162,7 @@ replayも保証できない状態では、新規抑止を即時停止してdiagn
 - gesture transitionは`Continue`、`ContinueWithAction`、`Complete`、`FinishWithAction`、`Replay`、`Cancel`のclosed enum一つで表し、一eventで一variantだけを選ぶ。
 - accepted済みhold actionはsessionを継続し、trigger upは`Complete`してreplayしない。
 - session-bound targetが`Ready`になる前にactionをacceptせず、activationとactionの順序は同じExecutor FIFOが所有する。
-- accepted action completion recordは一session一枠で、recognition session終了後もterminal resultまでInputが保持する。
+- accepted action completion recordは一session一枠で、recognition session終了後もterminal resultと必要なReplay cleanupまでInputが保持する。
 - Renderer generationはInput generationより進まず、終了済みgenerationを再表示しない。
 - candidate config revisionは最大一つで、`Abort`、`Applied`、またはprocess終了によってだけ解放する。`Commit` deliveryだけでは解放しない。
 - accepted action、render lifecycle、replay、committed config、shutdownをsilent dropしない。
