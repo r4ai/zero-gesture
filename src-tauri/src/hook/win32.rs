@@ -23,16 +23,16 @@ use windows_sys::Win32::{
     },
 };
 
+use crate::config::Action;
+use crate::domain::{
+    Decision, Disposition, GestureInput, GestureMachine, GestureTransition, MouseEvent, Point,
+    RenderEffect, ReplayRequest, TriggerButton,
+};
 use crate::executor;
-use crate::executor::Action;
 use crate::overlay::OverlayCommand;
 
 use super::app_match::match_app;
-use super::state::{
-    check_safety_timeout, process_event_pure, GestureState, HookConfig, MouseEvent, ReplayRequest,
-};
-use super::trigger::TriggerButton;
-use super::HookControl;
+use super::{HookConfig, HookControl};
 
 /// Custom message used to replay trigger-button operation outside hook callback.
 ///
@@ -52,10 +52,10 @@ const SAFETY_TIMER_ID: usize = 1;
 
 /// All mutable state for the hook thread, stored in [`HOOK_STATE`].
 struct HookThreadState {
-    /// Current position in the gesture state machine.
-    state: GestureState,
-    /// Snapshotted configuration (no locks in callback hot path).
-    config: HookConfig,
+    /// Portable gesture recognition and session decisions.
+    machine: GestureMachine,
+    /// Windows application matchers used before a gesture starts.
+    apps: Vec<super::app_match::CompiledApp>,
     /// Channel to the overlay thread.
     overlay_tx: Sender<OverlayCommand>,
     /// Deferred trigger-button replay request from hook callback.
@@ -91,7 +91,8 @@ pub(super) fn run_loop_win32(
     control_rx: Receiver<HookControl>,
 ) {
     unsafe {
-        let safety_timeout_ms = hook_config.safety_timeout_ms;
+        let safety_timeout_ms = hook_config.gesture.safety_timeout_ms;
+        let HookConfig { apps, gesture } = hook_config;
 
         let tid = GetCurrentThreadId();
         tid_arc.store(tid, Ordering::Release);
@@ -112,8 +113,8 @@ pub(super) fn run_loop_win32(
 
         HOOK_STATE.with(|cell| {
             *cell.borrow_mut() = Some(HookThreadState {
-                state: GestureState::Idle,
-                config: hook_config,
+                machine: GestureMachine::new(gesture),
+                apps,
                 overlay_tx,
                 pending_replay: None,
                 pending_actions: VecDeque::new(),
@@ -217,50 +218,74 @@ unsafe extern "system" fn low_level_mouse_proc(
 fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> bool {
     let event = to_mouse_event(msg, info);
     let tick = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount() };
-    let pt = (info.pt.x, info.pt.y);
+    let point = Point::new(info.pt.x, info.pt.y);
 
-    let matched_app = match (&hs.state, event) {
-        (GestureState::Idle, MouseEvent::ButtonDown(trigger))
-            if hs.config.has_any_binding_for_trigger(trigger) =>
-        {
-            let activated_target = activate_window_at_point(pt.0, pt.1);
+    let matched_app = match event {
+        MouseEvent::ButtonDown(trigger) if hs.machine.can_start(trigger) => {
+            let activated_target = activate_window_at_point(point.x, point.y);
             let window_info = if let Some(hwnd) = activated_target {
                 crate::window_info::get_window_info_by_hwnd(hwnd)
             } else {
                 crate::window_info::get_foreground_window_info()
             };
             debug!("window info: {:?}", window_info);
-            match_app(&hs.config.apps, &window_info).map(|id| id.to_owned())
+            match_app(&hs.apps, &window_info).map(str::to_owned)
         }
         _ => None,
     };
 
-    let effect = process_event_pure(&mut hs.state, &hs.config, event, pt, tick, matched_app);
+    let decision = hs.machine.handle(GestureInput::Pointer {
+        event,
+        point,
+        tick,
+        matched_app,
+    });
+    apply_decision(hs, decision)
+}
 
-    for cmd in effect.overlay_commands {
-        let _ = hs.overlay_tx.send(cmd);
+fn apply_decision(hs: &mut HookThreadState, decision: Decision) -> bool {
+    for effect in decision.render {
+        let command = match effect {
+            RenderEffect::StartGesture => OverlayCommand::StartGesture,
+            RenderEffect::TrackPoint(point) => OverlayCommand::TrackPoint {
+                x: point.x,
+                y: point.y,
+            },
+            RenderEffect::UpdateLabel(label) => OverlayCommand::UpdateLabel(label),
+            RenderEffect::EndGesture => OverlayCommand::EndGesture,
+        };
+        let _ = hs.overlay_tx.send(command);
     }
 
-    if let Some(replay) = effect.request_replay {
-        hs.pending_replay = Some(replay);
-        unsafe {
-            PostThreadMessageW(GetCurrentThreadId(), WM_REPLAY_OPERATION, 0, 0);
+    match decision.transition {
+        GestureTransition::Continue | GestureTransition::Complete | GestureTransition::Cancel => {}
+        GestureTransition::ContinueWithAction { action, repeat } => {
+            queue_action(hs, action, repeat);
         }
-    }
-
-    if let Some(execute_request) = effect.request_execute {
-        let should_post = hs.pending_actions.is_empty();
-        for _ in 0..usize::from(execute_request.repeat) {
-            hs.pending_actions.push_back(execute_request.action.clone());
+        GestureTransition::FinishWithAction { action } => {
+            queue_action(hs, action, 1);
         }
-        if should_post {
+        GestureTransition::Replay(replay) => {
+            hs.pending_replay = Some(replay);
             unsafe {
-                PostThreadMessageW(GetCurrentThreadId(), WM_EXECUTE_ACTION, 0, 0);
+                PostThreadMessageW(GetCurrentThreadId(), WM_REPLAY_OPERATION, 0, 0);
             }
         }
     }
 
-    effect.suppress
+    decision.disposition == Disposition::Suppress
+}
+
+fn queue_action(hs: &mut HookThreadState, action: Action, repeat: u16) {
+    let should_post = hs.pending_actions.is_empty();
+    for _ in 0..usize::from(repeat) {
+        hs.pending_actions.push_back(action.clone());
+    }
+    if should_post {
+        unsafe {
+            PostThreadMessageW(GetCurrentThreadId(), WM_EXECUTE_ACTION, 0, 0);
+        }
+    }
 }
 
 /// Convert Win32 mouse message IDs into hook-level [`MouseEvent`].
@@ -317,15 +342,11 @@ fn handle_safety_timer() {
         };
 
         let tick = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount() };
-        let stuck = check_safety_timeout(&hs.state, tick, hs.config.safety_timeout_ms);
-
-        if stuck {
+        let decision = hs.machine.handle(GestureInput::SafetyTimer { tick });
+        if decision.transition == GestureTransition::Cancel {
             warn!("Safety timer: resetting stuck state to Idle");
-            if matches!(hs.state, GestureState::Gesturing { .. }) {
-                let _ = hs.overlay_tx.send(OverlayCommand::EndGesture);
-            }
-            hs.state = GestureState::Idle;
         }
+        apply_decision(hs, decision);
     });
 }
 
@@ -360,12 +381,12 @@ fn handle_replay_operation() {
     });
 
     if let Some(replay) = replay {
-        let (down_x, down_y) = screen_to_absolute(replay.down_at.0, replay.down_at.1);
-        let (up_x, up_y) = screen_to_absolute(replay.up_at.0, replay.up_at.1);
+        let (down_x, down_y) = screen_to_absolute(replay.down_at.x, replay.down_at.y);
+        let (up_x, up_y) = screen_to_absolute(replay.up_at.x, replay.up_at.y);
         let base = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
         let inputs = [
-            make_mouse_input(down_x, down_y, base | replay.trigger.send_input_down_flag()),
-            make_mouse_input(up_x, up_y, base | replay.trigger.send_input_up_flag()),
+            make_mouse_input(down_x, down_y, base | trigger_down_flag(replay.trigger)),
+            make_mouse_input(up_x, up_y, base | trigger_up_flag(replay.trigger)),
         ];
 
         let sent = unsafe {
@@ -384,9 +405,33 @@ fn handle_replay_operation() {
         } else {
             debug!(
                 "Replayed trigger operation {:?} down_at=({}, {}), up_at=({}, {})",
-                replay.trigger, replay.down_at.0, replay.down_at.1, replay.up_at.0, replay.up_at.1
+                replay.trigger, replay.down_at.x, replay.down_at.y, replay.up_at.x, replay.up_at.y
             );
         }
+    }
+}
+
+fn trigger_down_flag(trigger: TriggerButton) -> u32 {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_RIGHTDOWN,
+    };
+
+    match trigger {
+        TriggerButton::Left => MOUSEEVENTF_LEFTDOWN,
+        TriggerButton::Right => MOUSEEVENTF_RIGHTDOWN,
+        TriggerButton::Middle => MOUSEEVENTF_MIDDLEDOWN,
+    }
+}
+
+fn trigger_up_flag(trigger: TriggerButton) -> u32 {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_RIGHTUP,
+    };
+
+    match trigger {
+        TriggerButton::Left => MOUSEEVENTF_LEFTUP,
+        TriggerButton::Right => MOUSEEVENTF_RIGHTUP,
+        TriggerButton::Middle => MOUSEEVENTF_MIDDLEUP,
     }
 }
 
@@ -455,5 +500,38 @@ fn activate_window_at_point(x: i32, y: i32) -> Option<windows_sys::Win32::Founda
         debug!("activate_window_at_point: activating window {target:?} at ({x}, {y})");
         let _ = SetForegroundWindow(target);
         Some(target)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP,
+        MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP,
+    };
+
+    #[test]
+    fn wheel_translation_preserves_sign_and_notch_count() {
+        assert_eq!(wheel_delta((240_u32) << 16), 240);
+        assert_eq!(wheel_steps(240), 2);
+        assert_eq!(wheel_delta(((-120_i16) as u16 as u32) << 16), -120);
+        assert_eq!(wheel_steps(-120), 1);
+    }
+
+    #[test]
+    fn trigger_replay_flags_match_win32_buttons() {
+        assert_eq!(trigger_down_flag(TriggerButton::Left), MOUSEEVENTF_LEFTDOWN);
+        assert_eq!(trigger_up_flag(TriggerButton::Left), MOUSEEVENTF_LEFTUP);
+        assert_eq!(
+            trigger_down_flag(TriggerButton::Right),
+            MOUSEEVENTF_RIGHTDOWN
+        );
+        assert_eq!(trigger_up_flag(TriggerButton::Right), MOUSEEVENTF_RIGHTUP);
+        assert_eq!(
+            trigger_down_flag(TriggerButton::Middle),
+            MOUSEEVENTF_MIDDLEDOWN
+        );
+        assert_eq!(trigger_up_flag(TriggerButton::Middle), MOUSEEVENTF_MIDDLEUP);
     }
 }

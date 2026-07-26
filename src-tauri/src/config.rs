@@ -6,7 +6,16 @@ use std::path::{Path, PathBuf};
 use log::warn;
 use serde::{Deserialize, Serialize};
 
-use crate::executor::Action;
+/// An action emitted by a matching gesture.
+///
+/// Uses serde's internally-tagged representation so current configuration
+/// documents retain `{ "type": "keyboard", "keys": [...] }`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum Action {
+    /// Simulate a keyboard shortcut by pressing the keys simultaneously.
+    Keyboard { keys: Vec<String> },
+}
 
 /// What property of the foreground window to inspect.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

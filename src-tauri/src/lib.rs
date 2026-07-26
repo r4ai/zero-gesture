@@ -1,8 +1,8 @@
 pub mod capture;
 pub mod commands;
 pub mod config;
+mod domain;
 pub mod executor;
-pub mod gesture;
 mod hook;
 #[path = "log.rs"]
 mod log_config;

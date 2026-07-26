@@ -153,17 +153,18 @@ TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成
 │   │   ├── config.rs           // 設定データ構造体
 │   │   ├── commands.rs         // Tauri IPC コマンドハンドラ
 │   │   ├── executor.rs         // アクション実行 (SendInput等)
-│   │   ├── gesture.rs          // ジェスチャー方向計算
+│   │   ├── domain/
+│   │   │   ├── mod.rs         // portable gesture module interface
+│   │   │   ├── recognition.rs // ジェスチャー方向計算
+│   │   │   └── session.rs     // session stateとclosed decision/effect
 │   │   ├── tray.rs             // システムトレイ管理
 │   │   ├── capture.rs          // ウィンドウキャプチャ
 │   │   ├── window_info.rs      // アクティブウィンドウ情報取得
 │   │   ├── log.rs              // ログ設定
 │   │   ├── hook/
 │   │   │   ├── mod.rs          // フック起動・バインディングコンパイル
-│   │   │   ├── win32.rs        // Win32メッセージループ、フックコールバック
-│   │   │   ├── state.rs        // ジェスチャー状態機械
 │   │   │   ├── app_match.rs    // アプリ名マッチング
-│   │   │   └── trigger.rs      // トリガーボタン定義
+│   │   │   └── win32.rs        // Win32 callback、変換、effect適用
 │   │   └── overlay/
 │   │       ├── mod.rs          // TrailRendererトレイト、OverlayCommand定義
 │   │       ├── window.rs       // Win32ウィンドウ作成・メッセージループ

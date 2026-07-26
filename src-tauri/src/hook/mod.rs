@@ -16,8 +16,7 @@
 //! ## State Machine
 //!
 //! The runtime state machine has two states (`Idle`, `Gesturing`) with all
-//! transitions defined by [`state::process_event_pure`] plus the safety timer
-//! handler in `win32`.
+//! transitions defined by the portable [`crate::domain::GestureMachine`].
 //!
 //! ```text
 //! Initial: Idle
@@ -66,8 +65,6 @@
 //! stays natural while a gesture session is active.
 
 mod app_match;
-mod state;
-mod trigger;
 #[cfg(windows)]
 mod win32;
 
@@ -80,16 +77,18 @@ use crossbeam_channel::Sender;
 use log::{info, warn};
 
 use crate::config::AppConfig;
+use crate::domain::{AppBindingSet, GestureConfig, HoldBinding, ReleaseBinding, TriggerButton};
 use crate::executor::generate_label;
 use crate::overlay::OverlayCommand;
 use crate::SharedConfig;
 
-use app_match::{
-    compile_matcher, AppBindingSet, CompiledApp, CompiledGestureBinding, CompiledHoldBinding,
-    CompiledMatcher,
-};
-use state::HookConfig;
-use trigger::TriggerButton;
+use app_match::{compile_matcher, CompiledApp, CompiledMatcher};
+
+/// Windows context configuration plus the portable decision configuration.
+struct HookConfig {
+    apps: Vec<CompiledApp>,
+    gesture: GestureConfig,
+}
 
 // ---------------------------------------------------------------------------
 // Public interface
@@ -110,11 +109,11 @@ fn compile_bindings_for_app(
     app_id: &str,
     app_bindings: &[crate::config::GestureBinding],
 ) -> AppBindingSet {
-    let mut release_bindings: Vec<CompiledGestureBinding> = Vec::new();
-    let mut hold_bindings: Vec<CompiledHoldBinding> = Vec::new();
+    let mut release_bindings: Vec<ReleaseBinding> = Vec::new();
+    let mut hold_bindings: Vec<HoldBinding> = Vec::new();
 
     for binding in app_bindings {
-        let trigger = TriggerButton::from_config(&binding.gesture.trigger);
+        let trigger = trigger_from_config(&binding.gesture.trigger);
         let label = binding
             .label
             .clone()
@@ -123,7 +122,7 @@ fn compile_bindings_for_app(
         match binding.gesture.mode {
             crate::config::GestureMode::Release => {
                 let sequence = binding.gesture.sequence.clone();
-                release_bindings.push(CompiledGestureBinding {
+                release_bindings.push(ReleaseBinding {
                     trigger,
                     sequence,
                     action: binding.action.clone(),
@@ -138,7 +137,7 @@ fn compile_bindings_for_app(
                     );
                     continue;
                 };
-                hold_bindings.push(CompiledHoldBinding {
+                hold_bindings.push(HoldBinding {
                     trigger,
                     sequence: binding.gesture.sequence.clone(),
                     step,
@@ -152,6 +151,14 @@ fn compile_bindings_for_app(
     AppBindingSet {
         release_bindings,
         hold_bindings,
+    }
+}
+
+fn trigger_from_config(trigger: &crate::config::TriggerButton) -> TriggerButton {
+    match trigger {
+        crate::config::TriggerButton::LeftClick => TriggerButton::Left,
+        crate::config::TriggerButton::RightClick => TriggerButton::Right,
+        crate::config::TriggerButton::MiddleClick => TriggerButton::Middle,
     }
 }
 
@@ -245,14 +252,16 @@ pub fn spawn(
         }
 
         HookConfig {
-            safety_timeout_ms: cfg.safety_timeout_ms,
-            min_segment_px: cfg.min_segment_px,
-            direction_switch_confirm_px: cfg.direction_switch_confirm_px,
-            axis_ambiguity_deadzone_px: cfg.axis_ambiguity_deadzone_px,
-            replay_distance_threshold_px: cfg.replay_distance_threshold_px,
-            max_gesture_steps: AppConfig::MAX_GESTURE_STEPS,
             apps,
-            binding_sets,
+            gesture: GestureConfig {
+                safety_timeout_ms: cfg.safety_timeout_ms,
+                min_segment_px: cfg.min_segment_px,
+                direction_switch_confirm_px: cfg.direction_switch_confirm_px,
+                axis_ambiguity_deadzone_px: cfg.axis_ambiguity_deadzone_px,
+                replay_distance_threshold_px: cfg.replay_distance_threshold_px,
+                max_gesture_steps: AppConfig::MAX_GESTURE_STEPS,
+                binding_sets,
+            },
         }
     };
 
@@ -277,8 +286,8 @@ pub fn spawn(
 mod tests {
     use super::*;
 
-    fn keyboard_action(key: &str) -> crate::executor::Action {
-        crate::executor::Action::Keyboard {
+    fn keyboard_action(key: &str) -> crate::config::Action {
+        crate::config::Action::Keyboard {
             keys: vec![key.to_string()],
         }
     }

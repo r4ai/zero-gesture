@@ -10,7 +10,7 @@ const validCase = {
   id: "P02-WIN-001",
   obligation: "A configured trigger starts a gesture.",
   runner: "cargo-test",
-  evidence_file: "src-tauri/src/hook/state.rs",
+  evidence_file: "src-tauri/src/domain/session.rs",
   evidence_name: "idle_starts_gesture_on_configured_trigger",
 }
 
@@ -51,7 +51,7 @@ test("rejects missing evidence files", () => {
 
 test("rejects a commented source marker absent from the Cargo test list", () => {
   const repo = mkdtempSync(path.join(tmpdir(), "contracts-cargo-list-"))
-  const evidence = path.join(repo, "src-tauri", "src", "hook", "state.rs")
+  const evidence = path.join(repo, "src-tauri", "src", "domain", "session.rs")
   mkdirSync(path.dirname(evidence), { recursive: true })
   writeFileSync(evidence, "/* #[test]\nfn commented_marker() {}\n*/\n")
 

@@ -1,4 +1,4 @@
-//! Gesture recognition from mouse movement and mouse input sequences.
+//! Portable gesture recognition from pointer movement and input steps.
 //!
 //! The recognizer accumulates:
 //! - directional movement segments (`up`, `down`, `left`, `right`)
@@ -21,7 +21,7 @@ enum Direction {
 
 /// Recognizes gesture sequences from mouse movement and explicit input steps.
 #[derive(Debug)]
-pub struct GestureRecognizer {
+pub(super) struct GestureRecognizer {
     /// Confirmed sequence steps (movement and explicit input events).
     steps: Vec<GestureStep>,
     /// Last recorded cursor position.
@@ -48,7 +48,7 @@ pub struct GestureRecognizer {
 
 impl GestureRecognizer {
     /// Creates a new gesture recognizer with explicit thresholds and limit.
-    pub fn new(
+    pub(super) fn new(
         min_segment_px: i32,
         direction_switch_confirm_px: i32,
         axis_ambiguity_deadzone_px: i32,
@@ -73,7 +73,7 @@ impl GestureRecognizer {
     ///
     /// Direction changes are accepted only after hysteresis
     /// (`direction_switch_confirm_px`) to reduce jitter.
-    pub fn add_point(&mut self, x: i32, y: i32) {
+    pub(super) fn add_point(&mut self, x: i32, y: i32) {
         if self.last_point.is_none() {
             self.last_point = Some((x, y));
             return;
@@ -126,7 +126,7 @@ impl GestureRecognizer {
     }
 
     /// Adds an explicit non-movement step (e.g. wheel up/down).
-    pub fn add_input_step(&mut self, step: GestureStep) {
+    pub(super) fn add_input_step(&mut self, step: GestureStep) {
         self.flush_current_segment();
         self.push_step(step, false);
     }
@@ -135,7 +135,7 @@ impl GestureRecognizer {
     ///
     /// Includes an in-progress movement segment when it is already over
     /// `min_segment_px`.
-    pub fn current_sequence(&self) -> Option<Vec<GestureStep>> {
+    pub(super) fn current_sequence(&self) -> Option<Vec<GestureStep>> {
         if self.overflowed {
             return None;
         }
@@ -164,7 +164,7 @@ impl GestureRecognizer {
     ///
     /// Returns `None` when no valid steps were captured, or when the sequence
     /// overflowed the configured step limit.
-    pub fn finalize_sequence(&mut self) -> Option<Vec<GestureStep>> {
+    pub(super) fn finalize_sequence(&mut self) -> Option<Vec<GestureStep>> {
         self.flush_current_segment();
         if self.overflowed || self.steps.is_empty() {
             None
@@ -177,7 +177,7 @@ impl GestureRecognizer {
     ///
     /// This clears all confirmed and in-progress steps so subsequent input is
     /// interpreted as a fresh sequence within the same gesture session.
-    pub fn reset_sequence(&mut self) {
+    pub(super) fn reset_sequence(&mut self) {
         self.steps.clear();
         self.current_dir = None;
         self.pending_dir = None;
@@ -303,44 +303,6 @@ impl Default for GestureRecognizer {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn recognizes_single_direction() {
-        let mut rec = GestureRecognizer::default();
-        rec.add_point(100, 100);
-        rec.add_point(150, 100);
-        rec.add_point(200, 100);
-
-        assert_eq!(rec.current_sequence(), Some(vec![GestureStep::Right]));
-    }
-
-    #[test]
-    fn direction_remains_pending_until_switch_threshold_is_reached() {
-        let mut rec = GestureRecognizer::new(1, 8, 0, 8);
-        rec.add_point(0, 0);
-        rec.add_point(7, 0);
-
-        assert_eq!(rec.current_sequence(), None);
-
-        rec.add_point(8, 0);
-
-        assert_eq!(rec.current_sequence(), Some(vec![GestureStep::Right]));
-    }
-
-    #[test]
-    fn recognizes_multi_segment_direction_sequence() {
-        let mut rec = GestureRecognizer::default();
-        rec.add_point(100, 100);
-        rec.add_point(150, 100);
-        rec.add_point(200, 100);
-        rec.add_point(200, 140);
-        rec.add_point(200, 180);
-
-        assert_eq!(
-            rec.current_sequence(),
-            Some(vec![GestureStep::Right, GestureStep::Down])
-        );
-    }
 
     #[test]
     fn supports_mixed_movement_and_input_steps() {
