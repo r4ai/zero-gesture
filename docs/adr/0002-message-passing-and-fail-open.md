@@ -44,7 +44,8 @@ OS callbackのeventをmailboxへ送り、別ownerの回答を待つ設計は禁�
 OS callback
   -> Input ownerが同じthreadでpure state transitionを評価
   -> pass / suppressを同期return
-  -> render / action / diagnosticsをbest-effort messageとして送る
+  -> reserved laneへessential effectを送る
+  -> render point / metricsだけをbest-effortで送る
 ```
 
 callbackは次を行わない。
@@ -67,10 +68,16 @@ backpressure policyはmessage種別ごとに固定する。
 | Flow | Policy when full or slow |
 | --- | --- |
 | Input to Renderer points | intermediate pointをcoalesceし、latest pointを優先する |
-| Input to Renderer lifecycle | generation付きのlatest desired render stateへ収束させ、古いsessionを描かない |
-| Input to Executor | 新規gestureをdegradedとして停止し、既に抑止したtriggerは安全にreplayして以後を通す |
-| Control to Input | latest immutable config/enable stateだけをevent境界で取得する |
-| Metrics | counter/histogram updateだけを行い、個別event logをdropできる |
+| Input to Renderer lifecycle | lossless control laneへ保持する。送れない場合は当該generationの描画を開始せず、rendererを終了状態へ移して新規gestureをfail-openにする |
+| Input to Executor | gesture開始前にcapacityをreserveする。accepted actionは保持し、実行不能ならtrigger replayを試みて新規gestureをfail-openにする |
+| Input replay | preallocated emergency slotへ保持する。schedule不能なら新規抑止を停止し、terminal degraded stateとして報告する |
+| Config to Input | committed revisionをack付きで配送する。配送不能ならcommitを成功扱いにせず、旧snapshotを維持する |
+| Supervisor shutdown | 専用control laneへ保持する。送信失敗はowner終了として扱い、supervisorがresource解放とjoinを完了する |
+| Metrics | sampleまたは個別eventだけをdropできる。counterはaggregateした値へ収束させる |
+
+lossまたはcoalesceを許すのは中間render pointとdiagnostic metricsだけである。
+action、render lifecycle、replay、committed config、shutdownはsilent dropしない。
+保持できなければ上表のfail-open terminal transitionを同期的に選び、新規input抑止を開始しない。
 
 custom unsafe lock-free queueは実装しない。
 既存の検証済みprimitiveで要求を満たせないことをbenchmarkで示した場合だけ、別ADRで範囲とmemory modelを定める。
@@ -98,6 +105,7 @@ replayも保証できない状態では、新規抑止を即時停止してdiagn
 - owner間で共有するconfigはimmutable snapshotであり、revisionとgenerationは一つの値から導出する。
 - gestureのterminal transitionはexecute、replay、cancelのいずれか一つである。
 - Renderer generationはInput generationより進まず、終了済みgenerationを再表示しない。
+- accepted action、render lifecycle、replay、committed config、shutdownをsilent dropしない。
 - shutdownはidempotentで、hook/event tapを先にpass-through状態へ移してからownerをjoinする。
 
 ## Consequences

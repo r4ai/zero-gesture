@@ -26,7 +26,6 @@ Tauriは次を担う。
 - Settings modeのWebViewとReact bridge
 - Engine modeのnative tray/status item
 - login時起動の登録
-- 将来必要になった場合のupdater統合点
 
 Tauri commandへinput hookやgesture state machineを置かない。
 Engine modeはTauriをnative shellとして利用しても、WebViewを生成しない。
@@ -37,8 +36,10 @@ EngineはOS userごとに一つだけendpointを所有する。
 trayの「Settings」は同じexecutableを`--settings`で起動する。
 SettingsからEngineが見つからない場合も、同じexecutableを`--engine`で起動し、bounded timeout内でIPC接続を再試行する。
 
-login時起動は、Tauriのautostart機能を第一候補とする。
+login時起動は、Tauriのautostart pluginへ`--engine`を渡す経路を第一候補とする。
 登録対象は同一executableのEngine modeであり、別helperを通常経路にしない。
+現pluginのmacOS backendがAppleの現行推奨方式であるとは仮定せず、実機spikeで
+LaunchAgentの引数、user拒否状態、再インストール後の登録を検証する。
 
 ## External contract
 
@@ -63,7 +64,7 @@ macOSの最初のpackaging PRは、署名・notarizeしたrelease artifactで次
 1. Tauriのautostart登録が同一executableをEngine modeで起動できる。
 2. login後にwindow/WebViewを生成しない。
 3. tray/status itemからSettings modeを起動できる。
-4. update相当の再インストール後も登録と設定が保持される。
+4. 新versionの再インストール後も登録と設定が保持される。
 5. Input MonitoringとAccessibilityの権限主体が安定した署名identityとして認識される。
 
 このgateが満たせないことを再現手順とartifactで実証した場合だけ、nested Login Item/helper appを候補にする。

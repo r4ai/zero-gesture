@@ -65,8 +65,24 @@ ImportConfig(expected_revision, document)
 ExportConfig
 GetDiagnostics
 OpenSettingsRequested
+StartWindowCapture
+CancelWindowCapture(capture_id)
 ShutdownEngine
 ```
+
+EngineからSettingsへのtyped eventは次に限定する。
+
+```text
+ConfigChanged(revision)
+HealthChanged(snapshot)
+WindowCaptureResult(capture_id, outcome, window_identity)
+```
+
+window captureのhook、active capture ID、cancel stateはEngineが所有する。
+`StartWindowCapture`は既存captureを停止してから新しいIDを返し、即時の
+`CancelWindowCapture`もhook install前後のどちらで到着しても観測される。
+結果はcapture IDと対応し、cancelledまたは置換済みIDから成功eventを送らない。
+SettingsはTauri event名やprocess-local mutexをcaptureの正準protocolにしない。
 
 汎用command実行、任意file read/write、raw OS input injectionを公開しない。
 methodごとにtyped requestへdecodeし、境界通過後にJSON objectやdynamic mapを持ち回らない。
@@ -103,11 +119,12 @@ stable application identifierを維持する。
 - migration成功後にだけactive fileをatomic replaceする。
 - downgrade migrationは実装しない。
 - migration不能時は元fileを保持し、gestureをdefaultで成功したように起動せず、diagnostic状態にする。
-- 通常の再インストール、repair、version updateではuser configを削除しない。
+- 新versionの再インストールとrepairではuser configを削除しない。
 - config削除は明示的なReset/Delete user data操作だけが行う。
 
 uninstaller固有のdata removal optionを将来追加する場合も、既定値はkeepである。
-自動更新そのものはこのADRの対象外とする。
+自動更新機能は明示的なnon-goalであり、初期architectureにupdater責務や将来用interfaceを置かない。
+upgrade経路は新versionのinstallerをuserが実行する再インストールだけである。
 
 ## Availability and failure conditions
 
