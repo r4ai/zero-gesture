@@ -98,7 +98,7 @@ impl GestureConfig {
     }
 
     fn has_binding_for_trigger(&self, trigger: TriggerButton, matched_app: Option<&str>) -> bool {
-        self.binding_set(matched_app).is_some_and(|set| {
+        self.matched_binding_set(matched_app).is_some_and(|set| {
             set.release_bindings
                 .iter()
                 .any(|binding| binding.trigger == trigger)
@@ -106,7 +106,7 @@ impl GestureConfig {
                     .hold_bindings
                     .iter()
                     .any(|binding| binding.trigger == trigger)
-        }) || self.binding_set(None).is_some_and(|set| {
+        }) || self.default_binding_set().is_some_and(|set| {
             set.release_bindings
                 .iter()
                 .any(|binding| binding.trigger == trigger)
@@ -123,14 +123,14 @@ impl GestureConfig {
         sequence: &[GestureStep],
         matched_app: Option<&str>,
     ) -> Option<&ReleaseBinding> {
-        self.binding_set(matched_app)
+        self.matched_binding_set(matched_app)
             .and_then(|set| {
                 set.release_bindings
                     .iter()
                     .find(|binding| binding.trigger == trigger && binding.sequence == sequence)
             })
             .or_else(|| {
-                self.binding_set(None).and_then(|set| {
+                self.default_binding_set().and_then(|set| {
                     set.release_bindings
                         .iter()
                         .find(|binding| binding.trigger == trigger && binding.sequence == sequence)
@@ -145,13 +145,24 @@ impl GestureConfig {
         step: GestureStep,
         matched_app: Option<&str>,
     ) -> Option<&HoldBinding> {
-        resolve_hold_from_set(self.binding_set(matched_app), trigger, sequence, step)
-            .or_else(|| resolve_hold_from_set(self.binding_set(None), trigger, sequence, step))
+        resolve_hold_from_set(
+            self.matched_binding_set(matched_app),
+            trigger,
+            sequence,
+            step,
+        )
+        .or_else(|| resolve_hold_from_set(self.default_binding_set(), trigger, sequence, step))
     }
 
-    fn binding_set(&self, matched_app: Option<&str>) -> Option<&AppBindingSet> {
+    fn matched_binding_set(&self, matched_app: Option<&str>) -> Option<&AppBindingSet> {
+        matched_app
+            .filter(|app_id| *app_id != crate::config::AppConfig::DEFAULT_APP_ID)
+            .and_then(|app_id| self.binding_sets.get(app_id))
+    }
+
+    fn default_binding_set(&self) -> Option<&AppBindingSet> {
         self.binding_sets
-            .get(matched_app.unwrap_or(crate::config::AppConfig::DEFAULT_APP_ID))
+            .get(crate::config::AppConfig::DEFAULT_APP_ID)
     }
 }
 
@@ -1200,6 +1211,55 @@ mod tests {
             .resolve_release(TriggerButton::Right, &[GestureStep::Right], Some("unknown"))
             .expect("default fallback");
         assert_eq!(fallback.action, default_action);
+
+        let no_app = config
+            .resolve_release(TriggerButton::Right, &[GestureStep::Right], None)
+            .expect("default binding without matched app");
+        assert_eq!(no_app.action, default_action);
+    }
+
+    #[test]
+    fn resolve_hold_binding_prefers_app_specific_then_fallback() {
+        let default_action = key_action("a");
+        let app_action = key_action("b");
+        let mut config = test_config_with_hold(
+            Vec::new(),
+            vec![hold_binding(
+                TriggerButton::Right,
+                Vec::new(),
+                GestureStep::WheelUp,
+                default_action.clone(),
+                "Default",
+            )],
+        );
+        config.binding_sets.insert(
+            "explorer".to_string(),
+            AppBindingSet {
+                release_bindings: Vec::new(),
+                hold_bindings: vec![hold_binding(
+                    TriggerButton::Right,
+                    Vec::new(),
+                    GestureStep::WheelUp,
+                    app_action.clone(),
+                    "App",
+                )],
+            },
+        );
+
+        let app = config
+            .resolve_hold(
+                TriggerButton::Right,
+                &[],
+                GestureStep::WheelUp,
+                Some("explorer"),
+            )
+            .expect("app hold binding");
+        assert_eq!(app.action, app_action);
+
+        let no_app = config
+            .resolve_hold(TriggerButton::Right, &[], GestureStep::WheelUp, None)
+            .expect("default hold binding without matched app");
+        assert_eq!(no_app.action, default_action);
     }
 
     #[test]
