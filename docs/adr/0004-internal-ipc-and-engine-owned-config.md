@@ -124,6 +124,9 @@ transport境界はまずlength prefixとenvelopeを含むencoded frame全体が1
 `BeginConfigUpload`で宣言値がbudgetを超える場合と、実際のdecoded bytesが宣言値またはbudgetを超える場合は`ResourceLimit`でabortする。
 zero-based indexを厳密な順序で処理し、checked arithmeticで累積lengthを検証する。
 downloadはrevisionをpinする。
+final `ReadConfigChunk` responseがserver transport queueへ成功enqueueされた時点で、serverはdownloadをsingle-use consumeし、revision pinとEngine-wide transfer slotを解放する。
+final responseの到達を確認する追加ackや`FinishDownload` stateは作らず、enqueue後にresponseを失ったclientは新しいtransferを開始する。
+明示abort、idle timeout、connection close、response enqueue failureでもpinとslotを解放する。
 
 uploadはEngine-owned temporary fileへ逐次writeし、downloadはclientが一chunkずつpullする。
 serialized document全体を一bufferへ読むheap allocation、chunk queue、declared total sizeによる事前allocationをしない。
@@ -131,19 +134,21 @@ serialized document全体を一bufferへ読むheap allocation、chunk queue、de
 completed uploadはConfig transactionを開始せず、同じEngine-wide transfer slotとtemporary disk budgetを保持する。
 `ApplyConfig`/`ImportConfig`だけがpurposeとexpected revisionの一致するcompleted uploadをatomically takeして一度だけ消費し、temporary fileのstreaming JSON decodeからConfig transactionを開始する。
 request mismatch、decode/validation failure、明示abort、idle timeout、connection closeではtemporary fileを削除し、transfer slotとdisk budgetを解放してactive configを変更しない。
-transaction開始後もatomic replaceまたはterminal failureでtemporary fileを処理し終えるまで、同じslotとbudget chargeを保持する。
+transaction開始後は`Applied`またはterminal recoveryまでtransfer slotを保持し、temporary disk budgetはatomic replaceまたはfailure cleanupでfileを処理し終えるまで保持する。
 順序違反、duplicate、length超過、不一致hash、idle timeout、明示abort、connection closeではtransferをabortし、不完全temporary fileを削除してactive configを変更しない。
 
-Config ownerはdecode/compileを同時に一件だけ実行し、全owner・全generationを合わせてimmutable snapshotを最大二revisionだけ保持する。
+Config ownerはdecode/compileを同時に一件だけ実行し、stateを`active + (candidate | retired)`の最大二revisionへ固定する。
 snapshotを直接pinできる非Config ownerは、進行中gestureを所有するInputだけとし、他ownerはgeneration IDまたは必要なderived valueだけを受け取る。
-Config ownerはactiveとcandidate/preparedの二固定accounting slotだけを持ち、Inputのgenerationとpin countを既存`PrepareConfig` responseで確認する。
-Inputが旧generationをpinしている場合は`PrepareConfig`を`Busy`で拒否し、candidateを破棄してactive configを変更しない。
-Inputが`PrepareConfig`を受理した後はterminal `Commit | Abort`まで新しいtriggerをpassし、新しいgeneration pinを作らない。
-これによりInputが保持するgenerationを含めて第三revisionを作らず、Commit後はpinのない旧activeを解放してcandidateをactive slotへ移す。
-Config compiler固有のchecked counterで、全slotが所有するheap allocationと現在のdecode/compile scratch allocationを合計64 MiB以下に制限する。
+candidateとretiredは排他であり、retiredが存在する間は次transactionを`Busy`で拒否する。
+candidate compileはactiveとcandidateの二slotとして計上し、旧activeをpinする進行中gestureを中断しない。
+`Commit` delivery後もConfigはcandidateとtransactionを保持し、Inputが新generationへactive pointerをswapして`Applied(new_generation, retired_old_pin_count)`を返すまでsuccessを返さず次transactionを開始しない。
+`Applied`後にcandidateをactiveへ移し、old pin countが0なら旧activeを解放し、1以上なら同じ第二slotをretiredへ移す。
+Inputは旧generationを使う最後のgesture完了時に`GenerationReleased(old_generation)`を送り、Configだけがretiredとそのbudget chargeを解放する。
+Input owner death、`Applied`不能、generation不一致はreserved `Commit` invariant failureとしてEngineをterminate/restartし、diskから一世代だけを再構築する。
+Config compiler固有のchecked counterで、Inputがpinするretiredを含む全owner・全generationのsnapshot heap allocationと現在のdecode/compile scratch allocationを合計64 MiB以下に制限する。
 container capacity、decoded string/action payload、index、scratch bufferをallocation前に加算してfallible reserveし、超過は`ResourceLimit`としてcandidateだけを破棄する。
 temporary fileの64 MiB disk budgetと、この64 MiB accounted memory budgetは別々のEngine aggregate ceilingであり、通常時allocationまたはidle RSSの目標値ではない。
-動的generation table、汎用refcount/resource manager、任意blob用budget frameworkは作らない。
+二slotを超えるgeneration table、汎用RCU/refcount/resource manager、任意blob用budget frameworkは作らない。
 
 config schema自体にはlogical total-size上限を追加しないが、64 MiBを超える既存valid v1 documentのactive化とcompileは互換性の明示例外とする。
 その場合も元fileを変更、削除、truncate、暗黙default化せず、gestureをdisableしてinputをfail-openにする。
@@ -162,13 +167,14 @@ EngineのConfig ownerだけが次の順で更新する。
 4. active fileと同じdirectoryのtemporary fileへserializeし、flush/fsyncする。
 5. temporary fileをactive fileへatomic replaceする。この成功をlogical commit pointとする。
 6. directory metadata syncを試みる。
-7. reserved slotへallocationもfailureもない`Commit(revision)`を送り、Inputの次snapshotを切り替える。
-8. metadata sync成功時は`Success(revision)`、失敗時は`SuccessWithDurabilityWarning(revision, reason)`をSettingsへ返す。
+7. reserved slotへallocationもfailureもない`Commit(revision)`を送り、Inputへactive pointerの切替を指示する。
+8. Inputの`Applied(revision, retired_old_pin_count)`を受け、Configのcandidateをactiveまたはactive+retiredへ遷移させる。
+9. metadata sync成功時は`Success(revision)`、失敗時は`SuccessWithDurabilityWarning(revision, reason)`をSettingsへ返す。
 
 `PrepareConfig`後、atomic replaceが成功するまでのwrite、flush、fsync、replace failureはreserved slotへ`Abort(revision)`を送り、active fileとrunning snapshotを変更せずrequestを失敗させる。
 slotをreserveできなければtemporary fileへ書き始めない。
 atomic replace後はrollbackできないため、directory metadata sync failureでも`Commit`を続行し、diagnosticを残してfailure responseへ戻さない。
-reserved `Commit` deliveryのfailureはprotocol invariant違反であり、Engineをterminate/restartしてinputをfail-openにする。restart時はnew active fileを正本にする。
+reserved `Commit` deliveryまたは対応する`Applied` ackのfailureはprotocol invariant違反であり、Engineをterminate/restartしてinputをfail-openにする。restart時はnew active fileを正本にする。
 通常のprocess crashでは、atomic replace前なら旧active file、replace後なら新active fileをrestart時の正本とし、Input snapshotをdiskから再構築する。
 system/power crashがatomic replace成功後かつdirectory metadata sync成功前に起きた場合、filesystem上で旧file、新file、または不完全なmetadataのどれが残るかを保証しない。
 restart recoveryはactive/temporary/backupのvalidityとrevisionを検査し、一意に選べるvalid candidateだけを採用する。
@@ -178,8 +184,8 @@ compile後のsnapshotはvalidとして扱い、ownerごとに再validationしな
 Settingsのexpected revisionが古い場合はconflictとして拒否し、last-write-winsにしない。
 
 gesture開始時にInputがsnapshotを保持する。
-更新中のgestureはそのsnapshotで終了し、次のgestureが新snapshotを使う。
-上記prepareはInput deliveryの一枠予約であり、複数storage ownerを跨ぐ汎用二相commitやgesture中断protocolは追加しない。
+更新中のgestureはretiredになった旧snapshotで終了し、`Commit`処理後に始まるgestureが新snapshotを使う。
+上記handshakeはInput pointer swapと二slot解放だけを同期するRCUであり、複数storage ownerを跨ぐ汎用二相commitやgesture中断protocolは追加しない。
 
 新schemaの不正値はdefaultへ黙って補正せず、field pathを含むvalidation errorとして返す。
 legacy migrationだけがversionごとの明示変換を行える。

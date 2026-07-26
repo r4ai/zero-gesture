@@ -93,6 +93,21 @@ Inputはresultを待たず、`Ready`を観測したaction-producing eventだけa
 `Failed`、owner death、`Pending`、action credit不足ではactionをacceptせず、[captured-trigger failure rule](#captured-trigger-failure-rule)を一度だけ適用する。
 activationとaction以外へ再利用する汎用ack frameworkは作らない。
 
+### Accepted action delivery
+
+Inputはrecognition transitionと別に、一session一枠のpreallocated action completion recordのlifecycleとcaptured triggerを所有する。
+record内のphaseはExecutorだけが書くmonotonic atomicであり、Inputはterminal resultまたはExecutor owner death後に読む。
+action-producing eventを抑止する前に、Executor credit、completion record、captured-trigger replay obligationを全てreserveする。
+一枠がpending中は同sessionの次actionをacceptせず、hold sessionはterminal result後に同じ空き枠を再利用する。
+
+accepted actionは`PendingBeforeInjection`から、Executorのterminal resultで`Completed | FailedBeforeInjection | FailedAfterInjection`のどれか一つへ閉じる。
+Executorは最初のOS injection API callへ入る直前にpreallocated result slotを`InjectionStarted`へ進め、この更新とcallの間ではcooperative stopを受け付けない。
+Executor owner deathまたはterminal lane closeでは、Inputはstableなphaseが`PendingBeforeInjection`なら`FailedBeforeInjection`、`InjectionStarted`なら`FailedAfterInjection`として同じterminal policyを適用する。
+`InjectionStarted`前の停止またはzero-event failureだけを`FailedBeforeInjection`とし、Inputはcompletion recordのcaptured triggerへ[captured-trigger failure rule](#captured-trigger-failure-rule)を適用する。
+`InjectionStarted`後の停止、partial injection、結果不明は`FailedAfterInjection`とし、triggerをreplayして二重実行せず、terminal diagnosticを記録してInput bypassとExecutor recoveryへ進む。
+`FinishWithAction`がrecognition sessionを閉じても、Inputはこのrecordをterminal resultまで保持する。
+汎用journal、複数action ledger、永続queueは追加しない。
+
 ## Backpressure
 
 backpressure policyはmessage種別ごとに固定する。
@@ -101,9 +116,9 @@ backpressure policyはmessage種別ごとに固定する。
 | --- | --- |
 | Input to Renderer points | intermediate pointをcoalesceし、latest pointを優先する |
 | Input to Renderer lifecycle | lossless control laneへ送る。enqueue failureまたはRenderer actor deathではcurrent sessionを必要かつ可能ならterminal `Replay`、それ以外は`Cancel`とし、Inputをbypassへ移す。新規gestureを開始せず、SupervisorがEngineをclean terminate/restartしてOS overlay resourceを破棄する |
-| Input to Executor | target `Ready`後もgesture開始時に長期action creditを取らない。`ContinueWithAction`または`FinishWithAction`で抑止する各eventの直前に一枠reserveする。取れなければ[captured-trigger failure rule](#captured-trigger-failure-rule)へ遷移する。reserve後にacceptedとなったactionはsame-session FIFOのreserved slotへinfallibleに送り、silent lossを0にする |
+| Input to Executor | target `Ready`後もgesture開始時に長期action creditを取らない。`ContinueWithAction`または`FinishWithAction`で抑止する各eventの直前に[accepted action delivery](#accepted-action-delivery)の一枠をreserveする。取れなければ[captured-trigger failure rule](#captured-trigger-failure-rule)へ遷移する |
 | Input replay | preallocated emergency slotへ保持する。schedule不能なら新規抑止を停止し、terminal degraded stateとして報告する |
-| Config to Input | disk更新前にrevisionのdelivery slotをprepare/reserveしてackを得る。予約は必ずterminal `Commit`または`Abort`で閉じる。atomic replace後はreserved slotへinfallibleな`Commit`を送り、actor invariant違反はprocessをterminate/restartしてinputをfail-openにする |
+| Config to Input | disk更新前にrevisionのdelivery slotをprepare/reserveしてackを得る。予約は`Abort`またはinfallibleな`Commit`とInputの`Applied` ackで閉じる。`Commit` deliveryまたは`Applied`不能はprocessをterminate/restartしてinputをfail-openにする |
 | Supervisor shutdown | 専用control laneへ保持する。送信失敗はowner終了として扱い、supervisorがresource解放とjoinを完了する |
 | Metrics | sampleまたは個別eventだけをdropできる。counterはaggregateした値へ収束させる |
 
@@ -123,14 +138,14 @@ Zero Gestureが正しい抑止とactionを期限内に保証できない場合�
 - hook/event tap install失敗時はgestureを開始しない。
 - callback state、queue、permission、essential ownerの異常時は新しいtriggerを抑止しない。
 - Renderer lifecycle enqueue failureまたはactor deathではcurrent sessionを必要かつ可能なら`Replay`、それ以外は`Cancel`とし、Inputをbypassへ移して新規gestureを停止する。SupervisorがEngineをclean terminate/restartする。
-- Executor障害はactive sessionをtrigger抑止状態に応じて`Replay|Cancel`し、新しいgesture captureを停止してstatusをdegradedにする。
+- accepted actionがないExecutor障害はactive sessionをtrigger抑止状態に応じて`Replay|Cancel`し、新しいgesture captureを停止してstatusをdegradedにする。accepted actionがある場合はcompletion recordのphaseで分類し、`InjectionStarted`以後はreplayしない。
 - safety timeout、panic、event tap timeoutでは現在sessionへ下記の共通ruleを適用し、terminal cleanup後のeventを通す。
 - FFI callbackからRust panicやforeign exceptionを越境させない。
 - injected eventにはself tagを付け、同じgestureとして再捕捉しない。
 
 ### Captured-trigger failure rule
 
-gesture開始後のtimeout、owner failure、backpressure、`FinishWithAction` failureは次の一規則だけを使う。
+gesture開始後のtimeout、owner failure、backpressure、`InjectionStarted`前の`FinishWithAction` failureは次の一規則だけを使う。
 trigger downを抑止していなければ`Cancel`し、現在eventと以後のeventをpassする。
 trigger downを抑止済みならterminal `Replay(Trigger)`を選び、recognition sessionを閉じてInput-owned replay待機へ移る。
 対応するphysical up以外のeventだけをpassし、新規gestureは開始しない。
@@ -146,8 +161,9 @@ replayも保証できない状態では、新規抑止を即時停止してdiagn
 - gesture transitionは`Continue`、`ContinueWithAction`、`Complete`、`FinishWithAction`、`Replay`、`Cancel`のclosed enum一つで表し、一eventで一variantだけを選ぶ。
 - accepted済みhold actionはsessionを継続し、trigger upは`Complete`してreplayしない。
 - session-bound targetが`Ready`になる前にactionをacceptせず、activationとactionの順序は同じExecutor FIFOが所有する。
+- accepted action completion recordは一session一枠で、recognition session終了後もterminal resultまでInputが保持する。
 - Renderer generationはInput generationより進まず、終了済みgenerationを再表示しない。
-- prepared config revisionは最大一つで、`Commit`、`Abort`、またはprocess終了によってだけ解放する。
+- candidate config revisionは最大一つで、`Abort`、`Applied`、またはprocess終了によってだけ解放する。`Commit` deliveryだけでは解放しない。
 - accepted action、render lifecycle、replay、committed config、shutdownをsilent dropしない。
 - shutdownはidempotentで、hook/event tapを先にpass-through状態へ移してからownerをjoinする。
 
