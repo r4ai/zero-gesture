@@ -12,7 +12,11 @@
     "check": "biome check",
     "check:write": "biome check --write",
     "storybook": "storybook dev -p 6006",
-    "build-storybook": "storybook build"
+    "build-storybook": "storybook build",
+    "quality:metrics": "node tools/quality/quality.mjs snapshot",
+    "quality:compare": "node tools/quality/quality.mjs compare",
+    "test:unit": "vitest run --project unit",
+    "test:storybook": "vitest run --project storybook"
   },
   "dependencies": {
     "@react-aria/optimize-locales-plugin": "^2.0.0",

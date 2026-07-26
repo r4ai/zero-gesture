@@ -1,0 +1,2 @@
+big-code-analysis-cli==2.0.0 \
+    --hash=sha256:62316880b772e2be633dccb27773f3bd42b2915376d50f021dd01e38c0405a52
