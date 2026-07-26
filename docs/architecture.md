@@ -1,5 +1,10 @@
 # Zero Gesture Architecture Design Document
 
+> [!NOTE]
+> この文書は移行前のWindows実装を説明する。
+> 採用済みのマルチプラットフォーム目標設計と移行ゲートは
+> [ADR index](./adr/README.md) を正とする。
+
 ## 1. Overview
 
 Zero Gesture は、Windows専用の高性能マウスジェスチャーツールです。
