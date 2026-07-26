@@ -737,6 +737,37 @@ mod tests {
     }
 
     #[test]
+    fn mouse_move_is_passed_while_gesture_is_active() {
+        let config = test_config(vec![binding(
+            TriggerButton::Right,
+            vec![GestureStep::Right],
+            key_action("a"),
+            "A",
+        )]);
+        let mut state = GestureState::Idle;
+
+        process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::ButtonDown(TriggerButton::Right),
+            (100, 100),
+            1000,
+            None,
+        );
+        let effect = process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::MouseMove,
+            (120, 100),
+            1010,
+            None,
+        );
+
+        assert!(!effect.suppress);
+        assert!(matches!(state, GestureState::Gesturing { .. }));
+    }
+
+    #[test]
     fn executes_action_on_trigger_up_when_sequence_matches() {
         let action = Action::Keyboard {
             keys: vec!["ctrl".to_string(), "r".to_string()],
@@ -1143,13 +1174,14 @@ mod tests {
 
     #[test]
     fn hold_wheel_usage_disables_unmatched_trigger_replay() {
+        let action = key_action("pagedown");
         let config = test_config_with_hold(
             Vec::new(),
             vec![hold_binding(
                 TriggerButton::Right,
                 Vec::new(),
                 GestureStep::WheelDown,
-                key_action("pagedown"),
+                action.clone(),
                 "PageDown",
             )],
         );
@@ -1163,7 +1195,7 @@ mod tests {
             1000,
             None,
         );
-        process_event_pure(
+        let hold_effect = process_event_pure(
             &mut state,
             &config,
             MouseEvent::WheelDown(1),
@@ -1171,6 +1203,11 @@ mod tests {
             1010,
             None,
         );
+        assert_eq!(
+            hold_effect.request_execute,
+            Some(ExecuteRequest { action, repeat: 1 })
+        );
+
         let effect = process_event_pure(
             &mut state,
             &config,

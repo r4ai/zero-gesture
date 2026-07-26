@@ -315,6 +315,19 @@ mod tests {
     }
 
     #[test]
+    fn direction_remains_pending_until_switch_threshold_is_reached() {
+        let mut rec = GestureRecognizer::new(1, 8, 0, 8);
+        rec.add_point(0, 0);
+        rec.add_point(7, 0);
+
+        assert_eq!(rec.current_sequence(), None);
+
+        rec.add_point(8, 0);
+
+        assert_eq!(rec.current_sequence(), Some(vec![GestureStep::Right]));
+    }
+
+    #[test]
     fn recognizes_multi_segment_direction_sequence() {
         let mut rec = GestureRecognizer::default();
         rec.add_point(100, 100);
