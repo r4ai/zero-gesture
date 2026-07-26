@@ -65,6 +65,7 @@ ApplyConfig(expected_revision, document)
 SetEnabled(expected_revision, enabled)
 ImportConfig(expected_revision, document)
 ExportConfig
+OpenConfigDirectory
 GetDiagnostics
 OpenSettingsRequested
 StartWindowCapture
@@ -79,6 +80,11 @@ ConfigChanged(revision)
 HealthChanged(snapshot)
 WindowCaptureResult(capture_id, outcome, window_identity)
 ```
+
+`OpenConfigDirectory`はpathを受け取らない。
+Engineが所有するuser config directoryをplatformのfile managerで開き、typed response
+`OpenConfigDirectoryResult::Opened | Failed(reason)`を返す。
+arbitrary pathをSettingsから渡すfile-open APIにはしない。
 
 window captureのhook、active capture ID、cancel stateはEngineが所有する。
 `StartWindowCapture`は既存captureを停止してから新しいIDを返し、即時の
@@ -95,26 +101,35 @@ EngineのConfig ownerだけが次の順で更新する。
 
 1. frame、schema version、expected revisionを検証する。
 2. platform capabilityを含むsemantic validationを一度だけ行い、次revisionのimmutable runtime snapshotへcompileする。
-3. Inputに`PrepareConfig(revision, snapshot)`を送り、commit専用delivery slotをreserveしたackを得る。Inputはまだactive snapshotを変更しない。
+3. Inputに`PrepareConfig(revision, snapshot)`を送り、terminal `Commit | Abort`専用delivery slotをreserveしたackを得る。Inputはまだactive snapshotを変更しない。
 4. active fileと同じdirectoryのtemporary fileへserializeし、flush/fsyncする。
-5. temporary fileをactive fileへatomic replaceし、必要なdirectory metadataを永続化する。
-6. reserved slotへallocationもfailureもない`Commit(revision)`を送り、Inputの次snapshotを切り替える。
-7. committed revisionをSettingsへ返す。
+5. temporary fileをactive fileへatomic replaceする。この成功をlogical durable commit pointとする。
+6. directory metadata syncを試みる。
+7. reserved slotへallocationもfailureもない`Commit(revision)`を送り、Inputの次snapshotを切り替える。
+8. metadata sync成功時は`Success(revision)`、失敗時は`SuccessWithDurabilityWarning(revision, reason)`をSettingsへ返す。
 
-1から4の失敗時はdiskとrunning snapshotを変更しない。
-slotをreserveできなければdiskへ書き始めず、requestを失敗させる。
-atomic replace後にdelivery/actor failureが起きることはprotocol invariant違反であり、memory-only rollbackやsuccess responseをせず、Engineをterminateしてinputをfail-openにする。
-正常実行中にreplace後failureを追加しないため、replace後から`Commit`までに残る中断はprocess crashだけである。
-replace前にcrashした場合は旧active file、replace後にcrashした場合は新active fileをrestart時の正本とし、Input snapshotはdiskから再構築して収束する。
+`PrepareConfig`後、atomic replaceが成功するまでのwrite、flush、fsync、replace failureはreserved slotへ`Abort(revision)`を送り、active fileとrunning snapshotを変更せずrequestを失敗させる。
+slotをreserveできなければtemporary fileへ書き始めない。
+atomic replace後はrollbackできないため、directory metadata sync failureでも`Commit`を続行し、diagnosticを残してfailure responseへ戻さない。
+reserved `Commit` deliveryのfailureはprotocol invariant違反であり、Engineをterminate/restartしてinputをfail-openにする。restart時はnew active fileを正本にする。
+crashがatomic replace前なら旧active file、replace後なら新active fileをrestart時の正本とし、Input snapshotをdiskから再構築する。
 compile後のsnapshotはvalidとして扱い、ownerごとに再validationしない。
 Settingsのexpected revisionが古い場合はconflictとして拒否し、last-write-winsにしない。
 
 gesture開始時にInputがsnapshotを保持する。
 更新中のgestureはそのsnapshotで終了し、次のgestureが新snapshotを使う。
-二相commitやgesture中断protocolは追加しない。
+上記prepareはInput deliveryの一枠予約であり、複数storage ownerを跨ぐ汎用二相commitやgesture中断protocolは追加しない。
 
 新schemaの不正値はdefaultへ黙って補正せず、field pathを含むvalidation errorとして返す。
 legacy migrationだけがversionごとの明示変換を行える。
+
+validなlegacy v1 documentはobservable behaviorを保ってschema v2へmigrationする。
+一方、現行のread/JSON/validation failure時のsilent defaultとsilent correctionはpreservationからの意図的compatibility exceptionとする。
+
+- startupでvalid snapshotが一つもない場合、Engineをdisabled/fail-openにする。
+- runtime更新または再読込に失敗しlast known valid snapshotがある場合、そのsnapshotを維持してinvalid documentをactivateしない。
+- invalid fileをdefaultで上書き、削除、破壊的修正しない。
+- diagnostic stateとvalidation pathをSettingsへ返し、edit/import/resetと`OpenConfigDirectory`によるrecoveryを可能にする。
 
 ## Migration and reinstall preservation
 
@@ -137,7 +152,8 @@ upgrade経路は新versionのinstallerをuserが実行する再インストー�
 
 - IPC disconnectはEngineのgesture operationを停止しない。
 - malformed clientはそのconnectionだけを閉じ、Engineをpanicさせない。
-- config persistence失敗をmemory-only successとして返さない。
+- atomic replace前のconfig persistence失敗をmemory-only successとして返さない。
+- atomic replace後のmetadata sync failureはrollback不能なのでdurability warning付きsuccessとして返す。
 - config replace前後のcrash後はactive fileを正本としてsnapshotを再構築する。
 - stale revisionは現行documentを上書きしない。
 - endpoint access controlを設定できない場合、serverを公開せずEngineをdegradedにする。

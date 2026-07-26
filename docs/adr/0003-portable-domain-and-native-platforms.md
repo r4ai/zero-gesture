@@ -43,8 +43,19 @@ domainは次を知らない。
 - Tauri、IPC、thread、renderer API
 - physical screen coordinate system
 
-canonical inputは、trigger button、button transition、wheel notch、normalized point、monotonic tick、resolved app IDで表す。
-outputは、`Pass`/`Suppress`、render delta、optional validated action、optional replay operationで表す。
+canonical inputは、trigger button、button transition、wheel notch、normalized point、monotonic tick、resolved `BindingSetId`で表す。
+domain outputは次のproduct typeで表す。
+
+```text
+Decision {
+  disposition: Pass | Suppress,
+  terminal: Continue | Execute(ActionId) | Replay(Trigger) | Cancel,
+  render: None | RenderDelta,
+}
+```
+
+actionとreplayを別々の`Option`にせず、terminal effectの排他性をclosed enumで表す。
+render effectはterminal decisionと独立しており、visual backpressureでdomain terminal stateを変えない。
 
 既存Windowsの次の意味を共通contractとして維持する。
 
@@ -170,7 +181,7 @@ Settingsはpermission状態とSystem Settingsへの案内を表示するが、�
 - platform eventをcanonical eventへ変換できない場合はそのeventを通す。
 - app contextを期限内に解決できない場合はdefault bindingだけを使用する。staleな別app identityを使わない。
 - key/actionをplatformで表現できないconfigは保存境界で拒否する。
-- native renderer初期化失敗はheadless operationへdegradeし、inputを停止させない。
+- native renderer初期化失敗、lifecycle enqueue failure、actor deathではcurrent sessionを必要かつ可能なら`Replay`、それ以外は`Cancel`とし、Inputをbypassへ移して新規gestureを開始しない。SupervisorがEngineをclean terminate/restartしてoverlay resourceを破棄し、headless gesture継続はしない。
 - permissionを要求しないAPIを誤って呼ぶ実装はrelease gateで拒否する。
 
 ## Consequences

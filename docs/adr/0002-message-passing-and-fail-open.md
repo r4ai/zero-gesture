@@ -42,10 +42,10 @@ OS callbackのeventをmailboxへ送り、別ownerの回答を待つ設計は禁�
 
 ```text
 OS callback
-  -> Input ownerが同じthreadでpure state transitionを評価
-  -> pass / suppressを同期return
-  -> reserved laneへessential effectを送る
+  -> canonical eventへnormalizeし、Input ownerがpure state transitionを評価
+  -> 必要なessential creditをnonblocking reserveし、reserved laneへeffectを送る
   -> render point / metricsだけをbest-effortで送る
+  -> pass / suppressを同期return
 ```
 
 callbackは次を行わない。
@@ -61,6 +61,26 @@ callbackは次を行わない。
 app/window contextとbindingはcallback前に解決し、Inputは小さなcanonical IDとimmutable compiled snapshotだけを使う。
 進行中のgestureは開始時のsnapshotを所有し、config更新は次のgestureから見える。
 
+### Pre-resolved trigger context
+
+WindowsのContext workerはcallback外でpointerをsampleし、`WindowFromPoint`、window identity、binding解決、target handle取得を行う。
+結果はpreallocated latest-value slotへ次のimmutable snapshotとしてpublishする。
+
+```text
+sampled_point
+sampled_at
+config_generation
+binding_set_id
+target_handle
+```
+
+trigger時のInputはOS queryを行わず、point tolerance、最大age、config generation、cached handle validityだけを検査する。
+全条件がfreshならcached `BindingSetId`でsessionを開始し、target activationはcallback復帰を待たない`ActivateTarget` effectとして送る。
+snapshotがmissing/stale、pointがtolerance外、generation不一致、handle invalidならtrigger eventをpassする。
+
+これは現行Windowsのcallback内同期window query/app matching/activationを保存しない意図的な安全変更である。
+P01 manifestはfresh-cache開始と各fail-open条件を独立predicateとして持つ。
+
 ## Backpressure
 
 backpressure policyはmessage種別ごとに固定する。
@@ -68,16 +88,18 @@ backpressure policyはmessage種別ごとに固定する。
 | Flow | Policy when full or slow |
 | --- | --- |
 | Input to Renderer points | intermediate pointをcoalesceし、latest pointを優先する |
-| Input to Renderer lifecycle | lossless control laneへ保持する。送れない場合は当該generationの描画を開始せず、rendererを終了状態へ移して新規gestureをfail-openにする |
-| Input to Executor | gesture開始前にcapacityをreserveする。accepted actionは保持し、実行不能ならtrigger replayを試みて新規gestureをfail-openにする |
+| Input to Renderer lifecycle | lossless control laneへ送る。enqueue failureまたはRenderer actor deathではcurrent sessionを必要かつ可能ならterminal `Replay`、それ以外は`Cancel`とし、Inputをbypassへ移す。新規gestureを開始せず、SupervisorがEngineをclean terminate/restartしてOS overlay resourceを破棄する |
+| Input to Executor | gesture開始時に長期creditを取らない。抑止してactionを発生させる各event、特にhold wheelの直前にnonblockingで一枠reserveする。取れなければそのeventをpassし、sessionをterminal `Cancel`してfail-openにする。reserve後にacceptedとなったactionはreserved slotへinfallibleに送り、silent lossを0にする |
 | Input replay | preallocated emergency slotへ保持する。schedule不能なら新規抑止を停止し、terminal degraded stateとして報告する |
-| Config to Input | disk更新前にrevisionのdelivery slotをprepare/reserveしてackを得る。atomic replace後はreserved slotへinfallibleな`Commit`を送る。予約不能なら更新を開始せず、予約後のactor invariant違反はprocessをterminateしてinputをfail-openにする |
+| Config to Input | disk更新前にrevisionのdelivery slotをprepare/reserveしてackを得る。予約は必ずterminal `Commit`または`Abort`で閉じる。atomic replace後はreserved slotへinfallibleな`Commit`を送り、actor invariant違反はprocessをterminate/restartしてinputをfail-openにする |
 | Supervisor shutdown | 専用control laneへ保持する。送信失敗はowner終了として扱い、supervisorがresource解放とjoinを完了する |
 | Metrics | sampleまたは個別eventだけをdropできる。counterはaggregateした値へ収束させる |
 
 lossまたはcoalesceを許すのは中間render pointとdiagnostic metricsだけである。
 action、render lifecycle、replay、committed config、shutdownはsilent dropしない。
 保持できなければ上表のfail-open terminal transitionを同期的に選び、新規input抑止を開始しない。
+Renderer lifecycle failure後にheadlessでgestureを継続しない。
+callbackはSupervisorのterminate/restartやowner cleanupを待たない。
 
 custom unsafe lock-free queueは実装しない。
 既存の検証済みprimitiveで要求を満たせないことをbenchmarkで示した場合だけ、別ADRで範囲とmemory modelを定める。
@@ -88,7 +110,7 @@ Zero Gestureが正しい抑止とactionを期限内に保証できない場合�
 
 - hook/event tap install失敗時はgestureを開始しない。
 - callback state、queue、permission、essential ownerの異常時は新しいtriggerを抑止しない。
-- Renderer障害はtrail/labelだけを無効化し、inputとactionを継続できる。
+- Renderer lifecycle enqueue failureまたはactor deathではcurrent sessionを必要かつ可能なら`Replay`、それ以外は`Cancel`とし、Inputをbypassへ移して新規gestureを停止する。SupervisorがEngineをclean terminate/restartする。
 - Executor障害は新しいgesture captureを停止し、statusをdegradedにする。
 - safety timeout、panic、event tap timeoutでは現在sessionを終了し、以後のeventを通す。
 - FFI callbackからRust panicやforeign exceptionを越境させない。
@@ -103,9 +125,9 @@ replayも保証できない状態では、新規抑止を即時停止してdiagn
 - 一つのmutable factを複数ownerへ保存しない。
 - Engine全体を包むglobal mutable stateを作らない。
 - owner間で共有するconfigはimmutable snapshotであり、revisionとgenerationは一つの値から導出する。
-- gestureのterminal transitionはexecute、replay、cancelのいずれか一つである。
+- gestureのterminal decisionは`Continue`、`Execute`、`Replay`、`Cancel`のclosed enum一つで表し、同時に二つを選ばない。
 - Renderer generationはInput generationより進まず、終了済みgenerationを再表示しない。
-- prepared config revisionは最大一つで、`Commit`またはprocess終了によってだけ解放する。
+- prepared config revisionは最大一つで、`Commit`、`Abort`、またはprocess終了によってだけ解放する。
 - accepted action、render lifecycle、replay、committed config、shutdownをsilent dropしない。
 - shutdownはidempotentで、hook/event tapを先にpass-through状態へ移してからownerをjoinする。
 

@@ -79,7 +79,7 @@ UIスレッドのブロックを防ぐため、独立したスレッドでマウ
   - **Low-Level Mouse Hook:** `WH_MOUSE_LL` を使用してマウスイベントをフック。
   - **Event Suppression:** ジェスチャー開始トリガー（例: 右クリック）を検知した場合、OSへのイベント伝播をブロック（`1`をreturn）し、コンテキストメニューの出現を防ぐ。
   - **Gesture Recognition:** マウスの移動ベクトルを計算し、定義されたジェスチャー（例: `Right` -> `Down`）と照合する。
-  - **Context Resolution:** configured trigger down時、callback内で`WindowFromPoint`、foreground fallback、window情報取得、app matchingを同期実行する。これは移行対象の既知hot-path debtである。
+  - **Context Resolution:** configured trigger down時、callback内で`WindowFromPoint`、foreground fallback、window情報取得、app matching、target activationを同期実行する。これは移行対象の既知hot-path debtである。目標設計ではcallback外Context workerがpointer sampleからcontext/binding/targetを事前解決し、fresh cacheがないtriggerをpassする意図的な安全変更を行う。
   - **Communication:** 描画commandを`crossbeam-channel`経由で **Overlay Thread** へ送信する。
   - **Action:** callbackでactionをqueueへ積み、同じHook Threadのmessage loopへpostしてcallback復帰後にkeyboard actionだけを実行する。
 
@@ -181,6 +181,6 @@ TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成
 
 ## 7. Performance Considerations
 
-- **Blocking:** 目標設計ではHook callbackをpure state transitionに限定する。現行callbackはconfigured trigger down時のwindow activation/query/app matching、overlay channel送信、action/replay queueingを同期実行しており、ADR 0002に従って移行する必要がある。
+- **Blocking:** 目標設計ではHook callbackをnormalize/evaluate、essential creditのnonblocking reserve/send、best-effort render send、pass/suppress returnの順に限定する。現行callbackはconfigured trigger down時のwindow activation/query/app matching、overlay channel送信、action/replay queueingを同期実行しており、ADR 0002に従って移行する必要がある。
 - **Memory Safety:** `unsafe` ブロックを多用するWin32 API部分は、Rustのラッパー関数で適切に抽象化し、メモリリークや未定義動作を防ぐ。
 - **Drawing:** 現在とWindows移行中はGDI（`Polyline` + バックバッファ）を使用する。`direct2d.rs`は未実装stubであり、性能契約の未達を測定した場合だけ別ADR/PRでrenderer変更を検討する。macOSのAppKit/Core Animation adapterはこのWindows判断と分離する。
