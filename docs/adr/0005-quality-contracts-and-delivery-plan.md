@@ -163,12 +163,13 @@ Direct2D/DirectCompositionをこの移行の先行要件にしない。
 - userごとのEngine単一起動、Settings crash/disconnectからのEngine独立、Engineだけのinput権限とconfig/IPC ownership
 - bounded typed message passing、single-owner state、Input callbackのnormalize/evaluate→essential credit reserve/send→best-effort render→return順序、fail-open
 - 各抑止対象hold event直前のnonblocking action credit、credit不足eventのpass、trigger down抑止済みなら`Replay`/未抑止なら`Cancel`、hold中physical upでのbalanced replay、accepted actionのsilent loss 0
-- callback外Context workerのpointer sample、window/binding/target事前解決、point tolerance/age/generation/handle validityでのfresh判定、cached `BindingSetId`開始とasync target activation
+- callback外Context workerのpointer sample、window/binding/target事前解決、point tolerance/age/generation/handle validityでのfresh判定、session-bound target
+- target activationとactionを同じbounded FIFO Executor laneへ載せ、activation result成功後だけactionをacceptし、activation credit不足/pending/failure/owner deathではevent passと`Replay|Cancel`にすること
 - fresh Contextでapp-specific matchなしの場合だけdefault bindingを使い、snapshotがmissing/stale/timeout/invalidならtriggerをpassして現行callback内同期query/activationを保存しないこと
 - OS/Tauri/IPCから独立したdomainとWindows/macOS native adapter、同じcanonical traceの同じdomain effect
-- `Continue | Execute(ActionId) | Replay(Trigger) | Cancel`のclosed transition enum、terminal variant `Execute|Replay|Cancel`、独立したrender effect
+- non-terminal `Continue|ContinueWithAction(ActionId, repeat)`とterminal `Complete|FinishWithAction(ActionId)|Replay(Trigger)|Cancel`のclosed transition enum、独立したrender effect
 - schema version、application/binding以外のtyped overrideのwhole-field replacement、record単位`Shared|Windows|Macos` variant、lossless migration、platform capability validation
-- authenticated local IPC、protocol/revision conflict、1 MiB frame上限、Windows pipeのcurrent-user DACLとremote rejection、macOS socketのmode/peer UID
+- authenticated local IPC、protocol/revision conflict、一般frame 1 MiB上限、config専用bounded chunk transfer、Windows pipeのcurrent-user DACLとremote rejection、macOS socketのmode/peer UID
 - configのvalidate/compile、terminal `Commit | Abort`付きInput reservation、temp fsync、atomic replace、metadata sync、reserved `Commit`、success responseの順序
 - replace前failureの`Abort`、replace後metadata sync failureの`SuccessWithDurabilityWarning`、reserved `Commit` invariant違反時のterminate/restart
 - 通常のprocess crashはreplace前=旧/replace後=新active file、replace後metadata sync前のsystem/power crashはold/new不確定としてvalid candidate recoveryまたはdisabled/fail-openにすること
@@ -198,10 +199,13 @@ versioned measurement scriptとraw artifactの再生成もP01のexit gateに含�
 
 P01 manifestは少なくとも次を独立predicateへ分ける。
 
-- hold eventごとのcredit成功、credit不足時のevent passと`Replay|Cancel`分岐、hold中physical upのbalanced replay、accepted action loss 0
-- Context cacheのpoint tolerance、age、generation、handle validity、fresh時開始、各stale/missing時pass、async activation
+- hold action後のsession継続、連続wheelごとのaction、multi-notch `repeat`、trigger upの`Complete`とno replay
+- hold/release action credit成功、credit不足時のevent passと`Replay|Cancel`分岐、hold中physical upのbalanced replay、accepted action loss 0
+- Context cacheのpoint tolerance、age、generation、handle validity、fresh時開始、各stale/missing時pass
+- same-session FIFOでのactivation attempt/result先行、success後action acceptance、activation credit不足/pending/failure/owner deathのno-acceptと`Replay|Cancel`
 - renderer lifecycle enqueue failureとactor death、Input-owned sessionの`Replay|Cancel`、Input bypass、新規gesture禁止、clean restart、point coalescing
 - config `Prepare`後の`Commit | Abort`、replace前failure、replace後durability warning、reserved delivery invariant、process crashとsystem/power crash recovery
+- config upload/downloadのchunk size、single in-flight、stream ID/revision/order/length/hash、abort/timeout、oversized valid v1の非破壊recovery/export
 - invalid config startup、last known valid維持、file非破壊、diagnostic recovery
 - typed `OpenConfigDirectory`のEngine-owned pathとarbitrary-path拒否
 

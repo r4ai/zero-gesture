@@ -61,10 +61,15 @@ EngineとSettingsのexecutable versionが異なる場合、healthとsnapshotのr
 ```text
 Hello
 GetSnapshot
-ApplyConfig(expected_revision, document)
+ApplyConfig(expected_revision, config_transfer_id)
 SetEnabled(expected_revision, enabled)
-ImportConfig(expected_revision, document)
+ImportConfig(expected_revision, config_transfer_id)
 ExportConfig
+BeginConfigUpload(Apply | Import, expected_revision, total_bytes, sha256)
+AppendConfigChunk(transfer_id, index, bytes)
+FinishConfigUpload(transfer_id)
+ReadConfigChunk(transfer_id, index)
+AbortConfigTransfer(transfer_id)
 OpenConfigDirectory
 GetDiagnostics
 OpenSettingsRequested
@@ -95,11 +100,41 @@ SettingsはTauri event名やprocess-local mutexをcaptureの正準protocolにし
 汎用command実行、任意file read/write、raw OS input injectionを公開しない。
 methodごとにtyped requestへdecodeし、境界通過後にJSON objectやdynamic mapを持ち回らない。
 
+## Config document transfer
+
+一般frameの1 MiB上限を維持し、config documentを一frameへinlineしない。
+`GetSnapshot`、`ApplyConfig`、`ImportConfig`、`ExportConfig`だけが次のtyped transferを使う。
+
+```text
+BeginConfigUpload(Apply | Import, expected_revision, total_bytes, sha256) -> transfer_id
+AppendConfigChunk(transfer_id, index, bytes) -> next_index
+FinishConfigUpload(transfer_id)
+GetSnapshot | ExportConfig -> transfer_id, revision, total_bytes, sha256
+ReadConfigChunk(transfer_id, index) -> bytes, next_index
+AbortConfigTransfer(transfer_id)
+```
+
+chunk payloadは最大256 KiBとし、JSON encodingとenvelopeを含むframe全体を1 MiB未満に保つ。
+`transfer_id`はconnection-scopedで、一connectionにつきactive config transferは一つ、未acknowledged chunkも一つに限定する。
+zero-based indexを厳密な順序で処理し、checked arithmeticで累積lengthを検証する。
+downloadはrevisionをpinし、uploadはfinish時にも`expected_revision`を再検証する。
+`ApplyConfig`/`ImportConfig`はtransfer purposeとexpected revisionが一致しないcompleted uploadを拒否する。
+
+uploadはEngine-owned temporary fileへ逐次writeし、downloadはclientが一chunkずつpullする。
+serialized document全体を一bufferへ読むheap allocation、chunk queue、declared total sizeによる事前allocationをしない。
+finish時にactual lengthとSHA-256をdescriptorへ照合してからtemporary fileをstreaming JSON decodeし、Config transactionへ進む。
+順序違反、duplicate、length超過、不一致hash、idle timeout、明示abort、connection closeではtransferをabortし、不完全temporary fileを削除してactive configを変更しない。
+
+P00は現行valid v1 documentへ新しいlogical total-size上限を設けない。
+storageまたはfallible decode failureは非破壊errorにする。
+後続実装がactivation用memory budgetを設ける場合も、上限超過のvalid v1 fileを上書きせず、chunked recovery/exportを可能なまま維持する。
+このprotocolを任意blobや複数streamの汎用frameworkへ拡張しない。
+
 ## Config transaction
 
 EngineのConfig ownerだけが次の順で更新する。
 
-1. frame、schema version、expected revisionを検証する。
+1. request、schema version、expected revisionを検証する。`ApplyConfig`/`ImportConfig`では完了済みuploadのpurpose、length、hashも検証する。
 2. platform capabilityを含むsemantic validationを一度だけ行い、次revisionのimmutable runtime snapshotへcompileする。
 3. Inputに`PrepareConfig(revision, snapshot)`を送り、terminal `Commit | Abort`専用delivery slotをreserveしたackを得る。Inputはまだactive snapshotを変更しない。
 4. active fileと同じdirectoryのtemporary fileへserializeし、flush/fsyncする。

@@ -49,13 +49,23 @@ domain outputは次のproduct typeで表す。
 ```text
 Decision {
   disposition: Pass | Suppress,
-  transition: Continue | Execute(ActionId) | Replay(Trigger) | Cancel,
+  transition:
+    Continue
+    | ContinueWithAction(ActionId, repeat)
+    | Complete
+    | FinishWithAction(ActionId)
+    | Replay(Trigger)
+    | Cancel,
   render: None | RenderDelta,
 }
 ```
 
 actionとreplayを別々の`Option`にせず、session transitionの排他性をclosed enumで表す。
-`Continue`はnon-terminal、`Execute`、`Replay`、`Cancel`はterminal variantである。
+`Continue`と`ContinueWithAction`はnon-terminal、`Complete`、`FinishWithAction`、`Replay`、`Cancel`はterminal variantである。
+`ContinueWithAction`は同じphysical hold sessionを維持したままactionを発行し、後続wheel eventでも再び選べる。
+`repeat`は一つのcanonical wheel eventが表す正のbounded notch数である。
+hold中に一度でもactionがacceptedされたsessionはtrigger upで`Complete`となり、triggerをreplayしない。
+release gestureのactionは`FinishWithAction`でsession完了と同時に発行する。
 Input ownerがrecognition sessionとtransition適用を所有する。
 render effectはtransitionと別fieldにし、中間pointのdrop/coalesceだけはsession transitionを変えない。
 renderer lifecycle/control enqueue failureまたはactor deathはvisual-only backpressureではなく、Inputを`Replay`または`Cancel`へ遷移させるowner faultである。
