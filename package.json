@@ -13,6 +13,7 @@
     "check:write": "biome check --write",
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build",
+    "contracts:check": "node tools/contracts/check.mjs && node --test tools/contracts/check.test.mjs",
     "quality:metrics": "node tools/quality/quality.mjs snapshot",
     "quality:compare": "node tools/quality/quality.mjs compare",
     "test:unit": "vitest run --project unit",

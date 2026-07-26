@@ -28,6 +28,9 @@ jobs:
         with:
           node-version: 24
 
+      - name: Validate P02 contract baseline
+        run: npm run contracts:check
+
       - name: Test quality CLI fixtures
         run: node --test tools/quality/quality.test.mjs
 

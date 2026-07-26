@@ -737,6 +737,37 @@ mod tests {
     }
 
     #[test]
+    fn mouse_move_is_passed_while_gesture_is_active() {
+        let config = test_config(vec![binding(
+            TriggerButton::Right,
+            vec![GestureStep::Right],
+            key_action("a"),
+            "A",
+        )]);
+        let mut state = GestureState::Idle;
+
+        process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::ButtonDown(TriggerButton::Right),
+            (100, 100),
+            1000,
+            None,
+        );
+        let effect = process_event_pure(
+            &mut state,
+            &config,
+            MouseEvent::MouseMove,
+            (120, 100),
+            1010,
+            None,
+        );
+
+        assert!(!effect.suppress);
+        assert!(matches!(state, GestureState::Gesturing { .. }));
+    }
+
+    #[test]
     fn executes_action_on_trigger_up_when_sequence_matches() {
         let action = Action::Keyboard {
             keys: vec!["ctrl".to_string(), "r".to_string()],

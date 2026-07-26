@@ -1,0 +1,109 @@
+{
+  "cases": [
+    {
+      "id": "P02-WIN-001",
+      "obligation": "A configured trigger down is suppressed and starts a gesture session.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/hook/state.rs",
+      "evidence_name": "idle_starts_gesture_on_configured_trigger"
+    },
+    {
+      "id": "P02-WIN-002",
+      "obligation": "An unconfigured trigger down is passed without starting a gesture session.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/hook/state.rs",
+      "evidence_name": "idle_ignores_unconfigured_trigger"
+    },
+    {
+      "id": "P02-WIN-003",
+      "obligation": "Pointer movement is passed while an active gesture accumulates movement.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/hook/state.rs",
+      "evidence_name": "mouse_move_is_passed_while_gesture_is_active"
+    },
+    {
+      "id": "P02-WIN-004",
+      "obligation": "A matching release requests its action and does not request trigger replay.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/hook/state.rs",
+      "evidence_name": "executes_action_on_trigger_up_when_sequence_matches"
+    },
+    {
+      "id": "P02-WIN-005",
+      "obligation": "An unmatched suppressed trigger click requests one down-up replay.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/hook/state.rs",
+      "evidence_name": "trigger_click_without_matching_sequence_requests_replay"
+    },
+    {
+      "id": "P02-WIN-006",
+      "obligation": "An unmatched gesture beyond the travel threshold does not replay the trigger.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/hook/state.rs",
+      "evidence_name": "unmatched_sequence_with_long_move_does_not_request_replay"
+    },
+    {
+      "id": "P02-WIN-007",
+      "obligation": "A hold wheel event requests immediate action repetition equal to its notch count.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/hook/state.rs",
+      "evidence_name": "hold_wheel_executes_immediately_with_repeat_count"
+    },
+    {
+      "id": "P02-WIN-008",
+      "obligation": "The same hold session accepts a later wheel action after an earlier matched action.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/hook/state.rs",
+      "evidence_name": "hold_wheel_match_resets_recognized_sequence"
+    },
+    {
+      "id": "P02-WIN-009",
+      "obligation": "Trigger release after a hold wheel action does not replay the trigger.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/hook/state.rs",
+      "evidence_name": "hold_wheel_usage_disables_unmatched_trigger_replay"
+    },
+    {
+      "id": "P02-WIN-010",
+      "obligation": "A direction remains pending below the switch threshold and becomes visible at the threshold.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/gesture.rs",
+      "evidence_name": "direction_remains_pending_until_switch_threshold_is_reached"
+    },
+    {
+      "id": "P02-WIN-011",
+      "obligation": "A confirmed direction switch closes the first segment and starts the next segment.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/gesture.rs",
+      "evidence_name": "recognizes_multi_segment_direction_sequence"
+    },
+    {
+      "id": "P02-WIN-012",
+      "obligation": "A valid current release binding preserves its ordered sequence when deserialized.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config.rs",
+      "evidence_name": "deserialize_config_with_sequence_bindings"
+    },
+    {
+      "id": "P02-WIN-013",
+      "obligation": "A valid current hold binding preserves its wheel step when deserialized.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config.rs",
+      "evidence_name": "deserialize_config_with_hold_binding"
+    },
+    {
+      "id": "P02-WIN-014",
+      "obligation": "Binding resolution chooses an app-specific exact match ahead of the default binding.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/hook/state.rs",
+      "evidence_name": "resolve_binding_prefers_app_specific_then_fallback"
+    },
+    {
+      "id": "P02-WIN-015",
+      "obligation": "A current configuration explicitly deserializes the disabled state.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config.rs",
+      "evidence_name": "deserialize_json_with_enabled_false"
+    }
+  ]
+}
