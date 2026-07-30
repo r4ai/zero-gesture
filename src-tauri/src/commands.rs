@@ -21,7 +21,7 @@ pub fn show_settings_window(app: tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub(crate) fn get_config(
     engine: tauri::State<'_, SettingsEngineState>,
-) -> Result<config::ConfigDocument, String> {
+) -> Result<crate::ipc::ConfigObservation, String> {
     engine
         .control()?
         .current_config()
@@ -32,11 +32,12 @@ pub(crate) fn get_config(
 #[tauri::command]
 pub(crate) fn update_config(
     new_config: config::ConfigDocument,
+    expected_revision: u64,
     engine: tauri::State<'_, SettingsEngineState>,
-) -> Result<(), String> {
+) -> Result<crate::ipc::ConfigApplyResult, String> {
     engine
         .control()?
-        .apply_config(new_config)
+        .apply_config(new_config, expected_revision)
         .map_err(|error| error.to_string())
 }
 
@@ -44,12 +45,13 @@ pub(crate) fn update_config(
 #[tauri::command]
 pub(crate) fn import_config(
     file_path: String,
+    expected_revision: u64,
     engine: tauri::State<'_, SettingsEngineState>,
-) -> Result<(), String> {
+) -> Result<crate::ipc::ConfigApplyResult, String> {
     let raw = fs::read(&file_path).map_err(|e| format!("failed to read file: {e}"))?;
     engine
         .control()?
-        .apply_config_bytes(raw)
+        .apply_config_bytes(raw, expected_revision)
         .map_err(|error| error.to_string())
 }
 
@@ -59,10 +61,13 @@ pub(crate) fn export_config(
     file_path: String,
     engine: tauri::State<'_, SettingsEngineState>,
 ) -> Result<(), String> {
-    let document = engine
+    let current = engine
         .control()?
         .current_config()
         .map_err(|error| error.to_string())?;
+    let document = current
+        .config
+        .ok_or_else(|| "configuration is unavailable; repair it before export".to_string())?;
     config::export(&document, std::path::Path::new(&file_path)).map_err(|error| error.to_string())
 }
 

@@ -110,20 +110,21 @@ fn launch_settings_process() -> std::io::Result<()> {
 fn handle_toggle<R: Runtime>(app: &AppHandle<R>) {
     let control = app.state::<crate::ipc::EngineControl>();
 
-    let mut new_config = match control.current_config() {
-        Ok(document) => document,
+    let current = match control.current_config() {
+        Ok(current) => current,
         Err(error) => {
             warn!("configuration unavailable in toggle handler: {error}");
             return;
         }
     };
+    let Some(mut new_config) = current.config else {
+        warn!("configuration unavailable in toggle handler");
+        return;
+    };
     new_config.shared.enabled = !new_config.shared.enabled;
-    let enabled = new_config.shared.enabled;
 
-    if let Err(err) = control.apply_config(new_config) {
+    if let Err(err) = control.apply_config(new_config, current.revision) {
         warn!("failed to toggle gestures: {err}");
-    } else {
-        sync_toggle_menu_label(app, enabled);
     }
 }
 

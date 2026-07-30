@@ -182,6 +182,24 @@ impl ThreadRuntime {
             }
         }
     }
+
+    fn apply_config(&self, active: config::ActiveConfig) {
+        let Ok(mut state) = self.state.lock() else {
+            warn!("thread runtime lock poisoned while applying config");
+            return;
+        };
+        if matches!(*state, RuntimeState::ShutDown) {
+            return;
+        }
+
+        let previous = std::mem::replace(&mut *state, RuntimeState::Disabled);
+        if let RuntimeState::Running(mut workers) = previous {
+            workers.shutdown();
+        }
+        if active.enabled() {
+            *state = RuntimeState::Running(WorkerThreads::spawn(active));
+        }
+    }
 }
 
 struct EngineIpcRuntime {
@@ -324,21 +342,29 @@ fn run_engine() -> Result<(), String> {
             let app_handle = app.handle().clone();
             let handle = thread::Builder::new()
                 .name("engine-ipc".to_string())
-                .spawn(move || match server.run(server_stop, config_owner) {
-                    Ok(ipc::ServerExit::Shutdown) => {
-                        info!("Engine shutdown requested over IPC");
+                .spawn(move || {
+                    let result = server.run(server_stop, config_owner, |active, _generation| {
                         if let Some(runtime) = app_handle.try_state::<ThreadRuntime>() {
-                            runtime.shutdown();
+                            runtime.apply_config(active.clone());
                         }
-                        app_handle.exit(0);
-                    }
-                    Ok(ipc::ServerExit::Stopped) => {}
-                    Err(error) => {
-                        error!("Engine IPC owner stopped: {error}");
-                        if let Some(runtime) = app_handle.try_state::<ThreadRuntime>() {
-                            runtime.shutdown();
+                        tray::sync_toggle_menu_label(&app_handle, active.enabled());
+                    });
+                    match result {
+                        Ok(ipc::ServerExit::Shutdown) => {
+                            info!("Engine shutdown requested over IPC");
+                            if let Some(runtime) = app_handle.try_state::<ThreadRuntime>() {
+                                runtime.shutdown();
+                            }
+                            app_handle.exit(0);
                         }
-                        app_handle.exit(1);
+                        Ok(ipc::ServerExit::Stopped) => {}
+                        Err(error) => {
+                            error!("Engine IPC owner stopped: {error}");
+                            if let Some(runtime) = app_handle.try_state::<ThreadRuntime>() {
+                                runtime.shutdown();
+                            }
+                            app_handle.exit(1);
+                        }
                     }
                 })
                 .map_err(|error| {

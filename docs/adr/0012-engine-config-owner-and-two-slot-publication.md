@@ -38,18 +38,24 @@ GetConfig
 PrepareConfig(expected_revision, bounded_config_bytes)
 CommitConfig(token, base_revision, base_generation)
 
-Config(revision, generation, bounded_config_bytes)
+Config(revision, generation, optional_bounded_config_bytes)
 Prepared(token, base_revision, base_generation)
 Applied(revision, generation, durability_warning)
 ```
 
 The capability bitmap has explicit config-read and config-transaction bits.
-Config errors use a closed enum for unavailable, payload-too-large, busy,
+Config errors use a closed enum for payload-too-large, busy,
 revision-conflict, validation, token, missing-candidate, generation-exhaustion,
-and persistence failures.
+and persistence failures. Unavailable startup is data in the typed Config
+observation, not an error code.
 An executable-version mismatch may read status and config but may not prepare
 or commit.
 The existing eight-request connection capacity is unchanged.
+Settings retains the revision returned by `GetConfig` with its edit or import
+draft and sends that revision to Prepare. It does not fetch a new revision
+immediately before Prepare. An unavailable startup is therefore represented
+as the typed `Config(0, 0, none)` observation and a valid full document can
+repair it with expected revision zero.
 
 P03b permits at most 512 KiB of decoded config bytes in a request or response;
 the existing complete encoded-frame ceiling remains strictly below 1 MiB.
@@ -99,10 +105,16 @@ Temporary-create, write, flush, or replacement failure deletes the safe
 temporary file when possible, clears the candidate slot, and leaves disk and
 active publication unchanged.
 Replacement is the logical commit point.
-Directory metadata sync is attempted afterward; its failure becomes an Applied
-durability warning.
-After replacement, publication is one non-fallible release store of the
-combined generation/index state, followed by owner field replacement.
+On Windows the temporary file data is flushed, then
+`MoveFileExW(REPLACE_EXISTING | WRITE_THROUGH)` performs the same-directory
+replacement. This codebase has no locally proven Windows directory-handle
+flush that guarantees metadata durability, so it does not make that claim:
+directory metadata durability is unconfirmed and Applied carries a typed
+warning. Other platforms attempt a directory `sync_all`; failure has the same
+warning behavior.
+After replacement, publication is one non-fallible sequentially consistent
+store of the combined generation/index state, followed by owner field
+replacement.
 There is no rollback after replacement.
 
 ### Two fixed publication slots
@@ -112,14 +124,19 @@ atomic reader counters, and one atomic combined generation/index.
 The sole writer populates only the inactive slot after its counter is zero.
 A reader:
 
-1. acquire-loads combined generation/index;
-2. increments that slot counter;
-3. acquire-loads and compares the combined state again;
+1. sequentially-consistent-loads combined generation/index;
+2. sequentially-consistent-increments that slot counter, failing open instead
+   of wrapping at `usize::MAX`;
+3. sequentially-consistent-loads and compares the combined state again;
 4. forms a reference only when both observations match, otherwise decrements
    and retries.
 
-Because generation never wraps, a delayed reader cannot accept an index after
-it has been reused for another generation.
+The state loads/store and reader-counter operations participate in one
+sequentially consistent order. If a writer observes zero before a delayed
+reader increments, the intervening publication precedes that reader's second
+state load, so it rejects the selected slot. If the increment precedes the
+writer's zero check, the writer cannot reuse the slot. Because generation
+never wraps, the encoded state cannot recur.
 A writer can therefore never overwrite a slot referenced by a validated
 reader.
 The guard path performs atomic loads/increments only: no lock, allocation,
@@ -129,7 +146,30 @@ the writer and reader invariants.
 
 P03b publishes the compiled snapshot and proves concurrent use, but the
 existing Windows hook and `InputKernel` do not consume the reader yet.
-That owner wiring and old-gesture generation release remain P03c.
+Until P03c, the Engine's Applied callback preserves existing live behavior by
+stopping and recreating the current bounded hook/overlay worker pair from the
+exact committed `ActiveConfig`; this is a projection from ConfigOwner and is
+not another config or disk writer. Direct snapshot consumption and
+old-gesture generation release remain P03c.
+
+### Session and Settings behavior
+
+The first ACL-protected pipe instance is reused across authenticated sessions,
+so there is no absent-endpoint window between clients. A connection read,
+decode, or response-write failure disconnects only that session, clears its
+candidate, and returns to accept. Only prepared listener/owner invariant
+failures terminate Engine. Thus losing the Applied response cannot undo the
+already replaced file or published owner truth.
+
+Settings probes the pipe before reading the secret. A missing pipe is the only
+condition that enters bounded launch-lock startup. Once the pipe exists,
+secret ACL, sharing, read, or shape failures are terminal security/I/O errors
+and never spawn or retry another Engine.
+
+After Applied, the Tauri adapter returns the exact config observation and
+durability-warning bit. The frontend replaces its TanStack Query entry with
+that observation, so the next edit uses the applied revision, and presents the
+Windows durability warning. Tray changes use the revision they observed.
 
 ### Startup and recovery
 
@@ -151,15 +191,17 @@ unchanged.
 
 `contracts/p03b-config-owner-rcu.json` maps each independent P03b obligation to
 one runnable Rust case.
-The manifest maintains `O = 27`, `O_v = 27`, `U = 0`, no duplicated evidence pair, and no
-source-constant claim as runtime evidence.
-The fixed-slot race test runs a writer against concurrent readers and checks
-that value always equals the atomically observed generation.
+The manifest maintains `O = 40`, `O_v = 40`, `U = 0`, no evidence reused
+within or across phase manifests, and no source-constant claim as runtime
+evidence.
+The fixed-slot evidence includes a deterministic delayed-reader/reused-slot
+interleaving, counter-exhaustion behavior, and repeated writer/reader stress.
 Fault tests independently cover temporary create, write, flush, replace, and
-post-replace directory sync.
-The P02 manifest keeps 54 obligations but updates its two superseded
-single-process worker-rollback cases to the owner transaction's pre-replace
-unchanged and post-replace no-rollback truths.
+post-replace metadata durability warning behavior.
+The current P02 manifest has 52 independent obligations: two owner-transaction
+claims formerly counted there are now exclusively P03b evidence. The P03
+manifest keeps 45 independent obligations; inherited first-pipe readiness and
+absent-endpoint bounded startup are not recounted in P03b.
 
 No dependency, generic transport trait, actor runtime, transaction framework,
 method registry, event string, retry queue, or background task is added.
@@ -176,7 +218,7 @@ claim final latency/RSS acceptance.
 There is one live config writer and one small interface for all existing
 mutation callers.
 Prepare is pure with respect to active state and disk, persistence failure is
-simple before replacement, and publication is non-fallible afterward.
+simple before replacement, and owner publication is non-fallible afterward.
 The publication implementation pays for one bounded reader counter operation
 instead of allocation or reference-count traffic in the eventual callback.
 The temporary 512 KiB edit bound is a known narrower capability until the

@@ -15,9 +15,12 @@ struct Publication<T> {
 
 // The sole ConfigOwner writes only the inactive slot after observing its
 // reader count at zero. Readers form a reference only after incrementing that
-// slot's count and rechecking the combined generation/index state. Because
-// generations never wrap, a delayed reader cannot mistake a reused index for
-// the generation it first observed.
+// slot's count and rechecking the combined generation/index state. All state
+// and counter operations share one SeqCst order. If the writer's zero-count
+// observation precedes a delayed increment, the intervening publish precedes
+// the reader's second state load, so that reader must reject the slot. If the
+// increment precedes the writer's observation, the writer cannot reuse it.
+// Generations never wrap, so the same encoded state cannot recur.
 unsafe impl<T: Send + Sync> Sync for Publication<T> {}
 
 impl<T> Publication<T> {
@@ -31,7 +34,7 @@ impl<T> Publication<T> {
     }
 
     fn reserve(&self, value: T) -> Result<usize, T> {
-        let inactive = (self.state.load(Ordering::Acquire) as usize & 1) ^ 1;
+        let inactive = (self.state.load(Ordering::SeqCst) as usize & 1) ^ 1;
         if self.readers[inactive].load(Ordering::SeqCst) != 0 {
             return Err(value);
         }
@@ -45,7 +48,7 @@ impl<T> Publication<T> {
     }
 
     fn abort(&self, slot: usize) {
-        debug_assert_eq!(slot, (self.state.load(Ordering::Acquire) as usize & 1) ^ 1);
+        debug_assert_eq!(slot, (self.state.load(Ordering::SeqCst) as usize & 1) ^ 1);
         debug_assert_eq!(self.readers[slot].load(Ordering::SeqCst), 0);
         // SAFETY: the prepared slot is inactive and unobservable to readers.
         unsafe {
@@ -55,19 +58,31 @@ impl<T> Publication<T> {
 
     fn publish(&self, slot: usize, generation: u64) {
         debug_assert!(generation <= MAX_GENERATION);
-        debug_assert_eq!(slot, (self.state.load(Ordering::Acquire) as usize & 1) ^ 1);
+        debug_assert_eq!(slot, (self.state.load(Ordering::SeqCst) as usize & 1) ^ 1);
         // The candidate was installed during Prepare. Publication is one
-        // release store and therefore cannot fail after durable replacement.
+        // atomic store and therefore cannot fail after durable replacement.
         self.state
-            .store((generation << 1) | slot as u64, Ordering::Release);
+            .store((generation << 1) | slot as u64, Ordering::SeqCst);
     }
 
     fn read(&self) -> Option<Guard<'_, T>> {
+        self.read_with(|_| {})
+    }
+
+    fn read_with(&self, mut after_select: impl FnMut(u64)) -> Option<Guard<'_, T>> {
         loop {
-            let observed = self.state.load(Ordering::Acquire);
+            let observed = self.state.load(Ordering::SeqCst);
             let slot = observed as usize & 1;
-            self.readers[slot].fetch_add(1, Ordering::SeqCst);
-            if self.state.load(Ordering::Acquire) == observed {
+            after_select(observed);
+            if self.readers[slot]
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |value| {
+                    value.checked_add(1)
+                })
+                .is_err()
+            {
+                return None;
+            }
+            if self.state.load(Ordering::SeqCst) == observed {
                 // SAFETY: a matching state recheck makes this the active slot.
                 // Its reader count remains non-zero for the guard lifetime.
                 let present = unsafe { (&*self.slots[slot].get()).is_some() };
@@ -176,7 +191,7 @@ impl ConfigPublication {
 mod tests {
     use super::{Publication, MAX_GENERATION};
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Arc;
+    use std::sync::{Arc, Barrier};
     use std::thread;
 
     #[test]
@@ -197,16 +212,21 @@ mod tests {
 
     #[test]
     fn concurrent_readers_never_observe_torn_generation_or_value() {
+        const READER_COUNT: usize = 4;
         let publication = Arc::new(Publication::new(Some(1_u64), 1));
         let stop = Arc::new(AtomicBool::new(false));
-        let reader_publication = Arc::clone(&publication);
-        let reader_stop = Arc::clone(&stop);
-        let reader = thread::spawn(move || {
-            while !reader_stop.load(Ordering::Acquire) {
-                let guard = reader_publication.read().unwrap();
-                assert_eq!(*guard, guard.generation());
-            }
-        });
+        let readers = (0..READER_COUNT)
+            .map(|_| {
+                let reader_publication = Arc::clone(&publication);
+                let reader_stop = Arc::clone(&stop);
+                thread::spawn(move || {
+                    while !reader_stop.load(Ordering::Acquire) {
+                        let guard = reader_publication.read().unwrap();
+                        assert_eq!(*guard, guard.generation());
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
 
         for generation in 2..=2_000 {
             loop {
@@ -218,7 +238,46 @@ mod tests {
             }
         }
         stop.store(true, Ordering::Release);
-        reader.join().unwrap();
+        for reader in readers {
+            reader.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn delayed_reader_rejects_a_slot_reused_after_selection() {
+        let publication = Arc::new(Publication::new(Some(1_u64), 1));
+        let selected = Arc::new(Barrier::new(2));
+        let resume = Arc::new(Barrier::new(2));
+        let reader_publication = Arc::clone(&publication);
+        let reader_selected = Arc::clone(&selected);
+        let reader_resume = Arc::clone(&resume);
+        let reader = thread::spawn(move || {
+            reader_publication
+                .read_with(|state| {
+                    if state >> 1 == 1 {
+                        reader_selected.wait();
+                        reader_resume.wait();
+                    }
+                })
+                .unwrap()
+                .generation()
+        });
+
+        selected.wait();
+        let slot = publication.reserve(2).unwrap();
+        publication.publish(slot, 2);
+        publication.reserve(3).unwrap();
+        resume.wait();
+
+        assert_eq!(reader.join().unwrap(), 2);
+    }
+
+    #[test]
+    fn reader_counter_exhaustion_fails_open_without_wrapping() {
+        let publication = Publication::new(Some(1_u64), 1);
+        publication.readers[0].store(usize::MAX, Ordering::SeqCst);
+        assert!(publication.read().is_none());
+        assert_eq!(publication.readers[0].load(Ordering::SeqCst), usize::MAX);
     }
 
     #[test]

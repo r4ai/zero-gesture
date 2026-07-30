@@ -20,8 +20,8 @@ use std::time::{Duration, Instant};
 use windows_sys::Win32::Foundation::{
     CloseHandle, GetLastError, LocalFree, ERROR_ALREADY_EXISTS, ERROR_BROKEN_PIPE,
     ERROR_FILE_NOT_FOUND, ERROR_INSUFFICIENT_BUFFER, ERROR_NO_DATA, ERROR_PIPE_BUSY,
-    ERROR_PIPE_CONNECTED, ERROR_PIPE_LISTENING, ERROR_SHARING_VIOLATION, GENERIC_READ,
-    GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE, WAIT_ABANDONED, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    ERROR_PIPE_CONNECTED, ERROR_PIPE_LISTENING, GENERIC_READ, GENERIC_WRITE, HANDLE,
+    INVALID_HANDLE_VALUE, WAIT_ABANDONED, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
@@ -42,8 +42,8 @@ use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
 };
 use windows_sys::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, SetNamedPipeHandleState,
-    WaitNamedPipeW, PIPE_NOWAIT, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE,
+    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, SetNamedPipeHandleState, PIPE_NOWAIT,
+    PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE,
 };
 use windows_sys::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
 use windows_sys::Win32::System::Threading::{
@@ -67,6 +67,7 @@ const TEST_FAIL_FIRST_PIPE_ENV: &str = "ZG_P03_TEST_FAIL_FIRST_PIPE";
 #[derive(Debug)]
 pub enum ControlError {
     Unavailable,
+    EndpointBusy,
     Timeout,
     SpawnFailed(io::Error),
     Security(String),
@@ -79,6 +80,7 @@ impl fmt::Display for ControlError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Unavailable => formatter.write_str("Engine is unavailable"),
+            Self::EndpointBusy => formatter.write_str("Engine endpoint is busy"),
             Self::Timeout => formatter.write_str("Engine connection timed out"),
             Self::SpawnFailed(error) => write!(formatter, "failed to start Engine: {error}"),
             Self::Security(error) => write!(formatter, "IPC security setup failed: {error}"),
@@ -111,6 +113,19 @@ impl From<io::Error> for ControlError {
 #[derive(Clone)]
 pub struct EngineControl {
     endpoint: Endpoint,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub(crate) struct ConfigObservation {
+    pub(crate) revision: u64,
+    pub(crate) generation: u64,
+    pub(crate) config: Option<config::ConfigDocument>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub(crate) struct ConfigApplyResult {
+    pub(crate) current: ConfigObservation,
+    pub(crate) durability_warning: bool,
 }
 
 impl EngineControl {
@@ -151,28 +166,29 @@ impl EngineControl {
         }
     }
 
-    pub(crate) fn current_config(&self) -> Result<config::ConfigDocument, ControlError> {
+    pub(crate) fn current_config(&self) -> Result<ConfigObservation, ControlError> {
         let mut session = Session::connect(&self.endpoint)?;
-        let (_, _, bytes) = session.current_config()?;
-        config::decode_and_compile(&bytes)
-            .map(|active| active.document().clone())
-            .map_err(|_| ControlError::Rejected(ErrorCode::ConfigValidationFailed))
+        session.current_config()
     }
 
     pub(crate) fn apply_config(
         &self,
         document: config::ConfigDocument,
-    ) -> Result<(), ControlError> {
+        expected_revision: u64,
+    ) -> Result<ConfigApplyResult, ControlError> {
         let bytes = serde_json::to_vec(&document)
             .map_err(|_| ControlError::Rejected(ErrorCode::ConfigValidationFailed))?;
-        self.apply_config_bytes(bytes)
+        self.apply_config_bytes(bytes, expected_revision)
     }
 
-    pub(crate) fn apply_config_bytes(&self, bytes: Vec<u8>) -> Result<(), ControlError> {
+    pub(crate) fn apply_config_bytes(
+        &self,
+        bytes: Vec<u8>,
+        expected_revision: u64,
+    ) -> Result<ConfigApplyResult, ControlError> {
         let mut session = Session::connect(&self.endpoint)?;
-        let (revision, _, _) = session.current_config()?;
         let prepared = match session.exchange(Request::PrepareConfig {
-            expected_revision: revision,
+            expected_revision,
             config_bytes: bytes,
         })? {
             Response::Prepared {
@@ -183,15 +199,21 @@ impl EngineControl {
             Response::Error(code) => return Err(ControlError::Rejected(code)),
             _ => return Err(ControlError::Protocol(ProtocolError::InvalidMessage)),
         };
-        match session.exchange(Request::CommitConfig {
+        let durability_warning = match session.exchange(Request::CommitConfig {
             token: prepared.0,
             base_revision: prepared.1,
             base_generation: prepared.2,
         })? {
-            Response::Applied { .. } => Ok(()),
-            Response::Error(code) => Err(ControlError::Rejected(code)),
-            _ => Err(ControlError::Protocol(ProtocolError::InvalidMessage)),
-        }
+            Response::Applied {
+                durability_warning, ..
+            } => durability_warning,
+            Response::Error(code) => return Err(ControlError::Rejected(code)),
+            _ => return Err(ControlError::Protocol(ProtocolError::InvalidMessage)),
+        };
+        Ok(ConfigApplyResult {
+            current: session.current_config()?,
+            durability_warning,
+        })
     }
 
     pub fn shutdown(&self) -> Result<bool, ControlError> {
@@ -301,34 +323,39 @@ impl EngineServer {
         }))
     }
 
-    pub fn run(
+    pub fn run<F>(
         self,
         stop: Arc<AtomicBool>,
         mut config_owner: ConfigOwner,
-    ) -> Result<ServerExit, ControlError> {
+        mut on_applied: F,
+    ) -> Result<ServerExit, ControlError>
+    where
+        F: FnMut(&config::ActiveConfig, u64),
+    {
         let Self {
-            endpoint,
+            endpoint: _,
             _singleton,
             secret,
             _secret_file,
-            first_pipe,
+            mut first_pipe,
         } = self;
-        let security = SecurityDescriptor::for_sid(&endpoint.sid)?;
         let started_at = Instant::now();
-        let mut prepared_pipe = Some(first_pipe);
         let mut next_session = 1_u64;
 
         while !stop.load(Ordering::Acquire) {
-            let pipe = match prepared_pipe.take() {
-                Some(pipe) => pipe,
-                None => Pipe::server(&endpoint.pipe_name, &security)?,
-            };
-            if !pipe.wait_for_client(&stop)? {
+            if !first_pipe.wait_for_client(&stop)? {
                 return Ok(ServerExit::Stopped);
             }
             let session = next_session;
             next_session = next_session.checked_add(1).unwrap_or(1);
-            if serve_connection(pipe, &secret, started_at, &mut config_owner, session)? {
+            if serve_connection(
+                &mut first_pipe,
+                &secret,
+                started_at,
+                &mut config_owner,
+                session,
+                &mut on_applied,
+            ) {
                 return Ok(ServerExit::Shutdown);
             }
         }
@@ -337,23 +364,27 @@ impl EngineServer {
 }
 
 fn serve_connection(
-    pipe: Pipe,
+    pipe: &mut Pipe,
     secret: &[u8; AUTH_SECRET_BYTES],
     started_at: Instant,
     config_owner: &mut ConfigOwner,
     session: u64,
-) -> Result<bool, ControlError> {
-    let result = serve_connection_inner(pipe, secret, started_at, config_owner, session);
+    on_applied: &mut impl FnMut(&config::ActiveConfig, u64),
+) -> bool {
+    let result =
+        serve_connection_inner(pipe, secret, started_at, config_owner, session, on_applied);
     config_owner.disconnect(session);
-    result
+    pipe.disconnect_client();
+    result.unwrap_or(false)
 }
 
 fn serve_connection_inner(
-    mut pipe: Pipe,
+    pipe: &mut Pipe,
     secret: &[u8; AUTH_SECRET_BYTES],
     started_at: Instant,
     config_owner: &mut ConfigOwner,
     session: u64,
+    on_applied: &mut impl FnMut(&config::ActiveConfig, u64),
 ) -> Result<bool, ControlError> {
     let mut authenticated = false;
     let mut version_matches = false;
@@ -363,7 +394,7 @@ fn serve_connection_inner(
 
     loop {
         pipe.set_deadline(Instant::now() + IO_TIMEOUT);
-        let body = match protocol::read_frame(&mut pipe) {
+        let body = match protocol::read_frame(&mut *pipe) {
             Ok(body) => body,
             Err(ProtocolError::Io(error))
                 if matches!(
@@ -376,7 +407,7 @@ fn serve_connection_inner(
                 return Ok(shutdown_requested);
             }
             Err(error) => {
-                reject_decode_error(&mut pipe, &body_request_id_placeholder(&error), &error);
+                reject_decode_error(pipe, &body_request_id_placeholder(&error), &error);
                 return Ok(shutdown_requested);
             }
         };
@@ -384,14 +415,14 @@ fn serve_connection_inner(
             Ok(request) => request,
             Err(error) => {
                 let request_id = protocol::request_id_from_body(&body).unwrap_or(1);
-                reject_decode_error(&mut pipe, &request_id, &error);
+                reject_decode_error(pipe, &request_id, &error);
                 return Ok(shutdown_requested);
             }
         };
 
         if request_count == MAX_REQUESTS_PER_CONNECTION {
             send_terminal_response(
-                &mut pipe,
+                pipe,
                 request.request_id,
                 Response::Error(ErrorCode::RequestLimit),
             )?;
@@ -399,7 +430,7 @@ fn serve_connection_inner(
         }
         if request_ids[..request_count].contains(&request.request_id) {
             send_terminal_response(
-                &mut pipe,
+                pipe,
                 request.request_id,
                 Response::Error(ErrorCode::DuplicateRequestId),
             )?;
@@ -424,7 +455,7 @@ fn serve_connection_inner(
                 }
                 Request::Hello { .. } => {
                     send_terminal_response(
-                        &mut pipe,
+                        pipe,
                         request.request_id,
                         Response::Error(ErrorCode::AuthenticationFailed),
                     )?;
@@ -432,7 +463,7 @@ fn serve_connection_inner(
                 }
                 _ => {
                     send_terminal_response(
-                        &mut pipe,
+                        pipe,
                         request.request_id,
                         Response::Error(ErrorCode::HelloRequired),
                     )?;
@@ -493,22 +524,29 @@ fn serve_connection_inner(
                     base_generation,
                     Instant::now(),
                 ) {
-                    Ok(applied) => Response::Applied {
-                        revision: applied.revision,
-                        generation: applied.generation,
-                        durability_warning: applied.durability_warning,
-                    },
+                    Ok(applied) => {
+                        on_applied(
+                            config_owner
+                                .active()
+                                .expect("successful commit must install active config"),
+                            applied.generation,
+                        );
+                        Response::Applied {
+                            revision: applied.revision,
+                            generation: applied.generation,
+                            durability_warning: applied.durability_warning,
+                        }
+                    }
                     Err(error) => Response::Error(config_error_code(error)),
                 },
             }
         };
-        send_response(&mut pipe, request.request_id, response)?;
+        send_response(pipe, request.request_id, response)?;
     }
 }
 
 fn config_error_code(error: ConfigOwnerError) -> ErrorCode {
     match error {
-        ConfigOwnerError::Unavailable => ErrorCode::ConfigUnavailable,
         ConfigOwnerError::PayloadTooLarge => ErrorCode::ConfigPayloadTooLarge,
         ConfigOwnerError::Busy => ErrorCode::ConfigBusy,
         ConfigOwnerError::RevisionConflict => ErrorCode::ConfigRevisionConflict,
@@ -558,15 +596,14 @@ struct Session {
 
 impl Session {
     fn connect(endpoint: &Endpoint) -> Result<Self, ControlError> {
-        Self::connect_before(endpoint, Instant::now() + IO_TIMEOUT)
+        Self::connect_before(endpoint, Instant::now() + CONNECT_TIMEOUT)
     }
 
     fn connect_before(endpoint: &Endpoint, deadline: Instant) -> Result<Self, ControlError> {
+        let pipe = connect_pipe_before(endpoint, deadline)?;
         let secret_bytes = fs::read(&endpoint.secret_path).map_err(|error| {
-            if error.kind() == io::ErrorKind::NotFound
-                || error.raw_os_error() == Some(ERROR_SHARING_VIOLATION as i32)
-            {
-                ControlError::Unavailable
+            if error.kind() == io::ErrorKind::PermissionDenied {
+                ControlError::Security(format!("cannot read Engine secret file: {error}"))
             } else {
                 ControlError::Io(error)
             }
@@ -574,7 +611,6 @@ impl Session {
         let auth_secret: [u8; AUTH_SECRET_BYTES] = secret_bytes
             .try_into()
             .map_err(|_| ControlError::Security("invalid Engine secret file".to_string()))?;
-        let pipe = connect_pipe_before(endpoint, deadline)?;
         let mut session = Self {
             pipe,
             next_request_id: 1,
@@ -618,6 +654,15 @@ impl Session {
         self.exchange_with_id_before(request_id, request, Instant::now() + IO_TIMEOUT)
     }
 
+    #[cfg(test)]
+    fn send_then_disconnect(mut self, request: Request) -> Result<(), ControlError> {
+        let request_id = self.next_request_id;
+        let body = protocol::encode_request(&Envelope::current(request_id, request))?;
+        self.pipe.set_deadline(Instant::now() + IO_TIMEOUT);
+        protocol::write_frame(&mut self.pipe, &body)?;
+        Ok(())
+    }
+
     fn exchange_with_id_before(
         &mut self,
         request_id: u64,
@@ -632,13 +677,25 @@ impl Session {
         Ok(protocol::decode_response(&response_body, request_id)?.message)
     }
 
-    fn current_config(&mut self) -> Result<(u64, u64, Vec<u8>), ControlError> {
+    fn current_config(&mut self) -> Result<ConfigObservation, ControlError> {
         match self.exchange(Request::GetConfig)? {
             Response::Config {
                 revision,
                 generation,
                 config_bytes,
-            } => Ok((revision, generation, config_bytes)),
+            } => {
+                let config = config_bytes
+                    .map(|bytes| {
+                        config::decode_and_compile(&bytes).map(|active| active.document().clone())
+                    })
+                    .transpose()
+                    .map_err(|_| ControlError::Rejected(ErrorCode::ConfigValidationFailed))?;
+                Ok(ConfigObservation {
+                    revision,
+                    generation,
+                    config,
+                })
+            }
             Response::Error(code) => Err(ControlError::Rejected(code)),
             _ => Err(ControlError::Protocol(ProtocolError::InvalidMessage)),
         }
@@ -658,11 +715,13 @@ fn connect_pipe_before(endpoint: &Endpoint, deadline: Instant) -> Result<Pipe, C
         }
         match Pipe::client(&endpoint.pipe_name, remaining.min(IO_TIMEOUT)) {
             Ok(pipe) => return Ok(pipe),
-            Err(ControlError::Unavailable) if Instant::now() < deadline => {
+            Err(ControlError::Unavailable) => return Err(ControlError::Unavailable),
+            Err(ControlError::EndpointBusy) if Instant::now() < deadline => {
                 thread::sleep(
                     PIPE_POLL_INTERVAL.min(deadline.saturating_duration_since(Instant::now())),
                 );
             }
+            Err(ControlError::EndpointBusy) => return Err(ControlError::Timeout),
             Err(error) => return Err(error),
         }
     }
@@ -907,13 +966,6 @@ impl Pipe {
     }
 
     fn client(name: &[u16], timeout: Duration) -> Result<Self, ControlError> {
-        let timeout_ms = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX);
-        if unsafe { WaitNamedPipeW(name.as_ptr(), timeout_ms) } == 0 {
-            return match unsafe { GetLastError() } {
-                ERROR_FILE_NOT_FOUND | ERROR_PIPE_BUSY => Err(ControlError::Unavailable),
-                _ => Err(ControlError::Io(io::Error::last_os_error())),
-            };
-        }
         let handle = unsafe {
             CreateFileW(
                 name.as_ptr(),
@@ -925,6 +977,13 @@ impl Pipe {
                 null_mut(),
             )
         };
+        if handle == INVALID_HANDLE_VALUE {
+            return match unsafe { GetLastError() } {
+                ERROR_FILE_NOT_FOUND => Err(ControlError::Unavailable),
+                ERROR_PIPE_BUSY => Err(ControlError::EndpointBusy),
+                _ => Err(ControlError::Io(io::Error::last_os_error())),
+            };
+        }
         let handle = OwnedHandle::from_file(handle, "connect to Engine named pipe")?;
         let mode = PIPE_READMODE_BYTE | PIPE_NOWAIT;
         if unsafe { SetNamedPipeHandleState(handle.0, &mode, null(), null()) } == 0 {
@@ -949,6 +1008,13 @@ impl Pipe {
             }
         }
         Ok(false)
+    }
+
+    fn disconnect_client(&self) {
+        debug_assert!(self.server);
+        unsafe {
+            DisconnectNamedPipe(self.handle.0);
+        }
     }
 
     fn set_deadline(&mut self, deadline: Instant) {
@@ -1032,9 +1098,7 @@ impl Write for Pipe {
 impl Drop for Pipe {
     fn drop(&mut self) {
         if self.server {
-            unsafe {
-                DisconnectNamedPipe(self.handle.0);
-            }
+            self.disconnect_client();
         }
     }
 }
@@ -1222,6 +1286,7 @@ mod tests {
     const HELPER_ENV: &str = "ZG_P03_PROCESS_HELPER";
     const HELPER_DIR_ENV: &str = "ZG_P03_PROCESS_HELPER_DIR";
     const HELPER_SUFFIX_ENV: &str = "ZG_P03_PROCESS_HELPER_SUFFIX";
+    const HELPER_APPLIED_FILE: &str = "runtime-applied.json";
 
     fn fixture() -> (TempDir, String, EngineControl) {
         let directory = tempfile::tempdir().unwrap();
@@ -1283,7 +1348,14 @@ mod tests {
             return;
         };
         let (owner, _) = ConfigOwner::startup(&directory);
-        let exit = server.run(Arc::new(AtomicBool::new(false)), owner).unwrap();
+        let applied_path = directory.join(HELPER_APPLIED_FILE);
+        let exit = server
+            .run(Arc::new(AtomicBool::new(false)), owner, move |active, _| {
+                if let Ok(bytes) = config::encode(active) {
+                    let _ = fs::write(&applied_path, bytes);
+                }
+            })
+            .unwrap();
         assert_eq!(exit, ServerExit::Shutdown);
     }
 
@@ -1304,26 +1376,36 @@ mod tests {
     }
 
     #[test]
-    fn secret_writer_race_is_transient_unavailability() {
-        let (_directory, _suffix, control) = fixture();
+    fn existing_pipe_with_locked_secret_is_terminal_and_does_not_spawn() {
+        let (directory, suffix, control) = fixture();
+        let _server = EngineServer::for_test(directory.path(), &suffix)
+            .unwrap()
+            .unwrap();
         let path_wide = wide(control.endpoint.secret_path.as_os_str());
         let handle = unsafe {
             CreateFileW(
                 path_wide.as_ptr(),
-                GENERIC_WRITE,
+                GENERIC_READ,
                 FILE_SHARE_MODE::default(),
                 null(),
-                CREATE_ALWAYS,
-                FILE_ATTRIBUTE_HIDDEN,
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL,
                 null_mut(),
             )
         };
         let _handle = OwnedHandle::from_file(handle, "hold Engine secret file").unwrap();
+        let spawn_count = AtomicU64::new(0);
+        let started = Instant::now();
 
         assert!(matches!(
-            Session::connect(&control.endpoint),
-            Err(ControlError::Unavailable)
+            control.connect_or_start_with(|| {
+                spawn_count.fetch_add(1, AtomicOrdering::Relaxed);
+                Ok(())
+            }),
+            Err(ControlError::Io(_))
         ));
+        assert_eq!(spawn_count.load(AtomicOrdering::Relaxed), 0);
+        assert!(started.elapsed() < IO_TIMEOUT);
     }
 
     #[test]
@@ -1346,14 +1428,37 @@ mod tests {
         let _guard = ChildGuard::new(child, control.clone());
         control.connect_or_start_with(|| Ok(())).unwrap();
 
-        let mut document = control.current_config().unwrap();
+        let observed = control.current_config().unwrap();
+        let mut document = observed.config.unwrap();
         document.shared.appearance.trail_thickness = 9.0;
-        control.apply_config(document.clone()).unwrap();
+        let applied = control
+            .apply_config(document.clone(), observed.revision)
+            .unwrap();
 
-        assert_eq!(control.current_config().unwrap(), document);
+        assert_eq!(applied.current.config, Some(document.clone()));
+        assert_eq!(control.current_config().unwrap().config, Some(document));
         let status = control.status().unwrap();
         assert_eq!((status.config_revision, status.config_generation), (2, 2));
         assert!(directory.path().join("zero-gesture.config.json").exists());
+    }
+
+    #[test]
+    fn normal_windows_commit_returns_durability_warning_through_control() {
+        let (directory, suffix, control) = fixture();
+        let child = spawn_helper(directory.path(), &suffix);
+        let _guard = ChildGuard::new(child, control.clone());
+        control.connect_or_start_with(|| Ok(())).unwrap();
+
+        let observed = control.current_config().unwrap();
+        let mut changed = observed.config.unwrap();
+        changed.shared.appearance.trail_thickness = 9.5;
+        let applied = control.apply_config(changed, observed.revision).unwrap();
+
+        assert!(applied.durability_warning);
+        assert_eq!(
+            (applied.current.revision, applied.current.generation),
+            (2, 2)
+        );
     }
 
     #[test]
@@ -1364,7 +1469,11 @@ mod tests {
         control.connect_or_start_with(|| Ok(())).unwrap();
 
         let mut session = Session::connect(&control.endpoint).unwrap();
-        let (revision, _, mut bytes) = session.current_config().unwrap();
+        let observed = session.current_config().unwrap();
+        let revision = observed.revision;
+        let mut bytes =
+            config::encode(&config::ActiveConfig::from_document(observed.config.unwrap()).unwrap())
+                .unwrap();
         bytes.push(b' ');
         assert!(matches!(
             session
@@ -1377,10 +1486,112 @@ mod tests {
         ));
         drop(session);
 
-        let mut document = control.current_config().unwrap();
+        let observed = control.current_config().unwrap();
+        let mut document = observed.config.unwrap();
         document.shared.enabled = !document.shared.enabled;
-        control.apply_config(document).unwrap();
+        control.apply_config(document, observed.revision).unwrap();
         assert!(!control.status().unwrap().config_candidate_prepared);
+    }
+
+    #[test]
+    fn stale_settings_draft_conflicts_after_another_client_applies() {
+        let (directory, suffix, control) = fixture();
+        let child = spawn_helper(directory.path(), &suffix);
+        let _guard = ChildGuard::new(child, control.clone());
+        control.connect_or_start_with(|| Ok(())).unwrap();
+
+        let first = control.current_config().unwrap();
+        let second = control.current_config().unwrap();
+        let mut first_document = first.config.unwrap();
+        first_document.shared.appearance.trail_thickness = 8.0;
+        control
+            .apply_config(first_document, first.revision)
+            .unwrap();
+        let mut stale_document = second.config.unwrap();
+        stale_document.shared.appearance.trail_thickness = 10.0;
+
+        let error = control
+            .apply_config(stale_document, second.revision)
+            .unwrap_err();
+        assert!(
+            matches!(
+                error,
+                ControlError::Rejected(ErrorCode::ConfigRevisionConflict)
+            ),
+            "unexpected stale-draft result: {error:?}"
+        );
+        assert_eq!(control.current_config().unwrap().revision, 2);
+    }
+
+    #[test]
+    fn revision_zero_recovers_an_invalid_startup_config() {
+        let (directory, suffix, control) = fixture();
+        fs::write(
+            directory.path().join("zero-gesture.config.json"),
+            b"{not valid config",
+        )
+        .unwrap();
+        let child = spawn_helper(directory.path(), &suffix);
+        let _guard = ChildGuard::new(child, control.clone());
+        control.connect_or_start_with(|| Ok(())).unwrap();
+
+        let unavailable = control.current_config().unwrap();
+        assert_eq!(
+            unavailable,
+            ConfigObservation {
+                revision: 0,
+                generation: 0,
+                config: None,
+            }
+        );
+        let repaired = config::ConfigDocument::default();
+        let applied = control.apply_config(repaired.clone(), 0).unwrap();
+
+        assert_eq!(
+            (applied.current.revision, applied.current.generation),
+            (1, 1)
+        );
+        assert_eq!(applied.current.config, Some(repaired));
+        assert!(control.status().unwrap().config_available);
+    }
+
+    #[test]
+    fn applied_projects_enabled_binding_and_appearance_to_the_live_runtime() {
+        let (directory, suffix, control) = fixture();
+        let child = spawn_helper(directory.path(), &suffix);
+        let _guard = ChildGuard::new(child, control.clone());
+        control.connect_or_start_with(|| Ok(())).unwrap();
+
+        let observed = control.current_config().unwrap();
+        let mut changed = observed.config.unwrap();
+        changed.shared.enabled = !changed.shared.enabled;
+        changed.shared.appearance.trail_thickness = 6.0;
+        match &mut changed.bindings[0] {
+            config::BindingRecord::Shared(binding)
+            | config::BindingRecord::Windows(binding)
+            | config::BindingRecord::Macos(binding) => {
+                binding.label = Some("live-applied-binding".to_string());
+            }
+        }
+        control
+            .apply_config(changed.clone(), observed.revision)
+            .unwrap();
+
+        let path = directory.path().join(HELPER_APPLIED_FILE);
+        let deadline = Instant::now() + IO_TIMEOUT;
+        let projected = loop {
+            if let Ok(bytes) = fs::read(&path) {
+                if let Ok(active) = config::decode_and_compile(&bytes) {
+                    break active.document().clone();
+                }
+            }
+            assert!(
+                Instant::now() < deadline,
+                "live projection was not observed"
+            );
+            thread::sleep(PIPE_POLL_INTERVAL);
+        };
+        assert_eq!(projected, changed);
     }
 
     #[test]
@@ -1499,14 +1710,83 @@ mod tests {
     }
 
     #[test]
+    fn client_disconnect_before_response_does_not_stop_engine() {
+        let (directory, suffix, control) = fixture();
+        let child = spawn_helper(directory.path(), &suffix);
+        let _guard = ChildGuard::new(child, control.clone());
+        control.connect_or_start_with(|| Ok(())).unwrap();
+        Session::connect(&control.endpoint)
+            .unwrap()
+            .send_then_disconnect(Request::GetStatus)
+            .unwrap();
+        let started = Instant::now();
+        loop {
+            if let Ok(status) = control.status() {
+                assert_eq!(status.webview_count, 0);
+                break;
+            }
+            assert!(started.elapsed() < CONNECT_TIMEOUT);
+            thread::sleep(RETRY_INTERVAL);
+        }
+    }
+
+    #[test]
     fn client_disconnect_does_not_stop_engine() {
         let (directory, suffix, control) = fixture();
         let child = spawn_helper(directory.path(), &suffix);
         let _guard = ChildGuard::new(child, control.clone());
         control.connect_or_start_with(|| Ok(())).unwrap();
-        control.ping().unwrap();
-        thread::sleep(RETRY_INTERVAL);
-        assert_eq!(control.status().unwrap().webview_count, 0);
+        drop(Session::connect(&control.endpoint).unwrap());
+
+        assert_eq!(control.status().unwrap().role, ProcessRole::Engine);
+    }
+
+    #[test]
+    fn client_disconnect_after_commit_keeps_applied_truth_and_engine_alive() {
+        let (directory, suffix, control) = fixture();
+        let child = spawn_helper(directory.path(), &suffix);
+        let _guard = ChildGuard::new(child, control.clone());
+        control.connect_or_start_with(|| Ok(())).unwrap();
+
+        let mut session = Session::connect(&control.endpoint).unwrap();
+        let observed = session.current_config().unwrap();
+        let mut changed = observed.config.unwrap();
+        changed.shared.appearance.trail_thickness = 11.0;
+        let bytes = serde_json::to_vec(&changed).unwrap();
+        let prepared = match session
+            .exchange(Request::PrepareConfig {
+                expected_revision: observed.revision,
+                config_bytes: bytes,
+            })
+            .unwrap()
+        {
+            Response::Prepared {
+                token,
+                base_revision,
+                base_generation,
+            } => (token, base_revision, base_generation),
+            response => panic!("unexpected Prepare response: {response:?}"),
+        };
+        session
+            .send_then_disconnect(Request::CommitConfig {
+                token: prepared.0,
+                base_revision: prepared.1,
+                base_generation: prepared.2,
+            })
+            .unwrap();
+
+        let deadline = Instant::now() + CONNECT_TIMEOUT;
+        let current = loop {
+            if let Ok(current) = control.current_config() {
+                if current.revision == 2 {
+                    break current;
+                }
+            }
+            assert!(Instant::now() < deadline, "commit did not become queryable");
+            thread::sleep(PIPE_POLL_INTERVAL);
+        };
+        assert_eq!(current.config, Some(changed));
+        assert!(!control.status().unwrap().config_candidate_prepared);
     }
 
     #[test]

@@ -11,13 +11,30 @@ export type ForegroundWindowInfo = {
   title: string | null
 }
 
-export const getConfig = (): Promise<AppConfig> => invoke("get_config")
+export type ConfigObservation = {
+  revision: number
+  generation: number
+  config: AppConfig | null
+}
 
-export const updateConfig = (newConfig: AppConfig): Promise<void> =>
-  invoke("update_config", { newConfig })
+export type ConfigApplyResult = {
+  current: ConfigObservation
+  durability_warning: boolean
+}
 
-export const importConfig = (filePath: string): Promise<void> =>
-  invoke("import_config", { filePath })
+export const getConfig = (): Promise<ConfigObservation> => invoke("get_config")
+
+export const updateConfig = (
+  newConfig: AppConfig,
+  expectedRevision: number,
+): Promise<ConfigApplyResult> =>
+  invoke("update_config", { newConfig, expectedRevision })
+
+export const importConfig = (
+  filePath: string,
+  expectedRevision: number,
+): Promise<ConfigApplyResult> =>
+  invoke("import_config", { filePath, expectedRevision })
 
 export const exportConfig = (filePath: string): Promise<void> =>
   invoke("export_config", { filePath })

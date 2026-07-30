@@ -118,7 +118,7 @@ pub fn save_atomic(active: &ActiveConfig, config_dir: &Path) -> Result<(), Confi
 }
 
 pub(crate) struct SaveOutcome {
-    pub(crate) durability_warning: Option<String>,
+    pub(crate) durability_warning: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -245,8 +245,7 @@ fn atomic_write_durable_with(
     result?;
     let durability_warning = stage(PersistStage::DirectorySync)
         .and_then(|()| sync_directory(directory))
-        .err()
-        .map(|error| error.to_string());
+        .is_err();
     Ok(SaveOutcome { durability_warning })
 }
 
@@ -322,40 +321,11 @@ fn replace_file(from: &Path, to: &Path) -> io::Result<()> {
 }
 
 #[cfg(windows)]
-fn sync_directory(directory: &Path) -> io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Foundation::GENERIC_READ;
-    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
-    use windows_sys::Win32::Storage::FileSystem::{
-        CreateFileW, FlushFileBuffers, FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE,
-        FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
-    };
-
-    let path: Vec<u16> = directory.as_os_str().encode_wide().chain(Some(0)).collect();
-    let handle = unsafe {
-        CreateFileW(
-            path.as_ptr(),
-            GENERIC_READ,
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            std::ptr::null(),
-            OPEN_EXISTING,
-            FILE_FLAG_BACKUP_SEMANTICS,
-            std::ptr::null_mut(),
-        )
-    };
-    if handle == INVALID_HANDLE_VALUE {
-        return Err(io::Error::last_os_error());
-    }
-    let flushed = unsafe { FlushFileBuffers(handle) };
-    let error = if flushed == 0 {
-        Some(io::Error::last_os_error())
-    } else {
-        None
-    };
-    unsafe {
-        CloseHandle(handle);
-    }
-    error.map_or(Ok(()), Err)
+fn sync_directory(_directory: &Path) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "Windows directory metadata flush is not guaranteed",
+    ))
 }
 
 #[cfg(not(windows))]

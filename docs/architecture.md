@@ -69,6 +69,7 @@ graph TD
   - Engine Config ownerだけが行う設定ファイルの読み書き（Disk I/O）。
   - 設定画面（Webview）の表示/非表示トグル。
   - immutable compiled configを二つの固定slotへ保持し、generation/indexをatomic publishする。Windows hookからのread wiringはP03cで行う。
+  - P03cまでの互換動作として、Applied後に既存Hook/Overlay worker pairをcommitted configから再生成する。workerはdisk writerではない。
 
 ### 3.2. Hook Thread (The "Sensor")
 
@@ -102,6 +103,7 @@ TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成
   - ジェスチャーとアクションのマッピング編集。
   - 軌跡の色・太さの設定。
   - Tauri Commandを経由してRust側の設定ファイルを更新。
+  - edit/import開始時にEngineから観測したrevisionを保持し、Prepareへ渡す。Applied後は返されたconfig/revisionでquery cacheを置換し、Windows metadata durability warningを表示する。
   - **Performance Note:** この画面が開いていない時、Webviewプロセスは存在しないか、サスペンド状態になるように管理する。
 
 ---

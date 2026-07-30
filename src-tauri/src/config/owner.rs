@@ -34,7 +34,6 @@ pub(crate) struct ConfigOwnerStatus {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ConfigOwnerError {
-    Unavailable,
     PayloadTooLarge,
     Busy,
     RevisionConflict,
@@ -137,14 +136,25 @@ impl ConfigOwner {
     pub(crate) fn current_bytes(
         &mut self,
         now: Instant,
-    ) -> Result<(u64, u64, Vec<u8>), ConfigOwnerError> {
+    ) -> Result<(u64, u64, Option<Vec<u8>>), ConfigOwnerError> {
         self.expire(now);
-        let active = self.active.as_ref().ok_or(ConfigOwnerError::Unavailable)?;
-        let bytes = super::encode(active).map_err(|_| ConfigOwnerError::ValidationFailed)?;
-        if bytes.len() > MAX_CONFIG_BYTES {
+        let bytes = self
+            .active
+            .as_ref()
+            .map(super::encode)
+            .transpose()
+            .map_err(|_| ConfigOwnerError::ValidationFailed)?;
+        if bytes
+            .as_ref()
+            .is_some_and(|bytes| bytes.len() > MAX_CONFIG_BYTES)
+        {
             return Err(ConfigOwnerError::PayloadTooLarge);
         }
         Ok((self.revision, self.generation, bytes))
+    }
+
+    pub(crate) fn active(&self) -> Option<&ActiveConfig> {
+        self.active.as_ref()
     }
 
     pub(crate) fn prepare(
@@ -272,7 +282,7 @@ impl ConfigOwner {
         Ok(AppliedConfig {
             revision: self.revision,
             generation: self.generation,
-            durability_warning: outcome.durability_warning.is_some(),
+            durability_warning: outcome.durability_warning,
         })
     }
 
@@ -323,8 +333,11 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let mut owner = owner(directory.path());
         let now = Instant::now();
+        let before = owner.current_bytes(now).unwrap();
+        let reader = owner.reader();
         let prepared = owner.prepare(1, 1, &changed_bytes(), now).unwrap();
-        assert_eq!(owner.status(now).revision, 1);
+        assert_eq!(owner.current_bytes(now).unwrap(), before);
+        assert_eq!(reader.read().unwrap().generation(), 1);
         assert!(!directory
             .path()
             .join(super::super::CONFIG_FILE_NAME)
@@ -356,7 +369,7 @@ mod tests {
     }
 
     #[test]
-    fn mismatched_token_or_base_is_rejected_without_consuming_candidate() {
+    fn mismatched_connection_is_rejected_without_consuming_candidate() {
         let directory = tempfile::tempdir().unwrap();
         let mut owner = owner(directory.path());
         let now = Instant::now();
@@ -365,6 +378,41 @@ mod tests {
             owner.commit(2, prepared.token, 1, 1, now),
             Err(ConfigOwnerError::TokenMismatch)
         );
+        assert!(owner.status(now).candidate_prepared);
+    }
+
+    #[test]
+    fn mismatched_token_is_rejected_without_consuming_candidate() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut owner = owner(directory.path());
+        let now = Instant::now();
+        let prepared = owner.prepare(1, 1, &changed_bytes(), now).unwrap();
+        assert_eq!(
+            owner.commit(1, PreparedToken(prepared.token.0 + 1), 1, 1, now),
+            Err(ConfigOwnerError::TokenMismatch)
+        );
+        assert!(owner.status(now).candidate_prepared);
+    }
+
+    #[test]
+    fn mismatched_base_revision_is_rejected_without_consuming_candidate() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut owner = owner(directory.path());
+        let now = Instant::now();
+        let prepared = owner.prepare(1, 1, &changed_bytes(), now).unwrap();
+        assert_eq!(
+            owner.commit(1, prepared.token, 0, 1, now),
+            Err(ConfigOwnerError::TokenMismatch)
+        );
+        assert!(owner.status(now).candidate_prepared);
+    }
+
+    #[test]
+    fn mismatched_base_generation_is_rejected_without_consuming_candidate() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut owner = owner(directory.path());
+        let now = Instant::now();
+        let prepared = owner.prepare(1, 1, &changed_bytes(), now).unwrap();
         owner
             .commit(1, prepared.token, prepared.base_revision, 0, now)
             .expect_err("mismatched generation must fail");
@@ -515,7 +563,7 @@ mod tests {
     }
 
     #[test]
-    fn durable_commit_publishes_exact_applied_revision_and_generation() {
+    fn atomic_replacement_commit_publishes_exact_applied_revision_and_generation() {
         let directory = tempfile::tempdir().unwrap();
         let mut owner = owner(directory.path());
         let now = Instant::now();

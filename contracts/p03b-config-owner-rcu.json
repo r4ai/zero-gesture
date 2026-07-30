@@ -2,13 +2,34 @@
   "cases": [
     {
       "id": "P03B-CODEC-001",
-      "obligation": "The closed codec round-trips Prepare, Commit, and Applied with exact token and generation fields.",
+      "obligation": "The closed codec round-trips Prepare and Prepared with the exact expected revision, token, and base fields.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/ipc/protocol.rs",
-      "evidence_name": "codec_roundtrips_config_prepare_commit_and_applied"
+      "evidence_name": "codec_roundtrips_prepare_and_prepared"
     },
     {
       "id": "P03B-CODEC-002",
+      "obligation": "The closed codec round-trips Commit and Applied with the exact token, base, revision, generation, and warning fields.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/protocol.rs",
+      "evidence_name": "codec_roundtrips_commit_and_applied"
+    },
+    {
+      "id": "P03B-CODEC-003",
+      "obligation": "The closed codec round-trips GetConfig and an available typed config observation.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/protocol.rs",
+      "evidence_name": "codec_roundtrips_available_config_observation"
+    },
+    {
+      "id": "P03B-CODEC-004",
+      "obligation": "The closed codec represents unavailable startup as revision and generation zero with no config payload.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/protocol.rs",
+      "evidence_name": "codec_roundtrips_unavailable_config_observation"
+    },
+    {
+      "id": "P03B-CODEC-005",
       "obligation": "The closed codec rejects config payloads above the explicit 512 KiB limit.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/ipc/protocol.rs",
@@ -30,52 +51,80 @@
     },
     {
       "id": "P03B-OWNER-003",
-      "obligation": "Prepare rejects a stale expected revision without changing owner state.",
+      "obligation": "Prepare rejects a stale expected revision.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/config/owner.rs",
       "evidence_name": "stale_revision_is_rejected"
     },
     {
       "id": "P03B-OWNER-004",
-      "obligation": "Commit rejects a mismatched connection, token, or base generation without consuming the valid candidate.",
+      "obligation": "Commit rejects a mismatched connection without consuming the candidate.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/config/owner.rs",
-      "evidence_name": "mismatched_token_or_base_is_rejected_without_consuming_candidate"
+      "evidence_name": "mismatched_connection_is_rejected_without_consuming_candidate"
     },
     {
       "id": "P03B-OWNER-005",
-      "obligation": "A duplicate token is deterministically rejected after Applied.",
+      "obligation": "Commit rejects a mismatched opaque token without consuming the candidate.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/owner.rs",
+      "evidence_name": "mismatched_token_is_rejected_without_consuming_candidate"
+    },
+    {
+      "id": "P03B-OWNER-006",
+      "obligation": "Commit rejects a mismatched base revision without consuming the candidate.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/owner.rs",
+      "evidence_name": "mismatched_base_revision_is_rejected_without_consuming_candidate"
+    },
+    {
+      "id": "P03B-OWNER-007",
+      "obligation": "Commit rejects a mismatched base generation without consuming the candidate.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/owner.rs",
+      "evidence_name": "mismatched_base_generation_is_rejected_without_consuming_candidate"
+    },
+    {
+      "id": "P03B-OWNER-008",
+      "obligation": "A duplicate already-applied token is deterministically rejected.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/config/owner.rs",
       "evidence_name": "duplicate_applied_token_is_rejected"
     },
     {
-      "id": "P03B-OWNER-006",
-      "obligation": "A Settings connection close immediately releases its prepared candidate.",
+      "id": "P03B-OWNER-009",
+      "obligation": "Owner disconnect cleanup immediately releases that connection's candidate.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/config/owner.rs",
       "evidence_name": "disconnect_releases_the_candidate"
     },
     {
-      "id": "P03B-OWNER-007",
-      "obligation": "The fixed candidate deadline releases an expired prepared candidate.",
+      "id": "P03B-OWNER-010",
+      "obligation": "The fixed candidate deadline releases an expired candidate.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/config/owner.rs",
       "evidence_name": "timeout_releases_the_candidate"
     },
     {
-      "id": "P03B-OWNER-008",
-      "obligation": "Validation or compile failure leaves the active document, revision, and snapshot unchanged.",
+      "id": "P03B-OWNER-011",
+      "obligation": "Validation or compile failure leaves the active config bytes unchanged.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/config/owner.rs",
       "evidence_name": "validation_and_compile_failure_leave_active_unchanged"
     },
     {
-      "id": "P03B-OWNER-009",
-      "obligation": "Prepare explicitly migrates a valid legacy document without persisting it.",
+      "id": "P03B-OWNER-012",
+      "obligation": "Prepare migrates a valid legacy document without creating the active config file.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/config/owner.rs",
       "evidence_name": "prepare_migrates_legacy_without_persisting"
+    },
+    {
+      "id": "P03B-OWNER-013",
+      "obligation": "ConfigOwner rejects Prepare at the maximum generation instead of wrapping.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/owner.rs",
+      "evidence_name": "generation_exhaustion_rejects_prepare_without_wrap"
     },
     {
       "id": "P03B-PERSIST-001",
@@ -107,21 +156,28 @@
     },
     {
       "id": "P03B-PERSIST-005",
-      "obligation": "Directory metadata sync failure after replacement still publishes and returns an Applied durability warning.",
+      "obligation": "A metadata durability failure after replacement still publishes and returns an owner warning.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/config/owner.rs",
       "evidence_name": "post_replace_directory_sync_failure_still_publishes"
     },
     {
-      "id": "P03B-OWNER-010",
-      "obligation": "Successful durable commit returns the exact next revision and generation and publishes that generation.",
+      "id": "P03B-PERSIST-006",
+      "obligation": "A replacement commit publishes and returns the exact next revision and generation.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/config/owner.rs",
-      "evidence_name": "durable_commit_publishes_exact_applied_revision_and_generation"
+      "evidence_name": "atomic_replacement_commit_publishes_exact_applied_revision_and_generation"
+    },
+    {
+      "id": "P03B-PERSIST-007",
+      "obligation": "A normal Windows replacement reports the unconfirmed directory metadata durability warning through EngineControl.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "normal_windows_commit_returns_durability_warning_through_control"
     },
     {
       "id": "P03B-RECOVERY-001",
-      "obligation": "Startup loads and compiles the persisted config as Engine generation one.",
+      "obligation": "Startup loads and compiles a persisted config as Engine generation one.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/config/owner.rs",
       "evidence_name": "startup_loads_persisted_config_as_generation_one"
@@ -134,6 +190,13 @@
       "evidence_name": "startup_cleanup_removes_only_owned_orphan_temporary_files"
     },
     {
+      "id": "P03B-RECOVERY-003",
+      "obligation": "An unavailable revision-zero Engine accepts a valid full config and becomes queryable at revision and generation one.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "revision_zero_recovers_an_invalid_startup_config"
+    },
+    {
       "id": "P03B-RCU-001",
       "obligation": "A guarded old slot cannot be reused until its last reader releases it.",
       "runner": "cargo-test",
@@ -142,52 +205,80 @@
     },
     {
       "id": "P03B-RCU-002",
-      "obligation": "Concurrent readers and a writer never observe a torn generation and snapshot value.",
+      "obligation": "Concurrent readers and one writer never observe a torn generation and value.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/config/publication.rs",
       "evidence_name": "concurrent_readers_never_observe_torn_generation_or_value"
     },
     {
       "id": "P03B-RCU-003",
-      "obligation": "The combined generation and index encoding reserves a finite non-wrapping generation range.",
+      "obligation": "A reader delayed after slot selection rejects that slot after the writer publishes and reuses it.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/publication.rs",
+      "evidence_name": "delayed_reader_rejects_a_slot_reused_after_selection"
+    },
+    {
+      "id": "P03B-RCU-004",
+      "obligation": "Reader-counter exhaustion fails open without wrapping the counter.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/publication.rs",
+      "evidence_name": "reader_counter_exhaustion_fails_open_without_wrapping"
+    },
+    {
+      "id": "P03B-RCU-005",
+      "obligation": "The combined generation and index encoding has a finite non-wrapping maximum.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/config/publication.rs",
       "evidence_name": "generation_limit_has_no_wrap_value"
     },
     {
-      "id": "P03B-RCU-004",
-      "obligation": "ConfigOwner rejects the next Prepare at the maximum generation instead of wrapping.",
-      "runner": "cargo-test",
-      "evidence_file": "src-tauri/src/config/owner.rs",
-      "evidence_name": "generation_exhaustion_rejects_prepare_without_wrap"
-    },
-    {
       "id": "P03B-IPC-001",
-      "obligation": "A Settings config mutation persists and is subsequently read from the Engine owner with the next revision and generation.",
+      "obligation": "A Settings mutation is persisted and subsequently read from the Engine owner at the next revision and generation.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/ipc/windows.rs",
       "evidence_name": "settings_config_mutation_has_engine_as_only_writer"
     },
     {
       "id": "P03B-IPC-002",
-      "obligation": "An actual IPC disconnect cleans its prepared candidate before another Settings mutation.",
+      "obligation": "An actual Settings IPC disconnect frees its prepared candidate before another mutation.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/ipc/windows.rs",
       "evidence_name": "prepared_candidate_is_cleaned_when_settings_disconnects"
     },
     {
-      "id": "P03B-RECOVERY-003",
-      "obligation": "Failure of the first pipe bind still occurs before config migration or write.",
-      "runner": "cargo-test",
-      "evidence_file": "src-tauri/tests/p03_engine_process.rs",
-      "evidence_name": "first_pipe_failure_keeps_config_bytes_unchanged"
-    },
-    {
-      "id": "P03B-RECOVERY-004",
-      "obligation": "A client that races the exclusive secret-file writer observes bounded transient unavailability rather than a terminal I/O failure.",
+      "id": "P03B-IPC-003",
+      "obligation": "Applied projects exact enabled, binding, and appearance changes to the live runtime callback in the Engine process.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/ipc/windows.rs",
-      "evidence_name": "secret_writer_race_is_transient_unavailability"
+      "evidence_name": "applied_projects_enabled_binding_and_appearance_to_the_live_runtime"
+    },
+    {
+      "id": "P03B-IPC-004",
+      "obligation": "A second Settings draft observed at the old revision conflicts after the first client applies.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "stale_settings_draft_conflicts_after_another_client_applies"
+    },
+    {
+      "id": "P03B-IPC-005",
+      "obligation": "A client disconnect before a normal response is bounded and the Engine accepts a later status request.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "client_disconnect_before_response_does_not_stop_engine"
+    },
+    {
+      "id": "P03B-IPC-006",
+      "obligation": "A client disconnect after sending Commit preserves queryable Applied truth, frees the candidate, and keeps Engine alive.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "client_disconnect_after_commit_keeps_applied_truth_and_engine_alive"
+    },
+    {
+      "id": "P03B-IPC-007",
+      "obligation": "With an existing pipe, a locked secret is a bounded terminal I/O error and never spawns another Engine.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "existing_pipe_with_locked_secret_is_terminal_and_does_not_spawn"
     }
   ]
 }

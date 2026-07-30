@@ -108,6 +108,7 @@ export function validateManifest(
   repoRoot = REPO_ROOT,
   cargoList,
   profile = MANIFESTS[0],
+  usedEvidence,
 ) {
   if (
     manifest === null ||
@@ -157,6 +158,13 @@ export function validateManifest(
       fail(`duplicate evidence: ${evidencePair}`)
     }
     evidencePairs.add(evidencePair)
+    const priorProfile = usedEvidence?.get(evidencePair)
+    if (priorProfile !== undefined) {
+      fail(
+        `cross-manifest evidence reuse: ${evidencePair} (${priorProfile} and ${profile.label})`,
+      )
+    }
+    usedEvidence?.set(evidencePair, profile.label)
 
     if (!ALLOWED_RUNNERS.has(contractCase.runner)) {
       fail(`${location}.runner is not allowed: ${contractCase.runner}`)
@@ -198,6 +206,7 @@ export function validateManifestText(
   repoRoot = REPO_ROOT,
   cargoList,
   profile = MANIFESTS[0],
+  usedEvidence,
 ) {
   let manifest
   try {
@@ -205,7 +214,7 @@ export function validateManifestText(
   } catch (error) {
     fail(`manifest must be valid JSON: ${error.message}`)
   }
-  return validateManifest(manifest, repoRoot, cargoList, profile)
+  return validateManifest(manifest, repoRoot, cargoList, profile, usedEvidence)
 }
 
 function main() {
@@ -215,6 +224,7 @@ function main() {
   }
   const cargoList =
     args.length === 0 ? undefined : readFileSync(args[1], "utf8")
+  const usedEvidence = new Map()
   for (const profile of MANIFESTS) {
     const manifestPath = path.resolve(REPO_ROOT, profile.path)
     const count = validateManifestText(
@@ -222,6 +232,7 @@ function main() {
       REPO_ROOT,
       cargoList,
       profile,
+      usedEvidence,
     )
     console.log(`Validated ${count} ${profile.label} contract cases.`)
   }

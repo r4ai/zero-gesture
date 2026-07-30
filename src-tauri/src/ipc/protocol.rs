@@ -76,7 +76,6 @@ pub enum ErrorCode {
     DuplicateRequestId,
     RequestLimit,
     InvalidMessage,
-    ConfigUnavailable,
     ConfigPayloadTooLarge,
     ConfigBusy,
     ConfigRevisionConflict,
@@ -102,7 +101,7 @@ pub enum Response {
     Config {
         revision: u64,
         generation: u64,
-        config_bytes: Vec<u8>,
+        config_bytes: Option<Vec<u8>>,
     },
     Prepared {
         token: u64,
@@ -361,16 +360,22 @@ pub fn encode_response(envelope: &Envelope<Response>) -> Result<Vec<u8>, Protoco
             generation,
             config_bytes,
         } => {
-            if config_bytes.len() > MAX_CONFIG_BYTES {
+            if config_bytes
+                .as_ref()
+                .is_some_and(|bytes| bytes.len() > MAX_CONFIG_BYTES)
+            {
                 return Err(ProtocolError::FrameTooLarge(
-                    u32::try_from(config_bytes.len()).unwrap_or(u32::MAX),
+                    u32::try_from(config_bytes.as_ref().map_or(0, Vec::len)).unwrap_or(u32::MAX),
                 ));
             }
-            let mut payload = Vec::with_capacity(20 + config_bytes.len());
+            let mut payload = Vec::with_capacity(21 + config_bytes.as_ref().map_or(0, Vec::len));
             payload.extend_from_slice(&revision.to_le_bytes());
             payload.extend_from_slice(&generation.to_le_bytes());
-            payload.extend_from_slice(&(config_bytes.len() as u32).to_le_bytes());
-            payload.extend_from_slice(config_bytes);
+            payload.push(u8::from(config_bytes.is_some()));
+            if let Some(config_bytes) = config_bytes {
+                payload.extend_from_slice(&(config_bytes.len() as u32).to_le_bytes());
+                payload.extend_from_slice(config_bytes);
+            }
             (133, payload)
         }
         Response::Prepared {
@@ -464,7 +469,10 @@ pub fn decode_response(
             let mut cursor = Cursor::new(payload);
             let revision = cursor.u64()?;
             let generation = cursor.u64()?;
-            let config_bytes = cursor.bounded_bytes(MAX_CONFIG_BYTES)?;
+            let config_bytes = cursor
+                .boolean()?
+                .then(|| cursor.bounded_bytes(MAX_CONFIG_BYTES))
+                .transpose()?;
             cursor.finish()?;
             Response::Config {
                 revision,
@@ -578,15 +586,14 @@ fn error_code_byte(code: ErrorCode) -> u8 {
         ErrorCode::DuplicateRequestId => 5,
         ErrorCode::RequestLimit => 6,
         ErrorCode::InvalidMessage => 7,
-        ErrorCode::ConfigUnavailable => 8,
-        ErrorCode::ConfigPayloadTooLarge => 9,
-        ErrorCode::ConfigBusy => 10,
-        ErrorCode::ConfigRevisionConflict => 11,
-        ErrorCode::ConfigValidationFailed => 12,
-        ErrorCode::ConfigTokenMismatch => 13,
-        ErrorCode::NoPreparedConfig => 14,
-        ErrorCode::ConfigGenerationExhausted => 15,
-        ErrorCode::ConfigPersistenceFailed => 16,
+        ErrorCode::ConfigPayloadTooLarge => 8,
+        ErrorCode::ConfigBusy => 9,
+        ErrorCode::ConfigRevisionConflict => 10,
+        ErrorCode::ConfigValidationFailed => 11,
+        ErrorCode::ConfigTokenMismatch => 12,
+        ErrorCode::NoPreparedConfig => 13,
+        ErrorCode::ConfigGenerationExhausted => 14,
+        ErrorCode::ConfigPersistenceFailed => 15,
     }
 }
 
@@ -599,15 +606,14 @@ fn byte_error_code(byte: u8) -> Result<ErrorCode, ProtocolError> {
         5 => Ok(ErrorCode::DuplicateRequestId),
         6 => Ok(ErrorCode::RequestLimit),
         7 => Ok(ErrorCode::InvalidMessage),
-        8 => Ok(ErrorCode::ConfigUnavailable),
-        9 => Ok(ErrorCode::ConfigPayloadTooLarge),
-        10 => Ok(ErrorCode::ConfigBusy),
-        11 => Ok(ErrorCode::ConfigRevisionConflict),
-        12 => Ok(ErrorCode::ConfigValidationFailed),
-        13 => Ok(ErrorCode::ConfigTokenMismatch),
-        14 => Ok(ErrorCode::NoPreparedConfig),
-        15 => Ok(ErrorCode::ConfigGenerationExhausted),
-        16 => Ok(ErrorCode::ConfigPersistenceFailed),
+        8 => Ok(ErrorCode::ConfigPayloadTooLarge),
+        9 => Ok(ErrorCode::ConfigBusy),
+        10 => Ok(ErrorCode::ConfigRevisionConflict),
+        11 => Ok(ErrorCode::ConfigValidationFailed),
+        12 => Ok(ErrorCode::ConfigTokenMismatch),
+        13 => Ok(ErrorCode::NoPreparedConfig),
+        14 => Ok(ErrorCode::ConfigGenerationExhausted),
+        15 => Ok(ErrorCode::ConfigPersistenceFailed),
         _ => Err(ProtocolError::InvalidMessage),
     }
 }
@@ -806,7 +812,7 @@ mod tests {
     }
 
     #[test]
-    fn codec_roundtrips_config_prepare_commit_and_applied() {
+    fn codec_roundtrips_prepare_and_prepared() {
         let prepare = Envelope::current(
             5,
             Request::PrepareConfig {
@@ -818,6 +824,22 @@ mod tests {
             decode_request(&encode_request(&prepare).unwrap()).unwrap(),
             prepare
         );
+        let prepared = Envelope::current(
+            5,
+            Response::Prepared {
+                token: 9,
+                base_revision: 7,
+                base_generation: 4,
+            },
+        );
+        assert_eq!(
+            decode_response(&encode_response(&prepared).unwrap(), 5).unwrap(),
+            prepared
+        );
+    }
+
+    #[test]
+    fn codec_roundtrips_commit_and_applied() {
         let commit = Envelope::current(
             6,
             Request::CommitConfig {
@@ -841,6 +863,43 @@ mod tests {
         assert_eq!(
             decode_response(&encode_response(&applied).unwrap(), 6).unwrap(),
             applied
+        );
+    }
+
+    #[test]
+    fn codec_roundtrips_available_config_observation() {
+        let request = Envelope::current(7, Request::GetConfig);
+        assert_eq!(
+            decode_request(&encode_request(&request).unwrap()).unwrap(),
+            request
+        );
+        let response = Envelope::current(
+            7,
+            Response::Config {
+                revision: 3,
+                generation: 2,
+                config_bytes: Some(br#"{"schema_version":2}"#.to_vec()),
+            },
+        );
+        assert_eq!(
+            decode_response(&encode_response(&response).unwrap(), 7).unwrap(),
+            response
+        );
+    }
+
+    #[test]
+    fn codec_roundtrips_unavailable_config_observation() {
+        let response = Envelope::current(
+            8,
+            Response::Config {
+                revision: 0,
+                generation: 0,
+                config_bytes: None,
+            },
+        );
+        assert_eq!(
+            decode_response(&encode_response(&response).unwrap(), 8).unwrap(),
+            response
         );
     }
 

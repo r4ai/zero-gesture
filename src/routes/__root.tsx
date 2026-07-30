@@ -30,14 +30,8 @@ import {
   SidebarItem,
 } from "@/components/ui/sidebar"
 import { ConfigDraftProvider } from "@/contexts/config-draft"
-import { useConfigUpdatedListener } from "@/hooks/use-config"
 
 const queryClient = new QueryClient()
-
-function ConfigEventBridge() {
-  useConfigUpdatedListener()
-  return null
-}
 
 function AppSidebar() {
   const { theme, setTheme } = useTheme()
@@ -212,7 +206,6 @@ function AppLayout() {
 const RootLayout = () => (
   <QueryClientProvider client={queryClient}>
     <ThemeProvider defaultTheme="system" storageKey="zero-gesture-theme">
-      <ConfigEventBridge />
       <Suspense>
         <ConfigDraftProvider>
           <AppLayout />
