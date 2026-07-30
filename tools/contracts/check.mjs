@@ -12,7 +12,20 @@ const CASE_FIELDS = [
   "obligation",
   "runner",
 ]
-const DEFAULT_MANIFEST = "contracts/p02-windows-baseline.json"
+const MANIFESTS = [
+  {
+    label: "P02",
+    path: "contracts/p02-windows-baseline.json",
+    idPattern: /^P02-(?:WIN|CONFIG|INPUT)-\d{3}$/,
+    idDescription: "P02-WIN-NNN, P02-CONFIG-NNN, or P02-INPUT-NNN",
+  },
+  {
+    label: "P03",
+    path: "contracts/p03-process-ipc.json",
+    idPattern: /^P03-(?:PROCESS|CODEC|IPC)-\d{3}$/,
+    idDescription: "P03-PROCESS-NNN, P03-CODEC-NNN, or P03-IPC-NNN",
+  },
+]
 const REPO_ROOT = path.resolve(fileURLToPath(new URL("../..", import.meta.url)))
 
 function fail(message) {
@@ -45,10 +58,15 @@ function evidencePath(repoRoot, relativePath, location) {
     normalized !== relativePath ||
     path.posix.isAbsolute(normalized) ||
     normalized.split("/").includes("..") ||
-    !normalized.startsWith("src-tauri/src/") ||
+    !(
+      normalized.startsWith("src-tauri/src/") ||
+      normalized.startsWith("src-tauri/tests/")
+    ) ||
     !normalized.endsWith(".rs")
   ) {
-    fail(`${location} must be a Rust source path below src-tauri/src`)
+    fail(
+      `${location} must be a Rust source path below src-tauri/src or src-tauri/tests`,
+    )
   }
 
   const absolute = path.resolve(repoRoot, ...normalized.split("/"))
@@ -67,6 +85,9 @@ function rustTestPattern(name) {
 }
 
 function cargoTestName(contractCase) {
+  if (contractCase.evidence_file.startsWith("src-tauri/tests/")) {
+    return `${contractCase.evidence_name}: test`
+  }
   const sourceModule = contractCase.evidence_file.slice(
     "src-tauri/src/".length,
     -".rs".length,
@@ -75,7 +96,12 @@ function cargoTestName(contractCase) {
   return `${moduleName}::tests::${contractCase.evidence_name}: test`
 }
 
-export function validateManifest(manifest, repoRoot = REPO_ROOT, cargoList) {
+export function validateManifest(
+  manifest,
+  repoRoot = REPO_ROOT,
+  cargoList,
+  profile = MANIFESTS[0],
+) {
   if (
     manifest === null ||
     typeof manifest !== "object" ||
@@ -106,10 +132,8 @@ export function validateManifest(manifest, repoRoot = REPO_ROOT, cargoList) {
     for (const field of CASE_FIELDS) {
       requireNonemptyString(contractCase[field], `${location}.${field}`)
     }
-    if (!/^P02-(?:WIN|CONFIG|INPUT)-\d{3}$/.test(contractCase.id)) {
-      fail(
-        `${location}.id must match P02-WIN-NNN, P02-CONFIG-NNN, or P02-INPUT-NNN`,
-      )
+    if (!profile.idPattern.test(contractCase.id)) {
+      fail(`${location}.id must match ${profile.idDescription}`)
     }
     if (ids.has(contractCase.id)) {
       fail(`duplicate contract id: ${contractCase.id}`)
@@ -162,14 +186,19 @@ export function validateManifest(manifest, repoRoot = REPO_ROOT, cargoList) {
   return manifest.cases.length
 }
 
-export function validateManifestText(text, repoRoot = REPO_ROOT, cargoList) {
+export function validateManifestText(
+  text,
+  repoRoot = REPO_ROOT,
+  cargoList,
+  profile = MANIFESTS[0],
+) {
   let manifest
   try {
     manifest = JSON.parse(text)
   } catch (error) {
     fail(`manifest must be valid JSON: ${error.message}`)
   }
-  return validateManifest(manifest, repoRoot, cargoList)
+  return validateManifest(manifest, repoRoot, cargoList, profile)
 }
 
 function main() {
@@ -179,13 +208,16 @@ function main() {
   }
   const cargoList =
     args.length === 0 ? undefined : readFileSync(args[1], "utf8")
-  const manifestPath = path.resolve(REPO_ROOT, DEFAULT_MANIFEST)
-  const count = validateManifestText(
-    readFileSync(manifestPath, "utf8"),
-    REPO_ROOT,
-    cargoList,
-  )
-  console.log(`Validated ${count} P02 contract cases.`)
+  for (const profile of MANIFESTS) {
+    const manifestPath = path.resolve(REPO_ROOT, profile.path)
+    const count = validateManifestText(
+      readFileSync(manifestPath, "utf8"),
+      REPO_ROOT,
+      cargoList,
+      profile,
+    )
+    console.log(`Validated ${count} ${profile.label} contract cases.`)
+  }
 }
 
 if (

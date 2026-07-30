@@ -68,3 +68,29 @@ test("rejects a commented source marker absent from the Cargo test list", () => 
     /Cargo test list/,
   )
 })
+
+test("accepts runnable integration-test evidence", () => {
+  const repo = mkdtempSync(path.join(tmpdir(), "contracts-integration-"))
+  const evidence = path.join(
+    repo,
+    "src-tauri",
+    "tests",
+    "p03_engine_process.rs",
+  )
+  mkdirSync(path.dirname(evidence), { recursive: true })
+  writeFileSync(evidence, "#[test]\nfn actual_engine_child() {}\n")
+
+  const manifest = JSON.stringify({
+    cases: [
+      {
+        ...validCase,
+        evidence_file: "src-tauri/tests/p03_engine_process.rs",
+        evidence_name: "actual_engine_child",
+      },
+    ],
+  })
+  assert.equal(
+    validateManifestText(manifest, repo, "actual_engine_child: test"),
+    1,
+  )
+})

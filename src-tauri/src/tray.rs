@@ -75,7 +75,9 @@ pub fn setup<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
                 handle_toggle(app);
             }
             MENU_OPEN_SETTINGS => {
-                let _ = show_settings_window(app);
+                if let Err(error) = launch_settings_process() {
+                    warn!("failed to launch Settings: {error}");
+                }
             }
             MENU_QUIT => {
                 let runtime = app.state::<crate::ThreadRuntime>();
@@ -84,14 +86,16 @@ pub fn setup<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
             }
             _ => {}
         })
-        .on_tray_icon_event(|tray, event| {
+        .on_tray_icon_event(|_tray, event| {
             if let TrayIconEvent::Click {
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,
                 ..
             } = event
             {
-                let _ = show_settings_window(tray.app_handle());
+                if let Err(error) = launch_settings_process() {
+                    warn!("failed to launch Settings: {error}");
+                }
             }
         });
 
@@ -101,6 +105,13 @@ pub fn setup<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
 
     tray.build(app)?;
     Ok(())
+}
+
+fn launch_settings_process() -> std::io::Result<()> {
+    std::process::Command::new(std::env::current_exe()?)
+        .arg("--settings")
+        .spawn()
+        .map(|_| ())
 }
 
 /// Handles the "Toggle Gestures" menu action.

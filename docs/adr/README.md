@@ -15,6 +15,7 @@ ADRは実装の詳細設計ではなく、後続PRが守る外部契約、不変
 | [0008](./0008-portable-gesture-decision-core.md) | Accepted | gesture認識とsession判断を一つのportable moduleへ移し、Windowsを唯一のcallerとして切り替える |
 | [0009](./0009-config-schema-v2-migration-and-compile.md) | Accepted | strict schema v2、legacy分類移行、非破壊upgrade、immutable Windows compileを固定する |
 | [0010](./0010-bounded-input-owner-kernel.md) | Accepted | boundedなplatform-neutral Input owner kernelと固定ID/effect境界を追加する |
+| [0011](./0011-p03a-process-mode-and-control-ipc.md) | Accepted | 同一executableのprocess bootstrapと認証済みWindows control IPCを固定する |
 
 ## Reading order
 
@@ -25,6 +26,7 @@ ADR 0007はP01bをP02の直前に必要な実行可能characterizationへ限定�
 ADR 0008はP02aで実装したportable gesture moduleの所有権、interface、Windows effect適用境界を記録する。
 ADR 0009はP02bで実装したconfig document、legacy migration、現在利用可能な永続化、Windows compile seamを記録する。
 ADR 0010はP02cで実装したInput owner policy、generation pin、accepted-action completion、allocation-free handle seamを記録する。
+ADR 0011はP03aで実装したEngine/Settings bootstrap、Windows current-user endpoint、閉じたcontrol protocol、bounded retryを記録する。
 
 ## Status policy
 

@@ -1,0 +1,319 @@
+{
+  "cases": [
+    {
+      "id": "P03-PROCESS-001",
+      "obligation": "The default executable invocation selects Settings mode.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/process.rs",
+      "evidence_name": "default_invocation_selects_settings_mode"
+    },
+    {
+      "id": "P03-PROCESS-002",
+      "obligation": "The explicit settings argument selects Settings mode.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/process.rs",
+      "evidence_name": "explicit_settings_argument_selects_settings_mode"
+    },
+    {
+      "id": "P03-PROCESS-003",
+      "obligation": "The engine argument selects Engine mode.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/process.rs",
+      "evidence_name": "engine_argument_selects_engine_mode"
+    },
+    {
+      "id": "P03-PROCESS-004",
+      "obligation": "An unknown process-mode argument is rejected.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/process.rs",
+      "evidence_name": "unknown_argument_is_rejected"
+    },
+    {
+      "id": "P03-PROCESS-005",
+      "obligation": "Conflicting process-mode arguments are rejected.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/process.rs",
+      "evidence_name": "conflicting_modes_are_rejected"
+    },
+    {
+      "id": "P03-CODEC-001",
+      "obligation": "Hello request and response envelopes round-trip through the closed binary codec.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/protocol.rs",
+      "evidence_name": "codec_roundtrips_hello"
+    },
+    {
+      "id": "P03-CODEC-002",
+      "obligation": "Ping request and response envelopes round-trip through the closed binary codec.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/protocol.rs",
+      "evidence_name": "codec_roundtrips_ping"
+    },
+    {
+      "id": "P03-CODEC-003",
+      "obligation": "Status response fields round-trip through the closed binary codec.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/protocol.rs",
+      "evidence_name": "codec_roundtrips_status"
+    },
+    {
+      "id": "P03-CODEC-004",
+      "obligation": "Shutdown request and response envelopes round-trip through the closed binary codec.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/protocol.rs",
+      "evidence_name": "codec_roundtrips_shutdown"
+    },
+    {
+      "id": "P03-CODEC-005",
+      "obligation": "A zero-length frame is rejected.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/protocol.rs",
+      "evidence_name": "zero_length_frame_is_rejected"
+    },
+    {
+      "id": "P03-CODEC-006",
+      "obligation": "An oversized frame is rejected before its body is read or allocated.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/protocol.rs",
+      "evidence_name": "oversized_frame_is_rejected_before_body_read"
+    },
+    {
+      "id": "P03-CODEC-007",
+      "obligation": "The largest permitted encoded frame is accepted.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/protocol.rs",
+      "evidence_name": "maximum_frame_body_is_accepted"
+    },
+    {
+      "id": "P03-CODEC-008",
+      "obligation": "A truncated frame prefix is rejected.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/protocol.rs",
+      "evidence_name": "truncated_prefix_is_rejected"
+    },
+    {
+      "id": "P03-CODEC-009",
+      "obligation": "A truncated frame body is rejected.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/protocol.rs",
+      "evidence_name": "truncated_body_is_rejected"
+    },
+    {
+      "id": "P03-CODEC-010",
+      "obligation": "The codec rejects an unknown protocol version.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/protocol.rs",
+      "evidence_name": "wrong_version_is_rejected"
+    },
+    {
+      "id": "P03-CODEC-011",
+      "obligation": "The codec rejects an unknown closed message tag.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/protocol.rs",
+      "evidence_name": "unknown_message_is_rejected"
+    },
+    {
+      "id": "P03-CODEC-012",
+      "obligation": "The codec rejects invalid UTF-8 in a bounded version field.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/protocol.rs",
+      "evidence_name": "invalid_utf8_is_rejected"
+    },
+    {
+      "id": "P03-CODEC-013",
+      "obligation": "A response with a mismatched request identifier is rejected.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/protocol.rs",
+      "evidence_name": "mismatched_response_id_is_rejected"
+    },
+    {
+      "id": "P03-IPC-001",
+      "obligation": "A client presenting the wrong per-user authentication secret is rejected.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "authenticated_client_rejects_wrong_secret"
+    },
+    {
+      "id": "P03-IPC-002",
+      "obligation": "Concurrent Engine starts converge on one per-user Engine endpoint.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "one_instance_race_converges_on_one_engine"
+    },
+    {
+      "id": "P03-IPC-003",
+      "obligation": "Settings auto-starts the same executable and connects within the fixed startup deadline.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "bounded_auto_start_connects_to_spawned_engine"
+    },
+    {
+      "id": "P03-IPC-004",
+      "obligation": "A Settings client disconnect does not stop the Engine.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "client_disconnect_does_not_stop_engine"
+    },
+    {
+      "id": "P03-IPC-005",
+      "obligation": "Engine status reports the Engine role and the serving process identifier.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "status_reports_engine_role_and_server_process_id"
+    },
+    {
+      "id": "P03-IPC-006",
+      "obligation": "Engine status reports process, thread, handle, and working-set snapshot values.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "status_reports_idle_resource_snapshot"
+    },
+    {
+      "id": "P03-IPC-007",
+      "obligation": "A duplicate request identifier on one connection is rejected.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "duplicate_request_id_is_rejected"
+    },
+    {
+      "id": "P03-IPC-008",
+      "obligation": "A non-Hello request before authentication is rejected.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "request_before_hello_is_rejected"
+    },
+    {
+      "id": "P03-IPC-009",
+      "obligation": "The server returns a typed rejection for an unknown protocol version.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "wrong_protocol_version_is_rejected_by_server"
+    },
+    {
+      "id": "P03-IPC-010",
+      "obligation": "The server returns a typed rejection for an unknown request tag.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "unknown_request_is_rejected_by_server"
+    },
+    {
+      "id": "P03-IPC-011",
+      "obligation": "A connection cannot exceed the fixed request budget.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "connection_request_limit_is_enforced"
+    },
+    {
+      "id": "P03-IPC-012",
+      "obligation": "An executable-version mismatch retains read-only status access.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "executable_mismatch_allows_status"
+    },
+    {
+      "id": "P03-IPC-013",
+      "obligation": "An executable-version mismatch rejects Engine shutdown.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "executable_mismatch_rejects_shutdown"
+    },
+    {
+      "id": "P03-IPC-014",
+      "obligation": "Repeated shutdown requests on one authenticated connection are idempotent.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "shutdown_is_idempotent"
+    },
+    {
+      "id": "P03-IPC-015",
+      "obligation": "Engine shutdown removes the secret and closes the endpoint.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "shutdown_cleans_endpoint"
+    },
+    {
+      "id": "P03-IPC-016",
+      "obligation": "The created Engine singleton mutex has a protected DACL containing only one allow ACE for the current user SID.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "actual_mutex_descriptor_is_current_user_only"
+    },
+    {
+      "id": "P03-IPC-017",
+      "obligation": "Windows reports the prepared Engine pipe handle as a kernel server endpoint.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "actual_pipe_is_kernel_server_endpoint"
+    },
+    {
+      "id": "P03-IPC-018",
+      "obligation": "Concurrent Settings callers sharing one startup deadline spawn exactly one Engine process.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "concurrent_settings_launch_storm_spawns_one_engine"
+    },
+    {
+      "id": "P03-IPC-019",
+      "obligation": "An authentication error never causes Settings to spawn another Engine.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "authentication_error_does_not_spawn_engine"
+    },
+    {
+      "id": "P03-IPC-020",
+      "obligation": "A protocol error never causes Settings to spawn another Engine.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "protocol_error_does_not_spawn_engine"
+    },
+    {
+      "id": "P03-IPC-021",
+      "obligation": "The created Settings launch mutex has a protected DACL containing only one allow ACE for the current user SID.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "actual_launch_mutex_descriptor_is_current_user_only"
+    },
+    {
+      "id": "P03-IPC-022",
+      "obligation": "The created Engine pipe has a protected DACL containing only one allow ACE for the current user SID.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "actual_pipe_descriptor_is_current_user_only"
+    },
+    {
+      "id": "P03-IPC-023",
+      "obligation": "The created Engine secret file has a protected DACL containing only one allow ACE for the current user SID.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "actual_secret_file_descriptor_is_current_user_only"
+    },
+    {
+      "id": "P03-IPC-024",
+      "obligation": "Failure of the first named-pipe bind leaves pre-existing configuration bytes unchanged.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/tests/p03_engine_process.rs",
+      "evidence_name": "first_pipe_failure_keeps_config_bytes_unchanged"
+    },
+    {
+      "id": "P03-IPC-025",
+      "obligation": "Failure of the first named-pipe bind occurs before Engine input workers can start.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/tests/p03_engine_process.rs",
+      "evidence_name": "first_pipe_failure_does_not_start_input_workers"
+    },
+    {
+      "id": "P03-IPC-026",
+      "obligation": "An actual same-executable --engine child owns no content window beyond measured Tauri tray, event-target, and IME infrastructure classes.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/tests/p03_engine_process.rs",
+      "evidence_name": "actual_engine_child_owns_no_content_windows"
+    },
+    {
+      "id": "P03-IPC-027",
+      "obligation": "An actual same-executable --engine child starts no WebView2 descendant process.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/tests/p03_engine_process.rs",
+      "evidence_name": "actual_engine_child_starts_no_webview2_descendant"
+    }
+  ]
+}
