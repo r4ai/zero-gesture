@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 pub const SCHEMA_VERSION: u32 = 2;
 pub const DEFAULT_APP_ID: &str = "default";
@@ -87,7 +87,7 @@ pub struct PlatformOverride {
     pub appearance: Option<AppearanceSettings>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(
     tag = "platform",
     content = "application",
@@ -98,6 +98,24 @@ pub enum ApplicationRecord {
     Shared(Application),
     Windows(Application),
     Macos(Application),
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ApplicationRecordWire {
+    platform: RecordPlatform,
+    application: Application,
+}
+
+impl<'de> Deserialize<'de> for ApplicationRecord {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let wire = ApplicationRecordWire::deserialize(deserializer)?;
+        Ok(match wire.platform {
+            RecordPlatform::Shared => Self::Shared(wire.application),
+            RecordPlatform::Windows => Self::Windows(wire.application),
+            RecordPlatform::Macos => Self::Macos(wire.application),
+        })
+    }
 }
 
 impl ApplicationRecord {
@@ -152,7 +170,7 @@ pub enum MatchMethod {
     Regex,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(
     tag = "platform",
     content = "binding",
@@ -163,6 +181,24 @@ pub enum BindingRecord {
     Shared(GestureBinding),
     Windows(GestureBinding),
     Macos(GestureBinding),
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BindingRecordWire {
+    platform: RecordPlatform,
+    binding: GestureBinding,
+}
+
+impl<'de> Deserialize<'de> for BindingRecord {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let wire = BindingRecordWire::deserialize(deserializer)?;
+        Ok(match wire.platform {
+            RecordPlatform::Shared => Self::Shared(wire.binding),
+            RecordPlatform::Windows => Self::Windows(wire.binding),
+            RecordPlatform::Macos => Self::Macos(wire.binding),
+        })
+    }
 }
 
 impl BindingRecord {
@@ -528,7 +564,8 @@ impl Key {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
 enum RecordPlatform {
     Shared,
     Windows,
@@ -548,18 +585,14 @@ pub(crate) enum DecodedDocument {
 }
 
 pub(crate) fn decode(bytes: &[u8]) -> Result<DecodedDocument, ConfigError> {
-    let probe: SchemaProbe = serde_json::from_slice(bytes)
-        .map_err(|error| ConfigError::at("$", format!("invalid JSON: {error}")))?;
+    let probe: SchemaProbe = deserialize_at_path(bytes, "invalid JSON")?;
     match probe.schema_version {
         Some(SCHEMA_VERSION) => {
-            let document = serde_json::from_slice(bytes)
-                .map_err(|error| ConfigError::at("$", format!("invalid v2 document: {error}")))?;
+            let document = deserialize_at_path(bytes, "invalid v2 document")?;
             Ok(DecodedDocument::Current(document))
         }
         None | Some(1) => {
-            let legacy: LegacyConfig = serde_json::from_slice(bytes).map_err(|error| {
-                ConfigError::at("$", format!("invalid legacy document: {error}"))
-            })?;
+            let legacy: LegacyConfig = deserialize_at_path(bytes, "invalid legacy document")?;
             migrate_legacy(legacy).map(DecodedDocument::Migrated)
         }
         Some(version) => Err(ConfigError::at(
@@ -567,6 +600,33 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<DecodedDocument, ConfigError> {
             format!("unsupported schema version {version}"),
         )),
     }
+}
+
+fn deserialize_at_path<T: DeserializeOwned>(bytes: &[u8], context: &str) -> Result<T, ConfigError> {
+    let mut deserializer = serde_json::Deserializer::from_slice(bytes);
+    serde_path_to_error::deserialize(&mut deserializer).map_err(|error| {
+        let message = error.inner().to_string();
+        let mut path = error.path().to_string();
+        if let Some(field) = unknown_field(&message) {
+            if !path.ends_with(field) {
+                if !path.is_empty() {
+                    path.push('.');
+                }
+                path.push_str(field);
+            }
+        }
+        if path.is_empty() {
+            path.push('$');
+        }
+        ConfigError::at(path, format!("{context}: {message}"))
+    })
+}
+
+fn unknown_field(message: &str) -> Option<&str> {
+    message
+        .strip_prefix("unknown field `")
+        .and_then(|remainder| remainder.split_once('`'))
+        .map(|(field, _)| field)
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -937,7 +997,8 @@ pub(crate) fn validate(document: &ConfigDocument) -> Result<(), ConfigError> {
     }
 
     let mut binding_ids = HashSet::new();
-    let mut signatures = HashSet::new();
+    let mut windows_signatures = HashSet::new();
+    let mut macos_signatures = HashSet::new();
     for (index, record) in document.bindings.iter().enumerate() {
         let path = format!("bindings[{index}].binding");
         let binding = record.binding();
@@ -979,10 +1040,17 @@ pub(crate) fn validate(document: &ConfigDocument) -> Result<(), ConfigError> {
             binding.gesture.sequence.as_slice(),
             binding.gesture.step,
         );
-        if !signatures.insert(signature) {
+        let duplicate = match record.platform() {
+            RecordPlatform::Shared => {
+                !windows_signatures.insert(signature) | !macos_signatures.insert(signature)
+            }
+            RecordPlatform::Windows => !windows_signatures.insert(signature),
+            RecordPlatform::Macos => !macos_signatures.insert(signature),
+        };
+        if duplicate {
             return Err(ConfigError::at(
                 format!("{path}.gesture"),
-                "duplicate gesture for the same application",
+                "duplicate gesture for the same application and platform",
             ));
         }
     }
@@ -1207,6 +1275,27 @@ mod tests {
         }
     }
 
+    fn binding(id: &str, key: Key) -> GestureBinding {
+        GestureBinding {
+            id: id.to_string(),
+            label: None,
+            application_id: None,
+            gesture: GesturePattern {
+                trigger: TriggerButton::RightClick,
+                mode: GestureMode::Release,
+                sequence: vec![GestureStep::Up],
+                step: None,
+            },
+            action: DocumentAction::Keyboard {
+                keys: vec![key, Key::R],
+            },
+        }
+    }
+
+    fn decode_current_value(value: serde_json::Value) -> ConfigError {
+        decode(&serde_json::to_vec(&value).unwrap()).unwrap_err()
+    }
+
     #[test]
     fn deserialize_config_with_sequence_bindings() {
         let document = decode_migrated(
@@ -1301,19 +1390,51 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unknown_and_newer_schema_without_fallback() {
-        let newer = decode(br#"{"schema_version":3}"#).unwrap_err();
-        assert_eq!(newer.path(), "schema_version");
-        let unknown = decode(
-            br##"{"schema_version":2,"shared":{"enabled":true,"recognition":{"safety_timeout_ms":1,"min_segment_px":1,"direction_switch_confirm_px":1,"axis_ambiguity_deadzone_px":0,"replay_distance_threshold_px":1,"max_gesture_steps":8},"appearance":{"trail_color":"#fff","trail_thickness":1.0,"label_font_family":"x","label_font_size":1.0,"label_font_weight":400,"label_padding":0.0},"extra":true},"applications":[],"bindings":[],"platforms":{"windows":{},"macos":{}}}"##,
-        )
-        .unwrap_err();
+    fn rejects_unknown_v2_field_with_nested_path() {
+        let mut value = serde_json::to_value(ConfigDocument::default()).unwrap();
+        value["shared"]["recognition"]["unexpected"] = serde_json::Value::Bool(true);
+        let unknown = decode_current_value(value);
+        assert_eq!(unknown.path(), "shared.recognition.unexpected");
         assert!(unknown.to_string().contains("unknown field"));
     }
 
     #[test]
-    fn validation_errors_name_exact_selector_key_and_reference_paths() {
-        let mut document = ConfigDocument {
+    fn rejects_newer_schema_without_fallback() {
+        let newer = decode(br#"{"schema_version":3}"#).unwrap_err();
+        assert_eq!(newer.path(), "schema_version");
+    }
+
+    #[test]
+    fn v2_decode_reports_nested_enum_path() {
+        let mut value = serde_json::to_value(ConfigDocument::default()).unwrap();
+        value["bindings"][0]["binding"]["gesture"]["trigger"] = "side_click".into();
+        assert_eq!(
+            decode_current_value(value).path(),
+            "bindings[0].binding.gesture.trigger"
+        );
+    }
+
+    #[test]
+    fn legacy_decode_reports_nested_unknown_field_path() {
+        let error = decode(
+            br#"{"apps":{"browser":{"matchers":[{"target":"title","method":"exact","value":"Docs","unexpected":true}]}}}"#,
+        )
+        .unwrap_err();
+        assert_eq!(error.path(), "apps.browser.matchers[0].unexpected");
+    }
+
+    #[test]
+    fn legacy_decode_reports_tagged_payload_path() {
+        let error = decode(
+            br#"{"bindings":{"default":[{"id":"bad","gesture":{"trigger":"right_click","sequence":["up"]},"action":{"type":"keyboard","keys":["pageup"],"unexpected":true}}]}}"#,
+        )
+        .unwrap_err();
+        assert_eq!(error.path(), "bindings.default[0].action.unexpected");
+    }
+
+    #[test]
+    fn unsupported_selector_reports_exact_field_path() {
+        let document = ConfigDocument {
             applications: vec![ApplicationRecord::Shared(Application {
                 id: "app".to_string(),
                 label: None,
@@ -1329,9 +1450,11 @@ mod tests {
             validate(&document).unwrap_err().path(),
             "applications[0].application.matchers[0].target"
         );
+    }
 
-        document.applications[0] =
-            ApplicationRecord::Windows(document.applications[0].application().clone());
+    #[test]
+    fn unsupported_key_reports_exact_field_path() {
+        let mut document = ConfigDocument::default();
         document.bindings[0] = BindingRecord::Shared(document.bindings[0].binding().clone());
         let DocumentAction::Keyboard { keys } = &mut match &mut document.bindings[0] {
             BindingRecord::Shared(binding) => &mut binding.action,
@@ -1342,7 +1465,12 @@ mod tests {
             validate(&document).unwrap_err().path(),
             "bindings[0].binding.action.keys[0]"
         );
+    }
 
+    #[test]
+    fn bad_application_reference_reports_exact_field_path() {
+        let mut document = ConfigDocument::default();
+        document.bindings[0] = BindingRecord::Shared(document.bindings[0].binding().clone());
         if let BindingRecord::Shared(binding) = &mut document.bindings[0] {
             binding.action = DocumentAction::Keyboard {
                 keys: vec![Key::Primary, Key::R],
@@ -1352,6 +1480,48 @@ mod tests {
         assert_eq!(
             validate(&document).unwrap_err().path(),
             "bindings[0].binding.application_id"
+        );
+    }
+
+    #[test]
+    fn windows_and_macos_may_use_the_same_gesture() {
+        let document = ConfigDocument {
+            bindings: vec![
+                BindingRecord::Windows(binding("windows", Key::Ctrl)),
+                BindingRecord::Macos(binding("macos", Key::Command)),
+            ],
+            ..ConfigDocument::default()
+        };
+        validate(&document).unwrap();
+    }
+
+    #[test]
+    fn shared_gesture_conflicts_with_windows() {
+        let document = ConfigDocument {
+            bindings: vec![
+                BindingRecord::Shared(binding("shared", Key::Primary)),
+                BindingRecord::Windows(binding("windows", Key::Ctrl)),
+            ],
+            ..ConfigDocument::default()
+        };
+        assert_eq!(
+            validate(&document).unwrap_err().path(),
+            "bindings[1].binding.gesture"
+        );
+    }
+
+    #[test]
+    fn shared_gesture_conflicts_with_macos() {
+        let document = ConfigDocument {
+            bindings: vec![
+                BindingRecord::Shared(binding("shared", Key::Primary)),
+                BindingRecord::Macos(binding("macos", Key::Command)),
+            ],
+            ..ConfigDocument::default()
+        };
+        assert_eq!(
+            validate(&document).unwrap_err().path(),
+            "bindings[1].binding.gesture"
         );
     }
 }

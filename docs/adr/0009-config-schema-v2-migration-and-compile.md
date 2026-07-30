@@ -58,6 +58,7 @@ Windows additionally permits physical `ctrl`, `alt`, and `win`; macOS permits ph
 Application references are optional, where missing means the default binding set.
 A Shared binding may reference only a Shared application.
 A platform binding may reference Shared or its own platform.
+Gesture uniqueness is evaluated per effective platform: Shared signatures are registered for both platforms, while otherwise identical Windows and Macos signatures may coexist.
 
 ## Legacy classification
 
@@ -75,6 +76,7 @@ Arrays retain their order; legacy map groups use deterministic default-first the
 
 The migration preserves enabled state, IDs, labels, application references, matcher values and methods, binding order, gesture fields, actions, and disabled behavior.
 Only documented legacy aliases normalize to their canonical closed key name.
+Nested serde failures are tracked at the JSON decode seam with the direct `serde_path_to_error` dependency; typed private record decoders preserve paths through the adjacent platform tag without introducing another document representation.
 
 ## Compile interface
 
@@ -103,6 +105,9 @@ Migration decode, validation, backup, temporary write, flush, or replace failure
 Invalid v2 and newer versions are non-destructive errors.
 At startup such an error leaves the shared configuration unavailable, starts no gesture workers, logs the field-path diagnostic, and makes the existing `get_config` and mutation paths return an error instead of substituting defaults.
 An imported or Settings-submitted candidate is compiled and persisted before the in-memory snapshot and workers change.
+If worker application then fails, the previous live snapshot is restored only after the previous document is persisted successfully.
+If persistence rollback fails, the runtime stops workers and marks shared configuration unavailable, returning both apply and rollback diagnostics.
+The current single-process runtime cannot guarantee worker shutdown when its state mutex is already poisoned; in that case it still marks configuration unavailable and reports the shutdown failure.
 
 Windows atomic replacement uses the existing `windows-sys` dependency's `MoveFileExW` with replace-existing and write-through flags.
 Other targets use same-directory `rename`.
@@ -120,5 +125,5 @@ The document is the only editable representation in Rust and TypeScript.
 Windows Settings selectors exclude Macos records before editing; updates preserve their order, IDs, references, content, and platform override.
 The config module has one small external compile interface while migration, validation, and selector knowledge remain local.
 
-The existing P02 manifest retains its initial 15 Windows cases and adds 10 one-to-one Rust migration, compile, validation, and persistence cases.
-For that bounded manifest, `O = 25`, `O_v = 25`, and `U = 0`.
+The existing P02 manifest retains its initial 15 Windows cases and has 21 one-to-one Rust migration, compile, validation, decode-path, and persistence cases.
+For that bounded manifest, `O = 36`, `O_v = 36`, and `U = 0`.

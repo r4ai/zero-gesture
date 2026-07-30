@@ -149,17 +149,17 @@
     },
     {
       "id": "P02-CONFIG-007",
-      "obligation": "Unknown v2 fields and newer schema versions are rejected without fallback.",
+      "obligation": "An unknown nested v2 field is rejected with its exact field path and without fallback.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/config/document.rs",
-      "evidence_name": "rejects_unknown_and_newer_schema_without_fallback"
+      "evidence_name": "rejects_unknown_v2_field_with_nested_path"
     },
     {
       "id": "P02-CONFIG-008",
-      "obligation": "Unsupported selectors, keys, and application references report their exact field paths.",
+      "obligation": "An unsupported selector reports its exact field path.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/config/document.rs",
-      "evidence_name": "validation_errors_name_exact_selector_key_and_reference_paths"
+      "evidence_name": "unsupported_selector_reports_exact_field_path"
     },
     {
       "id": "P02-CONFIG-009",
@@ -174,6 +174,83 @@
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/config/mod.rs",
       "evidence_name": "successful_migration_backs_up_then_atomically_replaces_active_file"
+    },
+    {
+      "id": "P02-CONFIG-011",
+      "obligation": "A newer schema version is rejected without fallback.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/document.rs",
+      "evidence_name": "rejects_newer_schema_without_fallback"
+    },
+    {
+      "id": "P02-CONFIG-012",
+      "obligation": "An unsupported platform key reports its exact field path.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/document.rs",
+      "evidence_name": "unsupported_key_reports_exact_field_path"
+    },
+    {
+      "id": "P02-CONFIG-013",
+      "obligation": "An unknown application reference reports its exact field path.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/document.rs",
+      "evidence_name": "bad_application_reference_reports_exact_field_path"
+    },
+    {
+      "id": "P02-CONFIG-014",
+      "obligation": "Windows and Macos bindings may define the same gesture signature.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/document.rs",
+      "evidence_name": "windows_and_macos_may_use_the_same_gesture"
+    },
+    {
+      "id": "P02-CONFIG-015",
+      "obligation": "A Shared gesture conflicts with the same Windows gesture signature.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/document.rs",
+      "evidence_name": "shared_gesture_conflicts_with_windows"
+    },
+    {
+      "id": "P02-CONFIG-016",
+      "obligation": "A Shared gesture conflicts with the same Macos gesture signature.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/document.rs",
+      "evidence_name": "shared_gesture_conflicts_with_macos"
+    },
+    {
+      "id": "P02-CONFIG-017",
+      "obligation": "A nested invalid v2 enum reports its exact field path.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/document.rs",
+      "evidence_name": "v2_decode_reports_nested_enum_path"
+    },
+    {
+      "id": "P02-CONFIG-018",
+      "obligation": "A nested unknown legacy field reports its exact field path.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/document.rs",
+      "evidence_name": "legacy_decode_reports_nested_unknown_field_path"
+    },
+    {
+      "id": "P02-CONFIG-019",
+      "obligation": "An invalid nested legacy tagged payload reports its exact field path.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/document.rs",
+      "evidence_name": "legacy_decode_reports_tagged_payload_path"
+    },
+    {
+      "id": "P02-CONFIG-020",
+      "obligation": "A worker apply failure restores the previous live config only after persisted rollback succeeds.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/commands.rs",
+      "evidence_name": "worker_failure_restores_previous_only_after_disk_rollback"
+    },
+    {
+      "id": "P02-CONFIG-021",
+      "obligation": "A persisted rollback failure disables the runtime and marks shared configuration unavailable with diagnostics.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/commands.rs",
+      "evidence_name": "disk_rollback_failure_requires_disabled_unavailable_state"
     }
   ]
 }

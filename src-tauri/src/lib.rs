@@ -85,6 +85,15 @@ impl SharedConfig {
         });
         Ok(())
     }
+
+    fn mark_unavailable(&self, error: String) -> Result<(), String> {
+        let mut state = self
+            .0
+            .write()
+            .map_err(|_| "shared config lock poisoned".to_string())?;
+        *state = ConfigState::Unavailable(error);
+        Ok(())
+    }
 }
 
 /// Absolute directory where the app stores configuration files.
@@ -298,6 +307,25 @@ impl ThreadRuntime {
 
         Ok(())
     }
+
+    fn disable_for_config_error(&self) -> Result<(), String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "thread runtime lock poisoned".to_string())?;
+        let previous = std::mem::replace(&mut *state, RuntimeState::Disabled);
+        match previous {
+            RuntimeState::Running(mut workers) => workers.shutdown(),
+            RuntimeState::Disabled => {}
+            RuntimeState::ShutDown => *state = RuntimeState::ShutDown,
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn is_disabled(&self) -> bool {
+        matches!(*self.state.lock().unwrap(), RuntimeState::Disabled)
+    }
 }
 
 /// Replaces the in-memory config and returns whether workers should restart.
@@ -315,22 +343,18 @@ pub fn rollback_config_update(
     previous_config: Option<config::ActiveConfig>,
     error: String,
     restart_required: bool,
-) {
+) -> Result<(), String> {
     let enabled = previous_config
         .as_ref()
         .is_some_and(config::ActiveConfig::enabled);
-    if let Err(err) = shared_config.restore(previous_config.clone(), error) {
-        warn!("failed to roll back in-memory config after update failure: {err}");
-        return;
-    }
+    shared_config.restore(previous_config.clone(), error)?;
 
     if restart_required && enabled && !runtime.should_allow_exit() {
         if let Some(previous) = previous_config {
-            if let Err(err) = runtime.apply_worker_state(previous, true) {
-                warn!("failed to roll back worker threads after update failure: {err}");
-            }
+            runtime.apply_worker_state(previous, true)?;
         }
     }
+    Ok(())
 }
 
 /// Application entry point — builds and runs the Tauri application.
