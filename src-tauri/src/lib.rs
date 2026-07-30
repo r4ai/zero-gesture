@@ -4,18 +4,21 @@ pub mod config;
 mod domain;
 pub mod executor;
 mod hook;
+mod ipc;
 #[path = "log.rs"]
 mod log_config;
 pub mod overlay;
+mod process;
 mod tray;
 pub mod window_info;
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::{
-    atomic::{AtomicU32, Ordering},
+    atomic::{AtomicBool, AtomicU32, Ordering},
     Arc, Mutex, RwLock,
 };
-use std::thread::JoinHandle;
+use std::thread::{self, JoinHandle};
 
 use crossbeam_channel::Sender;
 use log::{debug, error, info, warn};
@@ -183,6 +186,7 @@ enum RuntimeState {
 pub struct ThreadRuntime {
     state: Mutex<RuntimeState>,
     config_update_lock: Mutex<()>,
+    owns_workers: bool,
 }
 
 impl ThreadRuntime {
@@ -205,6 +209,19 @@ impl ThreadRuntime {
         Self {
             state: Mutex::new(initial_state),
             config_update_lock: Mutex::new(()),
+            owns_workers: true,
+        }
+    }
+
+    /// Creates the temporary P03a Settings-side config runtime.
+    ///
+    /// Settings keeps the existing in-process config commands until P03b but
+    /// never starts Engine input or rendering workers.
+    pub fn settings() -> Self {
+        Self {
+            state: Mutex::new(RuntimeState::Disabled),
+            config_update_lock: Mutex::new(()),
+            owns_workers: false,
         }
     }
 
@@ -269,6 +286,9 @@ impl ThreadRuntime {
         active: config::ActiveConfig,
         enabled: bool,
     ) -> Result<(), String> {
+        if !self.owns_workers {
+            return Ok(());
+        }
         let mut state = self
             .state
             .lock()
@@ -328,6 +348,75 @@ impl ThreadRuntime {
     }
 }
 
+struct EngineIpcRuntime {
+    stop: Arc<AtomicBool>,
+    handle: Mutex<Option<JoinHandle<()>>>,
+}
+
+impl Drop for EngineIpcRuntime {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        if let Ok(handle) = self.handle.get_mut() {
+            if let Some(handle) = handle.take() {
+                let _ = handle.join();
+            }
+        }
+    }
+}
+
+enum SettingsEngineState {
+    Connected(ipc::EngineControl),
+    Unavailable(String),
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum SettingsEngineErrorKind {
+    Unavailable,
+}
+
+#[derive(serde::Serialize)]
+struct SettingsEngineError {
+    kind: SettingsEngineErrorKind,
+    message: String,
+}
+
+#[tauri::command]
+fn get_engine_status(
+    engine: tauri::State<'_, SettingsEngineState>,
+) -> Result<ipc::EngineStatus, SettingsEngineError> {
+    match engine.inner() {
+        SettingsEngineState::Connected(control) => {
+            control.status().map_err(|error| SettingsEngineError {
+                kind: SettingsEngineErrorKind::Unavailable,
+                message: error.to_string(),
+            })
+        }
+        SettingsEngineState::Unavailable(message) => Err(SettingsEngineError {
+            kind: SettingsEngineErrorKind::Unavailable,
+            message: message.clone(),
+        }),
+    }
+}
+
+#[tauri::command]
+fn shutdown_engine(
+    engine: tauri::State<'_, SettingsEngineState>,
+) -> Result<bool, SettingsEngineError> {
+    match engine.inner() {
+        SettingsEngineState::Connected(control) => {
+            control.shutdown().map_err(|error| SettingsEngineError {
+                kind: SettingsEngineErrorKind::Unavailable,
+                message: error.to_string(),
+            })
+        }
+        SettingsEngineState::Unavailable(message) => Err(SettingsEngineError {
+            kind: SettingsEngineErrorKind::Unavailable,
+            message: message.clone(),
+        }),
+    }
+}
+
 /// Replaces the in-memory config and returns whether workers should restart.
 pub fn replace_live_config(
     shared_config: &SharedConfig,
@@ -357,20 +446,38 @@ pub fn rollback_config_update(
     Ok(())
 }
 
-/// Application entry point — builds and runs the Tauri application.
-///
-/// Sets up logging, loads configuration, spawns background threads,
-/// creates the system tray, and enters the event loop.
+/// Selects Engine or Settings mode from the executable arguments.
+pub fn run_from_args(arguments: impl IntoIterator<Item = OsString>) -> Result<(), String> {
+    match process::select_mode(arguments) {
+        Ok(process::ProcessMode::Engine) => run_engine(),
+        Ok(process::ProcessMode::Settings) => run_settings(),
+        Err(error) => Err(format!("invalid process mode: {error:?}")),
+    }
+}
+
+/// Compatibility entry point used by mobile tooling.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    if let Err(error) = run_from_args(std::env::args_os()) {
+        eprintln!("{error}");
+    }
+}
+
+fn run_engine() -> Result<(), String> {
     let log_level = log_config::resolve_log_level();
 
     let app = tauri::Builder::default()
-        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_log::Builder::new().level(log_level).build())
-        .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
             let config_dir_path = app.path().app_config_dir()?;
+            let Some(server) = ipc::EngineServer::new(&config_dir_path).map_err(|error| {
+                tauri::Error::Setup((Box::new(error) as Box<dyn std::error::Error>).into())
+            })?
+            else {
+                info!("Engine already running for this user");
+                app.handle().exit(0);
+                return Ok(());
+            };
             let shared_config = match config::load(config_dir_path.as_path()) {
                 Ok(config::LoadResult::Ready(active) | config::LoadResult::Missing(active)) => {
                     SharedConfig::new(active)
@@ -387,9 +494,93 @@ pub fn run() {
             app.manage(commands::CaptureState(std::sync::Mutex::new(None)));
             tray::setup(app)?;
 
+            let stop = Arc::new(AtomicBool::new(false));
+            let server_stop = Arc::clone(&stop);
+            let app_handle = app.handle().clone();
+            let handle = thread::Builder::new()
+                .name("engine-ipc".to_string())
+                .spawn(move || match server.run(server_stop) {
+                    Ok(ipc::ServerExit::Shutdown) => {
+                        info!("Engine shutdown requested over IPC");
+                        if let Some(runtime) = app_handle.try_state::<ThreadRuntime>() {
+                            runtime.shutdown();
+                        }
+                        app_handle.exit(0);
+                    }
+                    Ok(ipc::ServerExit::Stopped) => {}
+                    Err(error) => {
+                        error!("Engine IPC owner stopped: {error}");
+                        if let Some(runtime) = app_handle.try_state::<ThreadRuntime>() {
+                            runtime.shutdown();
+                        }
+                        app_handle.exit(1);
+                    }
+                })
+                .map_err(|error| {
+                    tauri::Error::Setup((Box::new(error) as Box<dyn std::error::Error>).into())
+                })?;
+            app.manage(EngineIpcRuntime {
+                stop,
+                handle: Mutex::new(Some(handle)),
+            });
+            Ok(())
+        })
+        .build(tauri::generate_context!())
+        .map_err(|error| format!("failed to build Engine: {error}"))?;
+
+    app.run(|app, event| {
+        if let tauri::RunEvent::ExitRequested { api, .. } = event {
+            if let Some(runtime) = app.try_state::<ThreadRuntime>() {
+                if !runtime.should_allow_exit() {
+                    api.prevent_exit();
+                }
+            }
+        }
+    });
+    Ok(())
+}
+
+fn run_settings() -> Result<(), String> {
+    let log_level = log_config::resolve_log_level();
+    let app = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_log::Builder::new().level(log_level).build())
+        .plugin(tauri_plugin_opener::init())
+        .setup(move |app| {
+            let config_dir_path = app.path().app_config_dir()?;
+            let engine_result = std::env::current_exe()
+                .map_err(|error| error.to_string())
+                .and_then(|executable| {
+                    ipc::EngineControl::connect_or_start(&executable, &config_dir_path)
+                        .map_err(|error| error.to_string())
+                });
+            let engine = match engine_result {
+                Ok(control) => SettingsEngineState::Connected(control),
+                Err(message) => {
+                    warn!("Engine unavailable to Settings: {message}");
+                    SettingsEngineState::Unavailable(message)
+                }
+            };
+            let shared_config = match config::load(config_dir_path.as_path()) {
+                Ok(config::LoadResult::Ready(active) | config::LoadResult::Missing(active)) => {
+                    SharedConfig::new(active)
+                }
+                Err(load_error) => {
+                    error!("configuration unavailable in Settings: {load_error}");
+                    SharedConfig::unavailable(load_error.to_string())
+                }
+            };
+            app.manage(engine);
+            app.manage(shared_config);
+            app.manage(ConfigDir(config_dir_path));
+            app.manage(ThreadRuntime::settings());
+            app.manage(commands::CaptureState(std::sync::Mutex::new(None)));
+            tray::show_settings_window(app.handle())?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            get_engine_status,
+            shutdown_engine,
             commands::show_settings_window,
             commands::get_config,
             commands::update_config,
@@ -401,16 +592,16 @@ pub fn run() {
             commands::stop_window_capture
         ])
         .build(tauri::generate_context!())
-        .expect("error while building tauri application");
+        .map_err(|error| format!("failed to build Settings: {error}"))?;
 
     app.run(|app, event| {
-        if let tauri::RunEvent::ExitRequested { api, .. } = event {
-            let runtime = app.state::<ThreadRuntime>();
-            if !runtime.should_allow_exit() {
-                api.prevent_exit();
+        if let tauri::RunEvent::ExitRequested { .. } = event {
+            if let Some(runtime) = app.try_state::<ThreadRuntime>() {
+                runtime.shutdown();
             }
         }
     });
+    Ok(())
 }
 
 #[cfg(test)]
