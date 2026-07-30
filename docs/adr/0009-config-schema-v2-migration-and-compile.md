@@ -125,5 +125,5 @@ The document is the only editable representation in Rust and TypeScript.
 Windows Settings selectors exclude Macos records before editing; updates preserve their order, IDs, references, content, and platform override.
 The config module has one small external compile interface while migration, validation, and selector knowledge remain local.
 
-The existing P02 manifest retains its initial 15 Windows cases and has 21 one-to-one Rust migration, compile, validation, decode-path, and persistence cases.
-For that bounded manifest, `O = 36`, `O_v = 36`, and `U = 0`.
+At the P02b boundary, the P02 manifest retained its initial 15 Windows cases and added 21 one-to-one Rust migration, compile, validation, decode-path, and persistence cases.
+For that historical P02b boundary, `O = 36`, `O_v = 36`, and `U = 0`; ADR 0010 records the later P02c extension.

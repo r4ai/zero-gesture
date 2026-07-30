@@ -23,10 +23,9 @@ use windows_sys::Win32::{
     },
 };
 
-use crate::config::Action;
 use crate::domain::{
-    Decision, Disposition, GestureInput, GestureMachine, GestureTransition, MouseEvent, Point,
-    RenderEffect, ReplayRequest, TriggerButton,
+    ActionId, Decision, Disposition, GestureInput, GestureMachine, GestureTransition, MouseEvent,
+    Point, RenderEffect, ReplayRequest, TriggerButton,
 };
 use crate::executor;
 use crate::overlay::OverlayCommand;
@@ -60,7 +59,7 @@ struct HookThreadState {
     /// Deferred trigger-button replay request from hook callback.
     pending_replay: Option<ReplayRequest>,
     /// Deferred action to execute from the message loop.
-    pending_actions: VecDeque<Action>,
+    pending_actions: VecDeque<(ActionId, u16)>,
 }
 
 // Thread-local storage is required because `WH_MOUSE_LL` callback signature
@@ -219,7 +218,7 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
     let tick = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount() };
     let point = Point::new(info.pt.x, info.pt.y);
 
-    let matched_app = match event {
+    let binding_set = match event {
         MouseEvent::ButtonDown(trigger) if hs.machine.can_start(trigger) => {
             let activated_target = activate_window_at_point(point.x, point.y);
             let window_info = if let Some(hwnd) = activated_target {
@@ -228,9 +227,7 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
                 crate::window_info::get_foreground_window_info()
             };
             debug!("window info: {:?}", window_info);
-            hs.runtime
-                .match_windows_app(&window_info)
-                .map(str::to_owned)
+            hs.runtime.match_windows_app(&window_info)
         }
         _ => None,
     };
@@ -239,7 +236,7 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
         event,
         point,
         tick,
-        matched_app,
+        binding_set,
     });
     apply_decision(hs, decision)
 }
@@ -252,7 +249,9 @@ fn apply_decision(hs: &mut HookThreadState, decision: Decision) -> bool {
                 x: point.x,
                 y: point.y,
             },
-            RenderEffect::UpdateLabel(label) => OverlayCommand::UpdateLabel(label),
+            RenderEffect::UpdateLabel(label) => OverlayCommand::UpdateLabel(
+                label.map(|action| hs.runtime.action_label(action).to_string()),
+            ),
             RenderEffect::EndGesture => OverlayCommand::EndGesture,
         };
         let _ = hs.overlay_tx.send(command);
@@ -277,11 +276,9 @@ fn apply_decision(hs: &mut HookThreadState, decision: Decision) -> bool {
     decision.disposition == Disposition::Suppress
 }
 
-fn queue_action(hs: &mut HookThreadState, action: Action, repeat: u16) {
+fn queue_action(hs: &mut HookThreadState, action: ActionId, repeat: u16) {
     let should_post = hs.pending_actions.is_empty();
-    for _ in 0..usize::from(repeat) {
-        hs.pending_actions.push_back(action.clone());
-    }
+    hs.pending_actions.push_back((action, repeat));
     if should_post {
         unsafe {
             PostThreadMessageW(GetCurrentThreadId(), WM_EXECUTE_ACTION, 0, 0);
@@ -361,9 +358,19 @@ fn handle_execute_action() {
         hs.pending_actions.drain(..).collect::<Vec<_>>()
     });
 
-    for action in actions {
-        debug!("Executing bound action: {:?}", action);
-        executor::execute(&action);
+    for (action, repeat) in actions {
+        for _ in 0..usize::from(repeat) {
+            let action = HOOK_STATE.with(|cell| {
+                let borrow = cell.borrow();
+                borrow
+                    .as_ref()
+                    .map(|state| state.runtime.action(action).clone())
+            });
+            if let Some(action) = action {
+                debug!("Executing bound action: {:?}", action);
+                executor::execute(&action);
+            }
+        }
     }
 }
 

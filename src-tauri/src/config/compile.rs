@@ -1,8 +1,11 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use regex::Regex;
 
-use crate::domain::{AppBindingSet, GestureConfig, HoldBinding, ReleaseBinding};
+use crate::domain::{
+    ActionId, AppBindingSet, BindingSetId, GestureConfig, HoldBinding, ReleaseBinding,
+};
 use crate::executor::generate_label;
 use crate::window_info::ForegroundWindowInfo;
 
@@ -50,8 +53,14 @@ impl CompiledMatcher {
 
 #[derive(Debug, Clone)]
 struct CompiledApplication {
-    id: String,
+    binding_set: BindingSetId,
     matchers: Vec<CompiledMatcher>,
+}
+
+#[derive(Debug, Clone)]
+struct CompiledAction {
+    action: Action,
+    label: String,
 }
 
 #[derive(Debug, Clone)]
@@ -68,12 +77,13 @@ pub(crate) struct RuntimeAppearance {
 pub(crate) struct RuntimeConfig {
     pub(crate) enabled: bool,
     applications: Vec<CompiledApplication>,
-    pub(crate) gesture: GestureConfig,
+    pub(crate) gesture: Arc<GestureConfig>,
+    actions: Vec<CompiledAction>,
     pub(crate) appearance: RuntimeAppearance,
 }
 
 impl RuntimeConfig {
-    pub(crate) fn match_windows_app<'a>(&'a self, info: &ForegroundWindowInfo) -> Option<&'a str> {
+    pub(crate) fn match_windows_app(&self, info: &ForegroundWindowInfo) -> Option<BindingSetId> {
         self.applications
             .iter()
             .find(|application| {
@@ -82,13 +92,28 @@ impl RuntimeConfig {
                     .iter()
                     .any(|matcher| matcher.matches(info))
             })
-            .map(|application| application.id.as_str())
+            .map(|application| application.binding_set)
+    }
+
+    pub(crate) fn action(&self, id: ActionId) -> &Action {
+        &self.actions[id.index()].action
+    }
+
+    pub(crate) fn action_label(&self, id: ActionId) -> &str {
+        &self.actions[id.index()].label
     }
 }
 
 pub(crate) fn compile(document: &ConfigDocument) -> Result<RuntimeConfig, ConfigError> {
     document::validate(document)?;
 
+    let default_binding_set =
+        BindingSetId::from_index(0).expect("zero must fit in a binding set identity");
+    let mut binding_sets = vec![AppBindingSet {
+        release_bindings: Vec::new(),
+        hold_bindings: Vec::new(),
+    }];
+    let mut binding_set_ids = HashMap::from([(DEFAULT_APP_ID.to_string(), default_binding_set)]);
     let mut applications = Vec::new();
     for (index, record) in document.applications.iter().enumerate() {
         let application = match record {
@@ -97,6 +122,17 @@ pub(crate) fn compile(document: &ConfigDocument) -> Result<RuntimeConfig, Config
             }
             ApplicationRecord::Macos(_) => continue,
         };
+        let binding_set = BindingSetId::from_index(binding_sets.len()).ok_or_else(|| {
+            ConfigError::at(
+                format!("applications[{index}].application.id"),
+                "too many compiled binding sets",
+            )
+        })?;
+        binding_sets.push(AppBindingSet {
+            release_bindings: Vec::new(),
+            hold_bindings: Vec::new(),
+        });
+        binding_set_ids.insert(application.id.clone(), binding_set);
         let mut matchers = Vec::with_capacity(application.matchers.len());
         for (matcher_index, matcher) in application.matchers.iter().enumerate() {
             let path = format!("applications[{index}].application.matchers[{matcher_index}].value");
@@ -125,32 +161,36 @@ pub(crate) fn compile(document: &ConfigDocument) -> Result<RuntimeConfig, Config
             });
         }
         applications.push(CompiledApplication {
-            id: application.id.clone(),
+            binding_set,
             matchers,
         });
     }
 
-    let mut binding_sets: HashMap<String, AppBindingSet> = HashMap::new();
-    for record in &document.bindings {
+    let mut actions = Vec::new();
+    for (index, record) in document.bindings.iter().enumerate() {
         let binding = match record {
             BindingRecord::Shared(binding) | BindingRecord::Windows(binding) => binding,
             BindingRecord::Macos(_) => continue,
         };
-        let application_id = binding
+        let binding_set = binding
             .application_id
-            .clone()
-            .unwrap_or_else(|| DEFAULT_APP_ID.to_string());
-        let set = binding_sets
-            .entry(application_id)
-            .or_insert_with(|| AppBindingSet {
-                release_bindings: Vec::new(),
-                hold_bindings: Vec::new(),
+            .as_ref()
+            .map_or(default_binding_set, |application_id| {
+                binding_set_ids[application_id]
             });
+        let set = &mut binding_sets[binding_set.index()];
         let action = compile_action(&binding.action);
         let label = binding
             .label
             .clone()
             .unwrap_or_else(|| generate_label(&action));
+        let action_id = ActionId::from_index(actions.len()).ok_or_else(|| {
+            ConfigError::at(
+                format!("bindings[{index}].binding.action"),
+                "too many compiled actions",
+            )
+        })?;
+        actions.push(CompiledAction { action, label });
         let trigger = match binding.gesture.trigger {
             TriggerButton::LeftClick => crate::domain::TriggerButton::Left,
             TriggerButton::RightClick => crate::domain::TriggerButton::Right,
@@ -160,8 +200,7 @@ pub(crate) fn compile(document: &ConfigDocument) -> Result<RuntimeConfig, Config
             GestureMode::Release => set.release_bindings.push(ReleaseBinding {
                 trigger,
                 sequence: binding.gesture.sequence.clone(),
-                action,
-                label,
+                action: action_id,
             }),
             GestureMode::Hold => set.hold_bindings.push(HoldBinding {
                 trigger,
@@ -170,17 +209,10 @@ pub(crate) fn compile(document: &ConfigDocument) -> Result<RuntimeConfig, Config
                     .gesture
                     .step
                     .expect("validated hold binding must define a step"),
-                action,
-                label,
+                action: action_id,
             }),
         }
     }
-    binding_sets
-        .entry(DEFAULT_APP_ID.to_string())
-        .or_insert_with(|| AppBindingSet {
-            release_bindings: Vec::new(),
-            hold_bindings: Vec::new(),
-        });
 
     let recognition = &document.shared.recognition;
     let appearance = document
@@ -192,15 +224,17 @@ pub(crate) fn compile(document: &ConfigDocument) -> Result<RuntimeConfig, Config
     Ok(RuntimeConfig {
         enabled: document.shared.enabled,
         applications,
-        gesture: GestureConfig {
+        gesture: Arc::new(GestureConfig {
             safety_timeout_ms: recognition.safety_timeout_ms,
             min_segment_px: recognition.min_segment_px,
             direction_switch_confirm_px: recognition.direction_switch_confirm_px,
             axis_ambiguity_deadzone_px: recognition.axis_ambiguity_deadzone_px,
             replay_distance_threshold_px: recognition.replay_distance_threshold_px,
             max_gesture_steps: usize::from(recognition.max_gesture_steps),
+            default_binding_set,
             binding_sets,
-        },
+        }),
+        actions,
         appearance: RuntimeAppearance {
             trail_color: appearance.trail_color.clone(),
             trail_thickness: appearance.trail_thickness,
@@ -279,7 +313,7 @@ mod tests {
                 window_class: None,
                 title: Some("shared".to_string()),
             }),
-            Some("shared")
+            Some(BindingSetId::from_index(1).unwrap())
         );
         assert_eq!(
             compiled.match_windows_app(&ForegroundWindowInfo {
@@ -287,10 +321,10 @@ mod tests {
                 window_class: Some("windows".to_string()),
                 title: None,
             }),
-            Some("windows")
+            Some(BindingSetId::from_index(2).unwrap())
         );
         assert_eq!(compiled.gesture.binding_sets.len(), 3);
-        assert!(!compiled.gesture.binding_sets.contains_key("mac"));
+        assert_eq!(compiled.actions.len(), 2);
     }
 
     #[test]

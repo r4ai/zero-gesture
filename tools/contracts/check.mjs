@@ -106,8 +106,10 @@ export function validateManifest(manifest, repoRoot = REPO_ROOT, cargoList) {
     for (const field of CASE_FIELDS) {
       requireNonemptyString(contractCase[field], `${location}.${field}`)
     }
-    if (!/^P02-(?:WIN|CONFIG)-\d{3}$/.test(contractCase.id)) {
-      fail(`${location}.id must match P02-WIN-NNN or P02-CONFIG-NNN`)
+    if (!/^P02-(?:WIN|CONFIG|INPUT)-\d{3}$/.test(contractCase.id)) {
+      fail(
+        `${location}.id must match P02-WIN-NNN, P02-CONFIG-NNN, or P02-INPUT-NNN`,
+      )
     }
     if (ids.has(contractCase.id)) {
       fail(`duplicate contract id: ${contractCase.id}`)

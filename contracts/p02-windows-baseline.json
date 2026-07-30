@@ -251,6 +251,132 @@
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/commands.rs",
       "evidence_name": "disk_rollback_failure_requires_disabled_unavailable_state"
+    },
+    {
+      "id": "P02-INPUT-001",
+      "obligation": "A fresh pre-resolved context with essential reservations starts suppression and emits activation before render.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/domain/input.rs",
+      "evidence_name": "fresh_context_starts_with_activation_before_render"
+    },
+    {
+      "id": "P02-INPUT-002",
+      "obligation": "A missing pre-resolved context passes the trigger without starting a session.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/domain/input.rs",
+      "evidence_name": "missing_context_passes_without_starting"
+    },
+    {
+      "id": "P02-INPUT-003",
+      "obligation": "A stale pre-resolved context passes the trigger without starting a session.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/domain/input.rs",
+      "evidence_name": "stale_context_passes_without_starting"
+    },
+    {
+      "id": "P02-INPUT-004",
+      "obligation": "A wrong-generation pre-resolved context passes the trigger without starting a session.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/domain/input.rs",
+      "evidence_name": "wrong_generation_context_passes_without_starting"
+    },
+    {
+      "id": "P02-INPUT-005",
+      "obligation": "Activation capacity exhaustion passes the trigger without starting suppression.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/domain/input.rs",
+      "evidence_name": "activation_capacity_exhaustion_passes_without_starting"
+    },
+    {
+      "id": "P02-INPUT-006",
+      "obligation": "A Ready result for another session is ignored.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/domain/input.rs",
+      "evidence_name": "stale_ready_is_ignored"
+    },
+    {
+      "id": "P02-INPUT-007",
+      "obligation": "An action is emitted only after Ready for the same session and after that session activation.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/domain/input.rs",
+      "evidence_name": "ready_session_emits_action_after_activation"
+    },
+    {
+      "id": "P02-INPUT-008",
+      "obligation": "Action capacity exhaustion applies the captured-trigger replay rule.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/domain/input.rs",
+      "evidence_name": "action_capacity_exhaustion_replays_captured_trigger"
+    },
+    {
+      "id": "P02-INPUT-009",
+      "obligation": "Before-injection failure replays one balanced trigger down-up pair exactly once.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/domain/input.rs",
+      "evidence_name": "before_injection_failure_replays_once_with_balanced_buttons"
+    },
+    {
+      "id": "P02-INPUT-010",
+      "obligation": "After-injection failure enters bypass without replaying the captured trigger.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/domain/input.rs",
+      "evidence_name": "after_injection_failure_bypasses_without_replay"
+    },
+    {
+      "id": "P02-INPUT-011",
+      "obligation": "Renderer lifecycle failure stops capture and reaches bypass after required replay cleanup.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/domain/input.rs",
+      "evidence_name": "renderer_lifecycle_failure_stops_capture_and_enters_bypass"
+    },
+    {
+      "id": "P02-INPUT-012",
+      "obligation": "A gesture pins its compiled generation while a published generation applies to the next gesture.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/domain/input.rs",
+      "evidence_name": "active_session_pins_config_generation"
+    },
+    {
+      "id": "P02-INPUT-013",
+      "obligation": "Kernel shutdown is idempotent and keeps later input in bypass pass-through.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/domain/input.rs",
+      "evidence_name": "shutdown_is_idempotent_and_stays_bypass"
+    },
+    {
+      "id": "P02-INPUT-014",
+      "obligation": "A representative start-ready-recognize-action-complete handle path performs zero heap allocations.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/domain/input.rs",
+      "evidence_name": "representative_handle_path_allocates_zero_times"
+    },
+    {
+      "id": "P02-INPUT-015",
+      "obligation": "A hold action pending completion passes a fast repeated wheel without dispatch or cleanup and reuses the slot only after terminal completion.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/domain/input.rs",
+      "evidence_name": "pending_hold_action_passes_fast_wheel_then_reuses_completed_slot"
+    },
+    {
+      "id": "P02-INPUT-016",
+      "obligation": "An active session keeps its pinned safety timeout after a shorter timeout is published for the next generation.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/domain/input.rs",
+      "evidence_name": "active_session_pins_safety_timeout"
+    },
+    {
+      "id": "P02-INPUT-017",
+      "obligation": "Before-injection replay uses the exact matching physical-up point that was observed and suppressed.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/domain/input.rs",
+      "evidence_name": "before_injection_replay_keeps_suppressed_physical_up_point"
+    },
+    {
+      "id": "P02-INPUT-018",
+      "obligation": "A late activation failure after injection starts enters bypass without replaying the captured trigger.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/domain/input.rs",
+      "evidence_name": "late_activation_failure_after_injection_bypasses_without_replay"
     }
   ]
 }
