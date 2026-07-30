@@ -191,9 +191,15 @@ enum CompletionPhase {
 }
 
 #[derive(Debug, Clone, Copy)]
+enum PhysicalUp {
+    Pending,
+    ObservedAndSuppressed(Point),
+}
+
+#[derive(Debug, Clone, Copy)]
 struct CompletionRecord {
     phase: CompletionPhase,
-    physical_up: bool,
+    physical_up: PhysicalUp,
 }
 
 struct ActiveSession {
@@ -398,12 +404,14 @@ impl InputKernel {
         tick: u32,
         facts: CallbackFacts,
     ) -> InputDecision {
-        session.last_point = point;
-        if let Some(completion) = &mut session.completion {
-            if event == MouseEvent::ButtonUp(session.trigger) {
-                completion.physical_up = true;
-            }
+        if session.completion.is_some()
+            && matches!(event, MouseEvent::WheelUp(_) | MouseEvent::WheelDown(_))
+        {
+            self.state = KernelState::Active(session);
+            return InputDecision::pass(InputMode::Operational);
         }
+        session.last_point = point;
+        observe_physical_up(session.completion.as_mut(), event, session.trigger, point);
         if !session.recognition_active {
             self.state = KernelState::Active(session);
             return InputDecision::pass(InputMode::Operational);
@@ -475,7 +483,11 @@ impl InputKernel {
             return self.fail_before_injection(session, event, point, effects);
         }
 
-        let physical_up = event == MouseEvent::ButtonUp(session.trigger);
+        let physical_up = if event == MouseEvent::ButtonUp(session.trigger) {
+            PhysicalUp::ObservedAndSuppressed(point)
+        } else {
+            PhysicalUp::Pending
+        };
         session.completion = Some(CompletionRecord {
             phase: CompletionPhase::PendingBeforeInjection,
             physical_up,
@@ -507,16 +519,19 @@ impl InputKernel {
                 session: session.id,
             });
         }
-        if event == MouseEvent::ButtonUp(session.trigger)
-            || session
-                .completion
-                .is_some_and(|completion| completion.physical_up)
-        {
+        let physical_up = session
+            .completion
+            .and_then(|completion| match completion.physical_up {
+                PhysicalUp::Pending => None,
+                PhysicalUp::ObservedAndSuppressed(point) => Some(point),
+            })
+            .or_else(|| (event == MouseEvent::ButtonUp(session.trigger)).then_some(point));
+        if let Some(up_at) = physical_up {
             effects.push(InputEffect::ReplayTrigger {
                 session: session.id,
                 trigger: session.trigger,
                 down_at: session.down_at,
-                up_at: point,
+                up_at,
             });
             self.state = KernelState::Bypass;
             InputDecision {
@@ -551,12 +566,22 @@ impl InputKernel {
         }
 
         if ready {
-            session.activation = ActivationState::Ready;
+            if session.activation == ActivationState::Pending {
+                session.activation = ActivationState::Ready;
+            }
             self.state = KernelState::Active(session);
             InputDecision::pass(InputMode::Operational)
-        } else {
+        } else if session.activation == ActivationState::Pending {
             let point = session.last_point;
             self.fail_before_injection(session, MouseEvent::Other, point, InputEffects::default())
+        } else if session
+            .completion
+            .is_some_and(|completion| completion.phase == CompletionPhase::InjectionStarted)
+        {
+            self.fail_after_injection(session)
+        } else {
+            self.state = KernelState::Active(session);
+            InputDecision::pass(InputMode::Operational)
         }
     }
 
@@ -708,6 +733,19 @@ fn append_render(
     }
 }
 
+fn observe_physical_up(
+    completion: Option<&mut CompletionRecord>,
+    event: MouseEvent,
+    trigger: TriggerButton,
+    point: Point,
+) {
+    if let Some(completion) = completion {
+        if event == MouseEvent::ButtonUp(trigger) {
+            completion.physical_up = PhysicalUp::ObservedAndSuppressed(point);
+        }
+    }
+}
+
 fn mode_of(state: &KernelState) -> InputMode {
     match state {
         KernelState::Idle | KernelState::Active(_) => InputMode::Operational,
@@ -743,7 +781,7 @@ mod tests {
     use crate::config::GestureStep;
 
     use super::*;
-    use crate::domain::{AppBindingSet, ReleaseBinding};
+    use crate::domain::{AppBindingSet, HoldBinding, ReleaseBinding};
 
     struct ThreadCountingAllocator;
 
@@ -810,6 +848,19 @@ mod tests {
                 hold_bindings: Vec::new(),
             }],
         })
+    }
+
+    fn hold_config(action: ActionId) -> Arc<GestureConfig> {
+        let mut config = config(action);
+        let binding_set = &mut Arc::get_mut(&mut config).unwrap().binding_sets[0];
+        binding_set.release_bindings.clear();
+        binding_set.hold_bindings.push(HoldBinding {
+            trigger: TriggerButton::Right,
+            sequence: Vec::new(),
+            step: GestureStep::WheelUp,
+            action,
+        });
+        config
     }
 
     fn reserved_start(generation: ConfigGeneration) -> CallbackFacts {
@@ -1024,6 +1075,47 @@ mod tests {
     }
 
     #[test]
+    fn pending_hold_action_passes_fast_wheel_then_reuses_completed_slot() {
+        let generation = ConfigGeneration(1);
+        let expected_action = action(1);
+        let mut kernel = InputKernel::new(generation, hold_config(expected_action));
+        let (_, session) = start(&mut kernel, reserved_start(generation));
+        ready(&mut kernel, session);
+
+        let first = kernel.handle(pointer(
+            MouseEvent::WheelUp(1),
+            Point::new(0, 0),
+            2,
+            reserved_continue(),
+        ));
+        let pending = kernel.handle(pointer(
+            MouseEvent::WheelUp(1),
+            Point::new(0, 0),
+            3,
+            reserved_continue(),
+        ));
+        kernel.handle(InputEvent::InjectionStarted(session));
+        kernel.handle(InputEvent::ActionCompleted(session));
+        let reused = kernel.handle(pointer(
+            MouseEvent::WheelUp(1),
+            Point::new(0, 0),
+            4,
+            reserved_continue(),
+        ));
+
+        let dispatched = InputEffect::DispatchAction {
+            session,
+            generation,
+            action: expected_action,
+            repeat: 1,
+        };
+        assert!(effects(first).contains(&dispatched));
+        assert_eq!(pending.disposition, Disposition::Pass);
+        assert!(effects(pending).is_empty());
+        assert!(effects(reused).contains(&dispatched));
+    }
+
+    #[test]
     fn action_capacity_exhaustion_replays_captured_trigger() {
         let generation = ConfigGeneration(1);
         let mut kernel = InputKernel::new(generation, config(action(1)));
@@ -1072,6 +1164,41 @@ mod tests {
     }
 
     #[test]
+    fn before_injection_replay_keeps_suppressed_physical_up_point() {
+        let generation = ConfigGeneration(1);
+        let mut kernel = InputKernel::new(generation, hold_config(action(1)));
+        let (_, session) = start(&mut kernel, reserved_start(generation));
+        ready(&mut kernel, session);
+        kernel.handle(pointer(
+            MouseEvent::WheelUp(1),
+            Point::new(0, 0),
+            2,
+            reserved_continue(),
+        ));
+        kernel.handle(pointer(
+            MouseEvent::ButtonUp(TriggerButton::Right),
+            Point::new(10, 11),
+            3,
+            reserved_continue(),
+        ));
+        kernel.handle(pointer(
+            MouseEvent::MouseMove,
+            Point::new(90, 91),
+            4,
+            reserved_continue(),
+        ));
+
+        let failed = kernel.handle(InputEvent::ActionFailedBeforeInjection(session));
+
+        assert!(effects(failed).contains(&InputEffect::ReplayTrigger {
+            session,
+            trigger: TriggerButton::Right,
+            down_at: Point::new(0, 0),
+            up_at: Point::new(10, 11),
+        }));
+    }
+
+    #[test]
     fn after_injection_failure_bypasses_without_replay() {
         let generation = ConfigGeneration(1);
         let mut kernel = InputKernel::new(generation, config(action(1)));
@@ -1082,6 +1209,24 @@ mod tests {
         kernel.handle(InputEvent::InjectionStarted(session));
 
         let failed = kernel.handle(InputEvent::ActionFailedAfterInjection(session));
+
+        assert_eq!(failed.mode, InputMode::Bypass);
+        assert!(!effects(failed)
+            .iter()
+            .any(|effect| matches!(effect, InputEffect::ReplayTrigger { .. })));
+    }
+
+    #[test]
+    fn late_activation_failure_after_injection_bypasses_without_replay() {
+        let generation = ConfigGeneration(1);
+        let mut kernel = InputKernel::new(generation, config(action(1)));
+        let (_, session) = start(&mut kernel, reserved_start(generation));
+        ready(&mut kernel, session);
+        move_right(&mut kernel);
+        release(&mut kernel, reserved_continue());
+        kernel.handle(InputEvent::InjectionStarted(session));
+
+        let failed = kernel.handle(InputEvent::ActivationFailed(session));
 
         assert_eq!(failed.mode, InputMode::Bypass);
         assert!(!effects(failed)
@@ -1149,6 +1294,26 @@ mod tests {
                 repeat: 1,
             })
         );
+    }
+
+    #[test]
+    fn active_session_pins_safety_timeout() {
+        let first_generation = ConfigGeneration(1);
+        let second_generation = ConfigGeneration(2);
+        let mut first_config = config(action(1));
+        Arc::get_mut(&mut first_config).unwrap().safety_timeout_ms = 2_000;
+        let mut second_config = config(action(2));
+        Arc::get_mut(&mut second_config).unwrap().safety_timeout_ms = 1;
+        let mut kernel = InputKernel::new(first_generation, first_config);
+        start(&mut kernel, reserved_start(first_generation));
+        kernel.publish_config(second_generation, second_config);
+
+        let decision = kernel.handle(InputEvent::SafetyTimer { tick: 3 });
+
+        assert_eq!(decision.mode, InputMode::Operational);
+        assert!(!effects(decision)
+            .iter()
+            .any(|effect| matches!(effect, InputEffect::RenderEnd { .. })));
     }
 
     #[test]

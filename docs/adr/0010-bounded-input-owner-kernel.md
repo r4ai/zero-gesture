@@ -28,9 +28,13 @@ session and accepts an action only after same-session `Ready`.
 The accepted-action record has one slot and the monotonic internal phases
 `PendingBeforeInjection` and `InjectionStarted`; terminal input closes it as
 `Completed`, `FailedBeforeInjection`, or `FailedAfterInjection`.
+While that slot is occupied, another hold-wheel action is passed without
+dispatch or cleanup; terminal completion frees the slot for the next action.
 Before-injection failure replays the captured trigger once after suppressing
-its matching physical up.
+its matching physical up, using the point captured when that up was suppressed.
 After-injection failure never replays and enters bypass.
+Activation results are monotonic; a late activation failure after injection
+has started follows the same no-replay bypass rule.
 Shutdown is idempotent and also enters bypass.
 
 Config compilation assigns dense `BindingSetId` and `ActionId` values once.
@@ -44,7 +48,7 @@ calls, so parallel tests on other threads do not affect the result.
 `publish_config` changes the view and `ConfigGeneration` used by the next
 gesture.
 An active gesture retains its immutable compiled view and generation until its
-completion/replay record closes.
+completion/replay record closes, including that view's safety timeout.
 The future Config owner remains responsible for generation delivery and
 resource retention; this kernel adds no handshake or retired-generation table.
 
@@ -61,10 +65,10 @@ runtime telemetry, or update behavior.
 
 ## Contract accounting
 
-The P02 manifest keeps its 36 existing Windows/config obligations and adds 14
+The P02 manifest keeps its 36 existing Windows/config obligations and adds 18
 independent Input kernel obligations.
-For this bounded manifest, `O = 50`, `O_v = 50`, and `U = 0`.
-All 50 entries name one runnable Rust test.
+For this bounded manifest, `O = 54`, `O_v = 54`, and `U = 0`.
+All 54 entries name one runnable Rust test.
 
 ## Consequences
 

@@ -509,9 +509,11 @@ impl GestureMachine {
     fn handle_safety_timer(&mut self, tick: u32) -> Decision {
         let expired = match &self.state {
             SessionState::Idle => false,
-            SessionState::Gesturing { entered_tick, .. } => {
-                tick.wrapping_sub(*entered_tick) > self.config.safety_timeout_ms
-            }
+            SessionState::Gesturing {
+                entered_tick,
+                config,
+                ..
+            } => tick.wrapping_sub(*entered_tick) > config.safety_timeout_ms,
         };
         if !expired {
             return Decision::pass(GestureTransition::Continue);

@@ -349,6 +349,34 @@
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/domain/input.rs",
       "evidence_name": "representative_handle_path_allocates_zero_times"
+    },
+    {
+      "id": "P02-INPUT-015",
+      "obligation": "A hold action pending completion passes a fast repeated wheel without dispatch or cleanup and reuses the slot only after terminal completion.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/domain/input.rs",
+      "evidence_name": "pending_hold_action_passes_fast_wheel_then_reuses_completed_slot"
+    },
+    {
+      "id": "P02-INPUT-016",
+      "obligation": "An active session keeps its pinned safety timeout after a shorter timeout is published for the next generation.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/domain/input.rs",
+      "evidence_name": "active_session_pins_safety_timeout"
+    },
+    {
+      "id": "P02-INPUT-017",
+      "obligation": "Before-injection replay uses the exact matching physical-up point that was observed and suppressed.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/domain/input.rs",
+      "evidence_name": "before_injection_replay_keeps_suppressed_physical_up_point"
+    },
+    {
+      "id": "P02-INPUT-018",
+      "obligation": "A late activation failure after injection starts enters bypass without replaying the captured trigger.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/domain/input.rs",
+      "evidence_name": "late_activation_failure_after_injection_bypasses_without_replay"
     }
   ]
 }
