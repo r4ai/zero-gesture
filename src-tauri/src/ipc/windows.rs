@@ -20,8 +20,8 @@ use std::time::{Duration, Instant};
 use windows_sys::Win32::Foundation::{
     CloseHandle, GetLastError, LocalFree, ERROR_ALREADY_EXISTS, ERROR_BROKEN_PIPE,
     ERROR_FILE_NOT_FOUND, ERROR_INSUFFICIENT_BUFFER, ERROR_NO_DATA, ERROR_PIPE_BUSY,
-    ERROR_PIPE_CONNECTED, ERROR_PIPE_LISTENING, GENERIC_READ, GENERIC_WRITE, HANDLE,
-    INVALID_HANDLE_VALUE, WAIT_ABANDONED, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    ERROR_PIPE_CONNECTED, ERROR_PIPE_LISTENING, ERROR_SHARING_VIOLATION, GENERIC_READ,
+    GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE, WAIT_ABANDONED, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
@@ -563,7 +563,9 @@ impl Session {
 
     fn connect_before(endpoint: &Endpoint, deadline: Instant) -> Result<Self, ControlError> {
         let secret_bytes = fs::read(&endpoint.secret_path).map_err(|error| {
-            if error.kind() == io::ErrorKind::NotFound {
+            if error.kind() == io::ErrorKind::NotFound
+                || error.raw_os_error() == Some(ERROR_SHARING_VIOLATION as i32)
+            {
                 ControlError::Unavailable
             } else {
                 ControlError::Io(error)
@@ -1298,6 +1300,29 @@ mod tests {
         assert!(matches!(
             Session::connect(&wrong_endpoint),
             Err(ControlError::Rejected(ErrorCode::AuthenticationFailed))
+        ));
+    }
+
+    #[test]
+    fn secret_writer_race_is_transient_unavailability() {
+        let (_directory, _suffix, control) = fixture();
+        let path_wide = wide(control.endpoint.secret_path.as_os_str());
+        let handle = unsafe {
+            CreateFileW(
+                path_wide.as_ptr(),
+                GENERIC_WRITE,
+                FILE_SHARE_MODE::default(),
+                null(),
+                CREATE_ALWAYS,
+                FILE_ATTRIBUTE_HIDDEN,
+                null_mut(),
+            )
+        };
+        let _handle = OwnedHandle::from_file(handle, "hold Engine secret file").unwrap();
+
+        assert!(matches!(
+            Session::connect(&control.endpoint),
+            Err(ControlError::Unavailable)
         ));
     }
 

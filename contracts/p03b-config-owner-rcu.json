@@ -181,6 +181,13 @@
       "runner": "cargo-test",
       "evidence_file": "src-tauri/tests/p03_engine_process.rs",
       "evidence_name": "first_pipe_failure_keeps_config_bytes_unchanged"
+    },
+    {
+      "id": "P03B-RECOVERY-004",
+      "obligation": "A client that races the exclusive secret-file writer observes bounded transient unavailability rather than a terminal I/O failure.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "secret_writer_race_is_transient_unavailability"
     }
   ]
 }

@@ -151,7 +151,7 @@ unchanged.
 
 `contracts/p03b-config-owner-rcu.json` maps each independent P03b obligation to
 one runnable Rust case.
-The manifest maintains `O = 26`, `O_v = 26`, `U = 0`, no duplicated evidence pair, and no
+The manifest maintains `O = 27`, `O_v = 27`, `U = 0`, no duplicated evidence pair, and no
 source-constant claim as runtime evidence.
 The fixed-slot race test runs a writer against concurrent readers and checks
 that value always equals the atomically observed generation.
