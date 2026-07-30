@@ -58,10 +58,15 @@ function evidencePath(repoRoot, relativePath, location) {
     normalized !== relativePath ||
     path.posix.isAbsolute(normalized) ||
     normalized.split("/").includes("..") ||
-    !normalized.startsWith("src-tauri/src/") ||
+    !(
+      normalized.startsWith("src-tauri/src/") ||
+      normalized.startsWith("src-tauri/tests/")
+    ) ||
     !normalized.endsWith(".rs")
   ) {
-    fail(`${location} must be a Rust source path below src-tauri/src`)
+    fail(
+      `${location} must be a Rust source path below src-tauri/src or src-tauri/tests`,
+    )
   }
 
   const absolute = path.resolve(repoRoot, ...normalized.split("/"))
@@ -80,6 +85,9 @@ function rustTestPattern(name) {
 }
 
 function cargoTestName(contractCase) {
+  if (contractCase.evidence_file.startsWith("src-tauri/tests/")) {
+    return `${contractCase.evidence_name}: test`
+  }
   const sourceModule = contractCase.evidence_file.slice(
     "src-tauri/src/".length,
     -".rs".length,

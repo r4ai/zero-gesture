@@ -5,7 +5,7 @@ pub use protocol::EngineStatus;
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
-pub use windows::{EngineControl, EngineServer, ServerExit};
+pub use windows::{ControlError, EngineControl, EngineServer, ServerExit};
 
 #[cfg(not(windows))]
 mod unsupported {
@@ -69,4 +69,4 @@ mod unsupported {
 }
 
 #[cfg(not(windows))]
-pub use unsupported::{EngineControl, EngineServer, ServerExit};
+pub use unsupported::{ControlError, EngineControl, EngineServer, ServerExit};

@@ -156,10 +156,10 @@
     },
     {
       "id": "P03-IPC-005",
-      "obligation": "Engine status reports the Engine role and zero WebViews.",
+      "obligation": "Engine status reports the Engine role and the serving process identifier.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/ipc/windows.rs",
-      "evidence_name": "status_reports_engine_role_and_zero_webviews"
+      "evidence_name": "status_reports_engine_role_and_server_process_id"
     },
     {
       "id": "P03-IPC-006",
@@ -233,17 +233,87 @@
     },
     {
       "id": "P03-IPC-016",
-      "obligation": "The endpoint and secret-file security descriptor grants access only to the current user SID.",
+      "obligation": "The created Engine singleton mutex has a protected DACL containing only one allow ACE for the current user SID.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/ipc/windows.rs",
-      "evidence_name": "security_descriptor_is_current_user_only"
+      "evidence_name": "actual_mutex_descriptor_is_current_user_only"
     },
     {
       "id": "P03-IPC-017",
-      "obligation": "The Windows pipe mode rejects remote clients.",
+      "obligation": "Windows reports the prepared Engine pipe handle as a kernel server endpoint.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/ipc/windows.rs",
-      "evidence_name": "pipe_mode_rejects_remote_clients"
+      "evidence_name": "actual_pipe_is_kernel_server_endpoint"
+    },
+    {
+      "id": "P03-IPC-018",
+      "obligation": "Concurrent Settings callers sharing one startup deadline spawn exactly one Engine process.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "concurrent_settings_launch_storm_spawns_one_engine"
+    },
+    {
+      "id": "P03-IPC-019",
+      "obligation": "An authentication error never causes Settings to spawn another Engine.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "authentication_error_does_not_spawn_engine"
+    },
+    {
+      "id": "P03-IPC-020",
+      "obligation": "A protocol error never causes Settings to spawn another Engine.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "protocol_error_does_not_spawn_engine"
+    },
+    {
+      "id": "P03-IPC-021",
+      "obligation": "The created Settings launch mutex has a protected DACL containing only one allow ACE for the current user SID.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "actual_launch_mutex_descriptor_is_current_user_only"
+    },
+    {
+      "id": "P03-IPC-022",
+      "obligation": "The created Engine pipe has a protected DACL containing only one allow ACE for the current user SID.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "actual_pipe_descriptor_is_current_user_only"
+    },
+    {
+      "id": "P03-IPC-023",
+      "obligation": "The created Engine secret file has a protected DACL containing only one allow ACE for the current user SID.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "actual_secret_file_descriptor_is_current_user_only"
+    },
+    {
+      "id": "P03-IPC-024",
+      "obligation": "Failure of the first named-pipe bind leaves pre-existing configuration bytes unchanged.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/tests/p03_engine_process.rs",
+      "evidence_name": "first_pipe_failure_keeps_config_bytes_unchanged"
+    },
+    {
+      "id": "P03-IPC-025",
+      "obligation": "Failure of the first named-pipe bind occurs before Engine input workers can start.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/tests/p03_engine_process.rs",
+      "evidence_name": "first_pipe_failure_does_not_start_input_workers"
+    },
+    {
+      "id": "P03-IPC-026",
+      "obligation": "An actual same-executable --engine child owns no content window beyond measured Tauri tray, event-target, and IME infrastructure classes.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/tests/p03_engine_process.rs",
+      "evidence_name": "actual_engine_child_owns_no_content_windows"
+    },
+    {
+      "id": "P03-IPC-027",
+      "obligation": "An actual same-executable --engine child starts no WebView2 descendant process.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/tests/p03_engine_process.rs",
+      "evidence_name": "actual_engine_child_starts_no_webview2_descendant"
     }
   ]
 }

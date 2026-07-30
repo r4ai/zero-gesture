@@ -20,7 +20,7 @@ use windows_sys::Win32::Foundation::{
     CloseHandle, GetLastError, LocalFree, ERROR_ALREADY_EXISTS, ERROR_BROKEN_PIPE,
     ERROR_FILE_NOT_FOUND, ERROR_INSUFFICIENT_BUFFER, ERROR_NO_DATA, ERROR_PIPE_BUSY,
     ERROR_PIPE_CONNECTED, ERROR_PIPE_LISTENING, GENERIC_READ, GENERIC_WRITE, HANDLE,
-    INVALID_HANDLE_VALUE,
+    INVALID_HANDLE_VALUE, WAIT_ABANDONED, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
@@ -46,7 +46,8 @@ use windows_sys::Win32::System::Pipes::{
 };
 use windows_sys::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
 use windows_sys::Win32::System::Threading::{
-    CreateMutexW, GetCurrentProcess, GetProcessHandleCount, OpenProcessToken,
+    CreateMutexW, GetCurrentProcess, GetProcessHandleCount, OpenProcessToken, ReleaseMutex,
+    WaitForSingleObject,
 };
 
 const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -59,6 +60,8 @@ const TERMINAL_RESPONSE_GRACE: Duration = Duration::from_millis(100);
 const PIPE_BUFFER_BYTES: u32 = 64 * 1024;
 const PIPE_MODE: u32 =
     PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_NOWAIT | PIPE_REJECT_REMOTE_CLIENTS;
+#[cfg(debug_assertions)]
+const TEST_FAIL_FIRST_PIPE_ENV: &str = "ZG_P03_TEST_FAIL_FIRST_PIPE";
 
 #[derive(Debug)]
 pub enum ControlError {
@@ -124,9 +127,14 @@ impl EngineControl {
         Ok(control)
     }
 
-    pub fn ping(&self) -> Result<(), ControlError> {
-        let mut session = Session::connect(&self.endpoint)?;
-        match session.exchange(Request::Ping)? {
+    #[cfg(test)]
+    fn ping(&self) -> Result<(), ControlError> {
+        self.ping_before(Instant::now() + IO_TIMEOUT)
+    }
+
+    fn ping_before(&self, deadline: Instant) -> Result<(), ControlError> {
+        let mut session = Session::connect_before(&self.endpoint, deadline)?;
+        match session.exchange_before(Request::Ping, deadline)? {
             Response::Pong => Ok(()),
             Response::Error(code) => Err(ControlError::Rejected(code)),
             _ => Err(ControlError::Protocol(ProtocolError::InvalidMessage)),
@@ -155,24 +163,31 @@ impl EngineControl {
         &self,
         spawn: impl FnOnce() -> Result<(), ControlError>,
     ) -> Result<(), ControlError> {
-        match self.ping() {
+        let deadline = Instant::now() + CONNECT_TIMEOUT;
+        match self.ping_before(deadline) {
             Ok(()) => return Ok(()),
-            Err(ControlError::Rejected(ErrorCode::ExecutableVersionMismatch)) => {
-                return Err(ControlError::Rejected(ErrorCode::ExecutableVersionMismatch));
-            }
-            Err(_) => {}
+            Err(ControlError::Unavailable) => {}
+            Err(error) => return Err(error),
         }
 
+        let security = SecurityDescriptor::for_sid(&self.endpoint.sid)?;
+        let _launch = LaunchLock::acquire(&self.endpoint.launch_mutex_name, &security, deadline)?;
+        match self.ping_before(deadline) {
+            Ok(()) => return Ok(()),
+            Err(ControlError::Unavailable) => {}
+            Err(error) => return Err(error),
+        }
         spawn()?;
-        let deadline = Instant::now() + CONNECT_TIMEOUT;
         loop {
-            match self.ping() {
+            match self.ping_before(deadline) {
                 Ok(()) => return Ok(()),
-                Err(ControlError::Rejected(ErrorCode::ExecutableVersionMismatch)) => {
-                    return Err(ControlError::Rejected(ErrorCode::ExecutableVersionMismatch));
+                Err(ControlError::Unavailable) if Instant::now() < deadline => {
+                    thread::sleep(
+                        RETRY_INTERVAL.min(deadline.saturating_duration_since(Instant::now())),
+                    );
                 }
-                Err(_) if Instant::now() < deadline => thread::sleep(RETRY_INTERVAL),
-                Err(_) => return Err(ControlError::Timeout),
+                Err(ControlError::Unavailable) => return Err(ControlError::Timeout),
+                Err(error) => return Err(error),
             }
         }
     }
@@ -188,6 +203,9 @@ impl EngineControl {
 pub struct EngineServer {
     endpoint: Endpoint,
     _singleton: Singleton,
+    secret: [u8; AUTH_SECRET_BYTES],
+    _secret_file: SecretFile,
+    first_pipe: Pipe,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -201,6 +219,14 @@ impl EngineServer {
         Self::with_suffix(config_dir, "")
     }
 
+    #[cfg(debug_assertions)]
+    pub(crate) fn for_debug_namespace(
+        config_dir: &Path,
+        suffix: &str,
+    ) -> Result<Option<Self>, ControlError> {
+        Self::with_suffix(config_dir, suffix)
+    }
+
     #[cfg(test)]
     fn for_test(config_dir: &Path, suffix: &str) -> Result<Option<Self>, ControlError> {
         Self::with_suffix(config_dir, suffix)
@@ -212,21 +238,36 @@ impl EngineServer {
         let Some(singleton) = Singleton::acquire(&endpoint.mutex_name, &security)? else {
             return Ok(None);
         };
+        fs::create_dir_all(&endpoint.config_dir)?;
+        let secret = generate_secret()?;
+        let secret_file = SecretFile::create(&endpoint.secret_path, &secret, &security)?;
+        let first_pipe = Pipe::server(&endpoint.pipe_name, &security)?;
         Ok(Some(Self {
             endpoint,
             _singleton: singleton,
+            secret,
+            _secret_file: secret_file,
+            first_pipe,
         }))
     }
 
     pub fn run(self, stop: Arc<AtomicBool>) -> Result<ServerExit, ControlError> {
-        let security = SecurityDescriptor::for_sid(&self.endpoint.sid)?;
-        fs::create_dir_all(&self.endpoint.config_dir)?;
-        let secret = generate_secret()?;
-        let _secret_file = SecretFile::create(&self.endpoint.secret_path, &secret, &security)?;
+        let Self {
+            endpoint,
+            _singleton,
+            secret,
+            _secret_file,
+            first_pipe,
+        } = self;
+        let security = SecurityDescriptor::for_sid(&endpoint.sid)?;
         let started_at = Instant::now();
+        let mut prepared_pipe = Some(first_pipe);
 
         while !stop.load(Ordering::Acquire) {
-            let pipe = Pipe::server(&self.endpoint.pipe_name, &security)?;
+            let pipe = match prepared_pipe.take() {
+                Some(pipe) => pipe,
+                None => Pipe::server(&endpoint.pipe_name, &security)?,
+            };
             if !pipe.wait_for_client(&stop)? {
                 return Ok(ServerExit::Stopped);
             }
@@ -382,6 +423,10 @@ struct Session {
 
 impl Session {
     fn connect(endpoint: &Endpoint) -> Result<Self, ControlError> {
+        Self::connect_before(endpoint, Instant::now() + IO_TIMEOUT)
+    }
+
+    fn connect_before(endpoint: &Endpoint, deadline: Instant) -> Result<Self, ControlError> {
         let secret_bytes = fs::read(&endpoint.secret_path).map_err(|error| {
             if error.kind() == io::ErrorKind::NotFound {
                 ControlError::Unavailable
@@ -392,15 +437,18 @@ impl Session {
         let auth_secret: [u8; AUTH_SECRET_BYTES] = secret_bytes
             .try_into()
             .map_err(|_| ControlError::Security("invalid Engine secret file".to_string()))?;
-        let pipe = connect_pipe(endpoint)?;
+        let pipe = connect_pipe_before(endpoint, deadline)?;
         let mut session = Self {
             pipe,
             next_request_id: 1,
         };
-        match session.exchange(Request::Hello {
-            auth_secret,
-            executable_version: ENGINE_VERSION.to_string(),
-        })? {
+        match session.exchange_before(
+            Request::Hello {
+                auth_secret,
+                executable_version: ENGINE_VERSION.to_string(),
+            },
+            deadline,
+        )? {
             Response::Hello { capabilities, .. } if capabilities == CAPABILITIES => Ok(session),
             Response::Error(code) => Err(ControlError::Rejected(code)),
             _ => Err(ControlError::Protocol(ProtocolError::InvalidMessage)),
@@ -408,35 +456,63 @@ impl Session {
     }
 
     fn exchange(&mut self, request: Request) -> Result<Response, ControlError> {
+        self.exchange_before(request, Instant::now() + IO_TIMEOUT)
+    }
+
+    fn exchange_before(
+        &mut self,
+        request: Request,
+        deadline: Instant,
+    ) -> Result<Response, ControlError> {
         let request_id = self.next_request_id;
         self.next_request_id = self
             .next_request_id
             .checked_add(1)
             .ok_or(ControlError::Protocol(ProtocolError::InvalidMessage))?;
-        self.exchange_with_id(request_id, request)
+        self.exchange_with_id_before(request_id, request, deadline)
     }
 
+    #[cfg(test)]
     fn exchange_with_id(
         &mut self,
         request_id: u64,
         request: Request,
     ) -> Result<Response, ControlError> {
+        self.exchange_with_id_before(request_id, request, Instant::now() + IO_TIMEOUT)
+    }
+
+    fn exchange_with_id_before(
+        &mut self,
+        request_id: u64,
+        request: Request,
+        deadline: Instant,
+    ) -> Result<Response, ControlError> {
         let body = protocol::encode_request(&Envelope::current(request_id, request))?;
-        self.pipe.set_deadline(Instant::now() + IO_TIMEOUT);
+        self.pipe.set_deadline(deadline);
         protocol::write_frame(&mut self.pipe, &body)?;
-        self.pipe.set_deadline(Instant::now() + IO_TIMEOUT);
+        self.pipe.set_deadline(deadline);
         let response_body = protocol::read_frame(&mut self.pipe)?;
         Ok(protocol::decode_response(&response_body, request_id)?.message)
     }
 }
 
+#[cfg(test)]
 fn connect_pipe(endpoint: &Endpoint) -> Result<Pipe, ControlError> {
-    let deadline = Instant::now() + IO_TIMEOUT;
+    connect_pipe_before(endpoint, Instant::now() + IO_TIMEOUT)
+}
+
+fn connect_pipe_before(endpoint: &Endpoint, deadline: Instant) -> Result<Pipe, ControlError> {
     loop {
-        match Pipe::client(&endpoint.pipe_name, IO_TIMEOUT) {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(ControlError::Timeout);
+        }
+        match Pipe::client(&endpoint.pipe_name, remaining.min(IO_TIMEOUT)) {
             Ok(pipe) => return Ok(pipe),
             Err(ControlError::Unavailable) if Instant::now() < deadline => {
-                thread::sleep(PIPE_POLL_INTERVAL);
+                thread::sleep(
+                    PIPE_POLL_INTERVAL.min(deadline.saturating_duration_since(Instant::now())),
+                );
             }
             Err(error) => return Err(error),
         }
@@ -447,6 +523,7 @@ fn connect_pipe(endpoint: &Endpoint) -> Result<Pipe, ControlError> {
 struct Endpoint {
     pipe_name: Vec<u16>,
     mutex_name: Vec<u16>,
+    launch_mutex_name: Vec<u16>,
     secret_path: PathBuf,
     config_dir: PathBuf,
     sid: String,
@@ -473,6 +550,9 @@ impl Endpoint {
                 r"\\.\pipe\dev.r4ai.zero-gesture.engine.{sid}{suffix}"
             )),
             mutex_name: wide(format!(r"Local\dev.r4ai.zero-gesture.engine.{sid}{suffix}")),
+            launch_mutex_name: wide(format!(
+                r"Local\dev.r4ai.zero-gesture.engine-launch.{sid}{suffix}"
+            )),
             secret_path: config_dir.join(format!("engine-control{suffix}.secret")),
             config_dir: config_dir.to_path_buf(),
             sid,
@@ -542,6 +622,50 @@ impl Singleton {
     }
 }
 
+struct LaunchLock {
+    handle: OwnedHandle,
+}
+
+impl LaunchLock {
+    fn acquire(
+        name: &[u16],
+        security: &SecurityDescriptor,
+        deadline: Instant,
+    ) -> Result<Self, ControlError> {
+        let attributes = security.attributes();
+        let handle = unsafe { CreateMutexW(&attributes, 1, name.as_ptr()) };
+        if handle.is_null() {
+            return Err(last_security_error("create per-user Engine launch mutex"));
+        }
+        let already_exists = unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
+        let handle = OwnedHandle(handle);
+        if already_exists {
+            let remaining = u32::try_from(
+                deadline
+                    .saturating_duration_since(Instant::now())
+                    .as_millis(),
+            )
+            .unwrap_or(u32::MAX);
+            match unsafe { WaitForSingleObject(handle.0, remaining) } {
+                WAIT_OBJECT_0 | WAIT_ABANDONED => {}
+                WAIT_TIMEOUT => return Err(ControlError::Timeout),
+                _ => {
+                    return Err(ControlError::Io(io::Error::last_os_error()));
+                }
+            }
+        }
+        Ok(Self { handle })
+    }
+}
+
+impl Drop for LaunchLock {
+    fn drop(&mut self) {
+        unsafe {
+            ReleaseMutex(self.handle.0);
+        }
+    }
+}
+
 struct SecretFile {
     path: PathBuf,
 }
@@ -607,6 +731,12 @@ struct Pipe {
 
 impl Pipe {
     fn server(name: &[u16], security: &SecurityDescriptor) -> Result<Self, ControlError> {
+        #[cfg(debug_assertions)]
+        if std::env::var_os(TEST_FAIL_FIRST_PIPE_ENV).is_some() {
+            return Err(ControlError::Security(
+                "injected first named-pipe bind failure".to_string(),
+            ));
+        }
         let attributes = security.attributes();
         let handle = unsafe {
             CreateNamedPipeW(
@@ -914,9 +1044,23 @@ fn wide(value: impl AsRef<OsStr>) -> Vec<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::mem::size_of;
     use std::process::{Child, Stdio};
+    use std::ptr::null_mut;
     use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+    use std::sync::{Barrier, Mutex};
     use tempfile::TempDir;
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertStringSidToSidW, GetNamedSecurityInfoW, GetSecurityInfo, SE_FILE_OBJECT,
+        SE_KERNEL_OBJECT,
+    };
+    use windows_sys::Win32::Security::{
+        AclSizeInformation, EqualSid, GetAce, GetAclInformation, GetSecurityDescriptorControl,
+        GetSecurityDescriptorDacl, ACCESS_ALLOWED_ACE, ACL_SIZE_INFORMATION,
+        DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, SE_DACL_PROTECTED,
+    };
+    use windows_sys::Win32::System::Pipes::{GetNamedPipeInfo, PIPE_SERVER_END};
+    use windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE;
 
     static NEXT_SUFFIX: AtomicU64 = AtomicU64::new(1);
     const HELPER_ENV: &str = "ZG_P03_PROCESS_HELPER";
@@ -1032,6 +1176,105 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_settings_launch_storm_spawns_one_engine() {
+        const CALLERS: usize = 8;
+        let (directory, suffix, control) = fixture();
+        let barrier = Arc::new(Barrier::new(CALLERS));
+        let spawn_count = Arc::new(AtomicU64::new(0));
+        let child_slot = Arc::new(Mutex::new(None));
+
+        thread::scope(|scope| {
+            let mut handles = Vec::new();
+            for _ in 0..CALLERS {
+                let barrier = Arc::clone(&barrier);
+                let spawn_count = Arc::clone(&spawn_count);
+                let child_slot = Arc::clone(&child_slot);
+                let control = control.clone();
+                let directory = directory.path().to_path_buf();
+                let suffix = suffix.clone();
+                handles.push(scope.spawn(move || {
+                    barrier.wait();
+                    control.connect_or_start_with(|| {
+                        spawn_count.fetch_add(1, AtomicOrdering::Relaxed);
+                        let child = spawn_helper(&directory, &suffix);
+                        assert!(child_slot.lock().unwrap().replace(child).is_none());
+                        Ok(())
+                    })
+                }));
+            }
+            for handle in handles {
+                handle.join().unwrap().unwrap();
+            }
+        });
+
+        let child = child_slot.lock().unwrap().take().unwrap();
+        let _guard = ChildGuard::new(child, control);
+        assert_eq!(spawn_count.load(AtomicOrdering::Relaxed), 1);
+    }
+
+    #[test]
+    fn authentication_error_does_not_spawn_engine() {
+        let (directory, suffix, control) = fixture();
+        let child = spawn_helper(directory.path(), &suffix);
+        let _guard = ChildGuard::new(child, control.clone());
+        control.connect_or_start_with(|| Ok(())).unwrap();
+        fs::write(&control.endpoint.secret_path, [0_u8; AUTH_SECRET_BYTES]).unwrap();
+        let spawn_count = AtomicU64::new(0);
+
+        let error = control
+            .connect_or_start_with(|| {
+                spawn_count.fetch_add(1, AtomicOrdering::Relaxed);
+                Ok(())
+            })
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            ControlError::Rejected(ErrorCode::AuthenticationFailed)
+        ));
+        assert_eq!(spawn_count.load(AtomicOrdering::Relaxed), 0);
+    }
+
+    #[test]
+    fn protocol_error_does_not_spawn_engine() {
+        let (directory, _suffix, control) = fixture();
+        let security = SecurityDescriptor::for_sid(&control.endpoint.sid).unwrap();
+        fs::create_dir_all(directory.path()).unwrap();
+        let secret = generate_secret().unwrap();
+        let _secret_file =
+            SecretFile::create(&control.endpoint.secret_path, &secret, &security).unwrap();
+        let pipe = Pipe::server(&control.endpoint.pipe_name, &security).unwrap();
+        let responder = thread::spawn(move || {
+            let stop = AtomicBool::new(false);
+            assert!(pipe.wait_for_client(&stop).unwrap());
+            let mut pipe = pipe;
+            pipe.set_deadline(Instant::now() + IO_TIMEOUT);
+            let body = protocol::read_frame(&mut pipe).unwrap();
+            let hello = protocol::decode_request(&body).unwrap();
+            send_response(&mut pipe, hello.request_id, Response::Pong).unwrap();
+            thread::sleep(TERMINAL_RESPONSE_GRACE);
+        });
+        let spawn_count = AtomicU64::new(0);
+
+        let error = control
+            .connect_or_start_with(|| {
+                spawn_count.fetch_add(1, AtomicOrdering::Relaxed);
+                Ok(())
+            })
+            .unwrap_err();
+
+        responder.join().unwrap();
+        assert!(
+            matches!(
+                &error,
+                ControlError::Protocol(ProtocolError::InvalidMessage)
+            ),
+            "unexpected error: {error:?}"
+        );
+        assert_eq!(spawn_count.load(AtomicOrdering::Relaxed), 0);
+    }
+
+    #[test]
     fn client_disconnect_does_not_stop_engine() {
         let (directory, suffix, control) = fixture();
         let child = spawn_helper(directory.path(), &suffix);
@@ -1043,14 +1286,15 @@ mod tests {
     }
 
     #[test]
-    fn status_reports_engine_role_and_zero_webviews() {
+    fn status_reports_engine_role_and_server_process_id() {
         let (directory, suffix, control) = fixture();
         let child = spawn_helper(directory.path(), &suffix);
+        let child_process_id = child.id();
         let _guard = ChildGuard::new(child, control.clone());
         control.connect_or_start_with(|| Ok(())).unwrap();
         let status = control.status().unwrap();
         assert_eq!(status.role, ProcessRole::Engine);
-        assert_eq!(status.webview_count, 0);
+        assert_eq!(status.process_id, child_process_id);
     }
 
     #[test]
@@ -1216,27 +1460,70 @@ mod tests {
     }
 
     #[test]
-    fn security_descriptor_is_current_user_only() {
+    fn actual_mutex_descriptor_is_current_user_only() {
         let (directory, suffix, control) = fixture();
-        assert!(control.endpoint.sid.starts_with("S-1-"));
-        assert_eq!(
-            current_user_only_sddl(&control.endpoint.sid),
-            format!("D:P(A;;GA;;;{})", control.endpoint.sid)
-        );
-        SecurityDescriptor::for_sid(&control.endpoint.sid).unwrap();
-        assert!(control.endpoint.secret_path.starts_with(directory.path()));
-        assert!(suffix
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-'));
+        let server = EngineServer::for_test(directory.path(), &suffix)
+            .unwrap()
+            .unwrap();
+        let descriptor = security_for_handle(server._singleton._handle.0);
+        assert_current_user_only(descriptor.0, &control.endpoint.sid);
     }
 
     #[test]
-    fn pipe_mode_rejects_remote_clients() {
-        assert_eq!(
-            PIPE_MODE & PIPE_REJECT_REMOTE_CLIENTS,
-            PIPE_REJECT_REMOTE_CLIENTS
+    fn actual_launch_mutex_descriptor_is_current_user_only() {
+        let (_directory, _suffix, control) = fixture();
+        let security = SecurityDescriptor::for_sid(&control.endpoint.sid).unwrap();
+        let launch = LaunchLock::acquire(
+            &control.endpoint.launch_mutex_name,
+            &security,
+            Instant::now() + IO_TIMEOUT,
+        )
+        .unwrap();
+        let descriptor = security_for_handle(launch.handle.0);
+        assert_current_user_only(descriptor.0, &control.endpoint.sid);
+    }
+
+    #[test]
+    fn actual_pipe_descriptor_is_current_user_only() {
+        let (directory, suffix, control) = fixture();
+        let server = EngineServer::for_test(directory.path(), &suffix)
+            .unwrap()
+            .unwrap();
+        let descriptor = security_for_handle(server.first_pipe.handle.0);
+        assert_current_user_only(descriptor.0, &control.endpoint.sid);
+    }
+
+    #[test]
+    fn actual_secret_file_descriptor_is_current_user_only() {
+        let (directory, suffix, control) = fixture();
+        let server = EngineServer::for_test(directory.path(), &suffix)
+            .unwrap()
+            .unwrap();
+        let descriptor = security_for_path(&server.endpoint.secret_path);
+        assert_current_user_only(descriptor.0, &control.endpoint.sid);
+    }
+
+    #[test]
+    fn actual_pipe_is_kernel_server_endpoint() {
+        let (directory, suffix, control) = fixture();
+        let server = EngineServer::for_test(directory.path(), &suffix)
+            .unwrap()
+            .unwrap();
+        let mut flags = 0;
+        assert_ne!(
+            unsafe {
+                GetNamedPipeInfo(
+                    server.first_pipe.handle.0,
+                    &mut flags,
+                    null_mut(),
+                    null_mut(),
+                    null_mut(),
+                )
+            },
+            0
         );
-        assert_eq!(PIPE_MODE & PIPE_NOWAIT, PIPE_NOWAIT);
+        assert_eq!(flags & PIPE_SERVER_END, PIPE_SERVER_END);
+        assert!(control.endpoint.secret_path.starts_with(directory.path()));
     }
 
     fn mismatched_version_session(control: &EngineControl) -> Pipe {
@@ -1274,5 +1561,110 @@ mod tests {
         protocol::decode_response(&body, request_id)
             .unwrap()
             .message
+    }
+
+    struct TestSecurityDescriptor(PSECURITY_DESCRIPTOR);
+
+    impl Drop for TestSecurityDescriptor {
+        fn drop(&mut self) {
+            unsafe {
+                LocalFree(self.0);
+            }
+        }
+    }
+
+    fn security_for_handle(handle: HANDLE) -> TestSecurityDescriptor {
+        let mut descriptor = null_mut();
+        let status = unsafe {
+            GetSecurityInfo(
+                handle,
+                SE_KERNEL_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                null_mut(),
+                null_mut(),
+                null_mut(),
+                null_mut(),
+                &mut descriptor,
+            )
+        };
+        assert_eq!(status, 0);
+        TestSecurityDescriptor(descriptor)
+    }
+
+    fn security_for_path(path: &Path) -> TestSecurityDescriptor {
+        let mut descriptor = null_mut();
+        let status = unsafe {
+            GetNamedSecurityInfoW(
+                wide(path.as_os_str()).as_ptr(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                null_mut(),
+                null_mut(),
+                null_mut(),
+                null_mut(),
+                &mut descriptor,
+            )
+        };
+        assert_eq!(status, 0);
+        TestSecurityDescriptor(descriptor)
+    }
+
+    fn assert_current_user_only(descriptor: PSECURITY_DESCRIPTOR, sid: &str) {
+        let mut control = 0;
+        let mut revision = 0;
+        assert_ne!(
+            unsafe { GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) },
+            0
+        );
+        assert_eq!(control & SE_DACL_PROTECTED, SE_DACL_PROTECTED);
+
+        let mut present = 0;
+        let mut defaulted = 0;
+        let mut acl = null_mut();
+        assert_ne!(
+            unsafe {
+                GetSecurityDescriptorDacl(descriptor, &mut present, &mut acl, &mut defaulted)
+            },
+            0
+        );
+        assert_ne!(present, 0);
+        assert!(!acl.is_null());
+
+        let mut information = ACL_SIZE_INFORMATION::default();
+        assert_ne!(
+            unsafe {
+                GetAclInformation(
+                    acl,
+                    (&mut information as *mut ACL_SIZE_INFORMATION).cast(),
+                    size_of::<ACL_SIZE_INFORMATION>() as u32,
+                    AclSizeInformation,
+                )
+            },
+            0
+        );
+        assert_eq!(information.AceCount, 1);
+
+        let mut ace = null_mut();
+        assert_ne!(unsafe { GetAce(acl, 0, &mut ace) }, 0);
+        let ace = unsafe { &*ace.cast::<ACCESS_ALLOWED_ACE>() };
+        assert_eq!(u32::from(ace.Header.AceType), ACCESS_ALLOWED_ACE_TYPE);
+
+        let mut expected_sid = null_mut();
+        assert_ne!(
+            unsafe { ConvertStringSidToSidW(wide(sid).as_ptr(), &mut expected_sid) },
+            0
+        );
+        assert_ne!(
+            unsafe {
+                EqualSid(
+                    (&ace.SidStart as *const u32).cast_mut().cast(),
+                    expected_sid,
+                )
+            },
+            0
+        );
+        unsafe {
+            LocalFree(expected_sid);
+        }
     }
 }

@@ -126,6 +126,11 @@ struct WorkerThreads {
 impl WorkerThreads {
     /// Spawns the hook and overlay threads from the current shared config.
     fn spawn(active: config::ActiveConfig) -> Self {
+        #[cfg(debug_assertions)]
+        if let Some(path) = std::env::var_os("ZG_P03_TEST_WORKER_START_MARKER") {
+            std::fs::write(path, b"worker-started")
+                .expect("write P03 worker-start fault-injection marker");
+        }
         info!("starting worker threads");
         let runtime = active.runtime();
         let (overlay_tx, overlay_handle) = overlay::spawn(runtime.clone());
@@ -465,12 +470,26 @@ pub fn run() {
 
 fn run_engine() -> Result<(), String> {
     let log_level = log_config::resolve_log_level();
+    #[cfg(debug_assertions)]
+    let log_builder =
+        if let Some(config_dir) = std::env::var_os("ZG_P03_TEST_CONFIG_DIR") {
+            tauri_plugin_log::Builder::new().level(log_level).targets([
+                tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Folder {
+                    path: PathBuf::from(config_dir).join("logs"),
+                    file_name: Some("engine-test".to_string()),
+                }),
+            ])
+        } else {
+            tauri_plugin_log::Builder::new().level(log_level)
+        };
+    #[cfg(not(debug_assertions))]
+    let log_builder = tauri_plugin_log::Builder::new().level(log_level);
 
     let app = tauri::Builder::default()
-        .plugin(tauri_plugin_log::Builder::new().level(log_level).build())
+        .plugin(log_builder.build())
         .setup(move |app| {
-            let config_dir_path = app.path().app_config_dir()?;
-            let Some(server) = ipc::EngineServer::new(&config_dir_path).map_err(|error| {
+            let config_dir_path = engine_config_dir(app.path().app_config_dir()?);
+            let Some(server) = prepare_engine_server(&config_dir_path).map_err(|error| {
                 tauri::Error::Setup((Box::new(error) as Box<dyn std::error::Error>).into())
             })?
             else {
@@ -523,6 +542,10 @@ fn run_engine() -> Result<(), String> {
                 stop,
                 handle: Mutex::new(Some(handle)),
             });
+            #[cfg(debug_assertions)]
+            if let Some(path) = std::env::var_os("ZG_P03_TEST_READY_MARKER") {
+                std::fs::write(path, b"engine-ready")?;
+            }
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -538,6 +561,27 @@ fn run_engine() -> Result<(), String> {
         }
     });
     Ok(())
+}
+
+fn engine_config_dir(default: PathBuf) -> PathBuf {
+    #[cfg(debug_assertions)]
+    if let Some(path) = std::env::var_os("ZG_P03_TEST_CONFIG_DIR") {
+        return PathBuf::from(path);
+    }
+    default
+}
+
+fn prepare_engine_server(
+    config_dir: &Path,
+) -> Result<Option<ipc::EngineServer>, ipc::ControlError> {
+    #[cfg(all(debug_assertions, windows))]
+    if let Some(namespace) = std::env::var_os("ZG_P03_TEST_NAMESPACE") {
+        let namespace = namespace.to_str().ok_or_else(|| {
+            ipc::ControlError::Security("P03 test namespace must be valid Unicode".to_string())
+        })?;
+        return ipc::EngineServer::for_debug_namespace(config_dir, namespace);
+    }
+    ipc::EngineServer::new(config_dir)
 }
 
 fn run_settings() -> Result<(), String> {

@@ -35,8 +35,14 @@ Unknown arguments and multiple mode arguments fail before either mode starts.
 Engine and Settings use the existing executable, version, Tauri identifier
 `dev.r4ai.zero-gesture`, and Tauri application config directory.
 
-Engine claims its per-user singleton before loading config or starting input
-workers.
+Engine synchronously claims its per-user singleton, creates and flushes the
+current-user-only secret, and binds the first ACL-protected named-pipe handle
+before loading config or starting input workers.
+`EngineServer` owns this prepared first handle and passes it into the IPC owner
+loop; later listener handles are created by that same owner.
+Failure anywhere through the first bind drops the prepared resources, leaves
+pre-existing config bytes unchanged, and never installs the input hook or
+overlay.
 A second Engine observes the existing singleton, changes no running state, and
 exits successfully.
 The Engine Tauri builder initializes the native tray and local logging but no
@@ -48,6 +54,12 @@ It starts no gesture, renderer, or executor worker.
 At setup it tries the Engine endpoint, starts the same executable with
 `--engine` once when unavailable, and retries only within the fixed startup
 deadline.
+Concurrent Settings launches serialize only this decision with a short-lived,
+current-user-only SID-named launch mutex.
+After acquiring it, each caller checks the endpoint again; only the caller that
+still observes absence spawns.
+Wait, recheck, spawn, and connect all share the same three-second deadline.
+Authentication, protocol, security, and version errors never trigger a spawn.
 Closing Settings does not send shutdown.
 
 P03a keeps the existing Settings config commands in process as a temporary
@@ -61,6 +73,7 @@ The Windows adapter uses one byte-mode named pipe whose name contains the
 current user SID.
 It creates both the per-user singleton mutex and named pipe with a protected
 DACL containing one full-access ACE for that SID.
+The Settings launch mutex uses the same DACL.
 The pipe always sets `PIPE_REJECT_REMOTE_CLIENTS`.
 
 At each Engine start, Windows CNG generates a 32-byte random authentication
@@ -140,19 +153,37 @@ It hides the named pipe and returns typed status or control errors.
 
 ### P03a evidence
 
-`contracts/p03-process-ipc.json` contains 35 atomic runnable cases.
-For this P03a boundary, `O = 35`, `O_v = 35`, `U = 0`, and
+`contracts/p03-process-ipc.json` contains 45 atomic runnable cases.
+For this P03a boundary, `O = 45`, `O_v = 45`, `U = 0`, and
 `O_v / O = 100%`.
-The 18 pure process/codec cases run at unit level and the 17 Windows
+The 18 pure process/codec cases run at unit level and the 27 Windows
 transport/process cases run at integration/process level, so
-`T = 35`, `T_u = 18`, `T_i = 17`, and `T_e = 0`.
+`T = 45`, `T_u = 18`, `T_i = 27`, and `T_e = 0`.
 Pure codec rejection cases are not duplicated as executable E2E cases unless
 the Windows server has an independent typed-response obligation.
 
-The current idle-topology evidence is a typed status snapshot with Engine role,
-WebView count, process ID, uptime, thread count, handle count, and working set.
-WebView count is fixed at zero by the Engine bootstrap and observable over IPC.
+An actual same-executable `--engine` child runs in a unique test namespace and
+temporary config/log root.
+Windows process and window APIs verify that it starts no WebView2 descendant
+and owns no content window; the only observed top-level classes are Tauri tray,
+event-target, and IME infrastructure (`tray_icon_app`,
+`Tao Thread Event Target`, and `IME`).
+The typed status snapshot separately verifies the serving process identifier,
+role, uptime, thread count, handle count, and working set.
 This is topology evidence, not the P06 CPU, RSS, or latency acceptance claim.
+
+Tests query the security descriptors of the created singleton mutex, launch
+mutex, first pipe handle, and secret file through Windows APIs.
+Each has a protected DACL with exactly one allow ACE for the current user SID.
+`GetNamedPipeInfo` also verifies that the prepared handle is a kernel server
+endpoint.
+CI cannot reliably test a remote-form connection: on the current Windows
+environment even a control pipe without `PIPE_REJECT_REMOTE_CLIENTS` fails
+before reaching NPFS with `ERROR_BAD_NET_NAME`.
+Therefore the manifest does not misclassify the creation-flag constant as
+runtime proof of remote rejection; the implementation still sets
+`PIPE_REJECT_REMOTE_CLIENTS`, while runnable evidence claims only the actual
+API observations it can distinguish.
 
 ## Deferrals
 
