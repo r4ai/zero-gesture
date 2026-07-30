@@ -7,6 +7,7 @@
 #[cfg(windows)]
 mod win32;
 
+use std::io;
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
@@ -29,7 +30,7 @@ pub enum HookControl {
 pub fn spawn(
     runtime: Arc<RuntimeConfig>,
     overlay_tx: Sender<OverlayCommand>,
-) -> (Sender<HookControl>, Arc<AtomicU32>, JoinHandle<()>) {
+) -> io::Result<(Sender<HookControl>, Arc<AtomicU32>, JoinHandle<()>)> {
     info!("starting hook thread");
     let (control_tx, control_rx) = crossbeam_channel::unbounded();
     let tid = Arc::new(AtomicU32::new(0));
@@ -45,9 +46,8 @@ pub fn spawn(
                 let _ = (runtime, overlay_tx, tid_clone, control_rx);
                 warn!("Mouse hook is only supported on Windows");
             }
-        })
-        .expect("failed to spawn hook thread");
+        })?;
     info!("hook thread spawned");
 
-    (control_tx, tid, handle)
+    Ok((control_tx, tid, handle))
 }

@@ -37,6 +37,49 @@ test("rejects duplicate evidence pairs", () => {
   assert.throws(() => validateManifestText(manifest), /duplicate evidence/)
 })
 
+test("rejects evidence reused by another phase manifest", () => {
+  const usedEvidence = new Map()
+  const p02 = {
+    label: "P02",
+    idPattern: /^P02-WIN-\d{3}$/,
+    idDescription: "P02-WIN-NNN",
+  }
+  const p03 = {
+    label: "P03",
+    idPattern: /^P03-IPC-\d{3}$/,
+    idDescription: "P03-IPC-NNN",
+  }
+  assert.equal(
+    validateManifestText(
+      JSON.stringify({ cases: [validCase] }),
+      undefined,
+      undefined,
+      p02,
+      usedEvidence,
+    ),
+    1,
+  )
+  assert.throws(
+    () =>
+      validateManifestText(
+        JSON.stringify({
+          cases: [
+            {
+              ...validCase,
+              id: "P03-IPC-001",
+              obligation: "The later phase makes a different claim.",
+            },
+          ],
+        }),
+        undefined,
+        undefined,
+        p03,
+        usedEvidence,
+      ),
+    /cross-manifest evidence reuse/,
+  )
+})
+
 test("rejects missing evidence files", () => {
   const manifest = JSON.stringify({
     cases: [
@@ -91,6 +134,27 @@ test("accepts runnable integration-test evidence", () => {
   })
   assert.equal(
     validateManifestText(manifest, repo, "actual_engine_child: test"),
+    1,
+  )
+})
+
+test("accepts runnable crate-root unit-test evidence", () => {
+  const repo = mkdtempSync(path.join(tmpdir(), "contracts-lib-test-"))
+  const evidence = path.join(repo, "src-tauri", "src", "lib.rs")
+  mkdirSync(path.dirname(evidence), { recursive: true })
+  writeFileSync(evidence, "#[test]\nfn runtime_projection() {}\n")
+
+  const manifest = JSON.stringify({
+    cases: [
+      {
+        ...validCase,
+        evidence_file: "src-tauri/src/lib.rs",
+        evidence_name: "runtime_projection",
+      },
+    ],
+  })
+  assert.equal(
+    validateManifestText(manifest, repo, "tests::runtime_projection: test"),
     1,
   )
 })

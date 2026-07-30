@@ -5,8 +5,8 @@ import {
   useEffect,
   useState,
 } from "react"
-import { useConfig, useUpdateConfig } from "@/hooks/use-config"
-import type { AppConfig } from "@/types/config"
+import { configMutation, useConfig, useUpdateConfig } from "@/hooks/use-config"
+import { type AppConfig, DEFAULTS } from "@/types/config"
 
 interface ConfigDraftContext {
   draft: AppConfig
@@ -35,8 +35,9 @@ export function ConfigDraftContextProvider({
 
 /** Must be placed inside Suspense because it uses useConfig() */
 export function ConfigDraftProvider({ children }: { children: ReactNode }) {
-  const { data: config } = useConfig()
+  const { data: observed } = useConfig()
   const { mutate: updateConfig, isPending } = useUpdateConfig()
+  const config = observed.config ?? DEFAULTS
 
   const [draft, setDraft] = useState<AppConfig>(config)
 
@@ -46,10 +47,10 @@ export function ConfigDraftProvider({ children }: { children: ReactNode }) {
     setDraft(config)
   }, [config])
 
-  const isDirty = draft !== config
+  const isDirty = observed.config === null || draft !== config
 
   const reset = () => setDraft(config)
-  const save = () => updateConfig(draft)
+  const save = () => updateConfig(configMutation(observed, draft))
 
   return (
     <ConfigDraftContext.Provider

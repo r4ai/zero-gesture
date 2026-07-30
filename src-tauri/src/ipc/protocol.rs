@@ -3,7 +3,9 @@ use std::io::{self, Read, Write};
 
 use serde::Serialize;
 
-pub const PROTOCOL_VERSION: u16 = 1;
+use crate::config::MAX_CONFIG_BYTES;
+
+pub const PROTOCOL_VERSION: u16 = 2;
 pub const MAX_ENCODED_FRAME: usize = 1024 * 1024 - 1;
 #[cfg(test)]
 pub const MAX_BODY: usize = MAX_ENCODED_FRAME - size_of::<u32>();
@@ -13,7 +15,13 @@ pub const MAX_REQUESTS_PER_CONNECTION: usize = 8;
 pub const CAPABILITY_PING: u64 = 1 << 0;
 pub const CAPABILITY_STATUS: u64 = 1 << 1;
 pub const CAPABILITY_SHUTDOWN: u64 = 1 << 2;
-pub const CAPABILITIES: u64 = CAPABILITY_PING | CAPABILITY_STATUS | CAPABILITY_SHUTDOWN;
+pub const CAPABILITY_CONFIG_READ: u64 = 1 << 3;
+pub const CAPABILITY_CONFIG_TRANSACTION: u64 = 1 << 4;
+pub const CAPABILITIES: u64 = CAPABILITY_PING
+    | CAPABILITY_STATUS
+    | CAPABILITY_SHUTDOWN
+    | CAPABILITY_CONFIG_READ
+    | CAPABILITY_CONFIG_TRANSACTION;
 
 const HEADER_BYTES: usize = size_of::<u16>() + size_of::<u8>() + size_of::<u8>() + size_of::<u64>();
 
@@ -32,6 +40,10 @@ pub struct EngineStatus {
     pub thread_count: u32,
     pub handle_count: u32,
     pub working_set_bytes: u64,
+    pub config_available: bool,
+    pub config_revision: u64,
+    pub config_generation: u64,
+    pub config_candidate_prepared: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -43,6 +55,16 @@ pub enum Request {
     Ping,
     GetStatus,
     Shutdown,
+    GetConfig,
+    PrepareConfig {
+        expected_revision: u64,
+        config_bytes: Vec<u8>,
+    },
+    CommitConfig {
+        token: u64,
+        base_revision: u64,
+        base_generation: u64,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -54,6 +76,14 @@ pub enum ErrorCode {
     DuplicateRequestId,
     RequestLimit,
     InvalidMessage,
+    ConfigPayloadTooLarge,
+    ConfigBusy,
+    ConfigRevisionConflict,
+    ConfigValidationFailed,
+    ConfigTokenMismatch,
+    NoPreparedConfig,
+    ConfigGenerationExhausted,
+    ConfigPersistenceFailed,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -67,6 +97,21 @@ pub enum Response {
     Status(EngineStatus),
     Shutdown {
         already_requested: bool,
+    },
+    Config {
+        revision: u64,
+        generation: u64,
+        config_bytes: Option<Vec<u8>>,
+    },
+    Prepared {
+        token: u64,
+        base_revision: u64,
+        base_generation: u64,
+    },
+    Applied {
+        revision: u64,
+        generation: u64,
+        durability_warning: bool,
     },
     Error(ErrorCode),
 }
@@ -192,6 +237,33 @@ pub fn encode_request(envelope: &Envelope<Request>) -> Result<Vec<u8>, ProtocolE
         Request::Ping => (2, Vec::new()),
         Request::GetStatus => (3, Vec::new()),
         Request::Shutdown => (4, Vec::new()),
+        Request::GetConfig => (5, Vec::new()),
+        Request::PrepareConfig {
+            expected_revision,
+            config_bytes,
+        } => {
+            if config_bytes.len() > MAX_CONFIG_BYTES {
+                return Err(ProtocolError::FrameTooLarge(
+                    u32::try_from(config_bytes.len()).unwrap_or(u32::MAX),
+                ));
+            }
+            let mut payload = Vec::with_capacity(12 + config_bytes.len());
+            payload.extend_from_slice(&expected_revision.to_le_bytes());
+            payload.extend_from_slice(&(config_bytes.len() as u32).to_le_bytes());
+            payload.extend_from_slice(config_bytes);
+            (6, payload)
+        }
+        Request::CommitConfig {
+            token,
+            base_revision,
+            base_generation,
+        } => {
+            let mut payload = Vec::with_capacity(24);
+            payload.extend_from_slice(&token.to_le_bytes());
+            payload.extend_from_slice(&base_revision.to_le_bytes());
+            payload.extend_from_slice(&base_generation.to_le_bytes());
+            (7, payload)
+        }
     };
     encode_envelope(
         envelope.protocol_version,
@@ -221,6 +293,27 @@ pub fn decode_request(body: &[u8]) -> Result<Envelope<Request>, ProtocolError> {
         2 => empty_payload(payload, Request::Ping)?,
         3 => empty_payload(payload, Request::GetStatus)?,
         4 => empty_payload(payload, Request::Shutdown)?,
+        5 => empty_payload(payload, Request::GetConfig)?,
+        6 => {
+            let mut cursor = Cursor::new(payload);
+            let expected_revision = cursor.u64()?;
+            let config_bytes = cursor.bounded_bytes(MAX_CONFIG_BYTES)?;
+            cursor.finish()?;
+            Request::PrepareConfig {
+                expected_revision,
+                config_bytes,
+            }
+        }
+        7 => {
+            let mut cursor = Cursor::new(payload);
+            let request = Request::CommitConfig {
+                token: cursor.u64()?,
+                base_revision: cursor.u64()?,
+                base_generation: cursor.u64()?,
+            };
+            cursor.finish()?;
+            request
+        }
         _ => return Err(ProtocolError::InvalidMessage),
     };
     Ok(Envelope {
@@ -255,9 +348,58 @@ pub fn encode_response(envelope: &Envelope<Response>) -> Result<Vec<u8>, Protoco
             payload.extend_from_slice(&status.thread_count.to_le_bytes());
             payload.extend_from_slice(&status.handle_count.to_le_bytes());
             payload.extend_from_slice(&status.working_set_bytes.to_le_bytes());
+            payload.push(u8::from(status.config_available));
+            payload.extend_from_slice(&status.config_revision.to_le_bytes());
+            payload.extend_from_slice(&status.config_generation.to_le_bytes());
+            payload.push(u8::from(status.config_candidate_prepared));
             (131, payload)
         }
         Response::Shutdown { already_requested } => (132, vec![u8::from(*already_requested)]),
+        Response::Config {
+            revision,
+            generation,
+            config_bytes,
+        } => {
+            if config_bytes
+                .as_ref()
+                .is_some_and(|bytes| bytes.len() > MAX_CONFIG_BYTES)
+            {
+                return Err(ProtocolError::FrameTooLarge(
+                    u32::try_from(config_bytes.as_ref().map_or(0, Vec::len)).unwrap_or(u32::MAX),
+                ));
+            }
+            let mut payload = Vec::with_capacity(21 + config_bytes.as_ref().map_or(0, Vec::len));
+            payload.extend_from_slice(&revision.to_le_bytes());
+            payload.extend_from_slice(&generation.to_le_bytes());
+            payload.push(u8::from(config_bytes.is_some()));
+            if let Some(config_bytes) = config_bytes {
+                payload.extend_from_slice(&(config_bytes.len() as u32).to_le_bytes());
+                payload.extend_from_slice(config_bytes);
+            }
+            (133, payload)
+        }
+        Response::Prepared {
+            token,
+            base_revision,
+            base_generation,
+        } => {
+            let mut payload = Vec::with_capacity(24);
+            payload.extend_from_slice(&token.to_le_bytes());
+            payload.extend_from_slice(&base_revision.to_le_bytes());
+            payload.extend_from_slice(&base_generation.to_le_bytes());
+            (134, payload)
+        }
+        Response::Applied {
+            revision,
+            generation,
+            durability_warning,
+        } => {
+            let mut payload = Vec::with_capacity(17);
+            payload.extend_from_slice(&revision.to_le_bytes());
+            payload.extend_from_slice(&generation.to_le_bytes());
+            payload.push(u8::from(*durability_warning));
+            (135, payload)
+        }
         Response::Error(code) => (255, vec![error_code_byte(*code)]),
     };
     encode_envelope(
@@ -307,6 +449,10 @@ pub fn decode_response(
                 thread_count: cursor.u32()?,
                 handle_count: cursor.u32()?,
                 working_set_bytes: cursor.u64()?,
+                config_available: cursor.boolean()?,
+                config_revision: cursor.u64()?,
+                config_generation: cursor.u64()?,
+                config_candidate_prepared: cursor.boolean()?,
             };
             cursor.finish()?;
             Response::Status(status)
@@ -318,6 +464,41 @@ pub fn decode_response(
             Response::Shutdown {
                 already_requested: payload[0] == 1,
             }
+        }
+        133 => {
+            let mut cursor = Cursor::new(payload);
+            let revision = cursor.u64()?;
+            let generation = cursor.u64()?;
+            let config_bytes = cursor
+                .boolean()?
+                .then(|| cursor.bounded_bytes(MAX_CONFIG_BYTES))
+                .transpose()?;
+            cursor.finish()?;
+            Response::Config {
+                revision,
+                generation,
+                config_bytes,
+            }
+        }
+        134 => {
+            let mut cursor = Cursor::new(payload);
+            let response = Response::Prepared {
+                token: cursor.u64()?,
+                base_revision: cursor.u64()?,
+                base_generation: cursor.u64()?,
+            };
+            cursor.finish()?;
+            response
+        }
+        135 => {
+            let mut cursor = Cursor::new(payload);
+            let response = Response::Applied {
+                revision: cursor.u64()?,
+                generation: cursor.u64()?,
+                durability_warning: cursor.boolean()?,
+            };
+            cursor.finish()?;
+            response
         }
         255 => {
             if payload.len() != 1 {
@@ -405,6 +586,14 @@ fn error_code_byte(code: ErrorCode) -> u8 {
         ErrorCode::DuplicateRequestId => 5,
         ErrorCode::RequestLimit => 6,
         ErrorCode::InvalidMessage => 7,
+        ErrorCode::ConfigPayloadTooLarge => 8,
+        ErrorCode::ConfigBusy => 9,
+        ErrorCode::ConfigRevisionConflict => 10,
+        ErrorCode::ConfigValidationFailed => 11,
+        ErrorCode::ConfigTokenMismatch => 12,
+        ErrorCode::NoPreparedConfig => 13,
+        ErrorCode::ConfigGenerationExhausted => 14,
+        ErrorCode::ConfigPersistenceFailed => 15,
     }
 }
 
@@ -417,6 +606,14 @@ fn byte_error_code(byte: u8) -> Result<ErrorCode, ProtocolError> {
         5 => Ok(ErrorCode::DuplicateRequestId),
         6 => Ok(ErrorCode::RequestLimit),
         7 => Ok(ErrorCode::InvalidMessage),
+        8 => Ok(ErrorCode::ConfigPayloadTooLarge),
+        9 => Ok(ErrorCode::ConfigBusy),
+        10 => Ok(ErrorCode::ConfigRevisionConflict),
+        11 => Ok(ErrorCode::ConfigValidationFailed),
+        12 => Ok(ErrorCode::ConfigTokenMismatch),
+        13 => Ok(ErrorCode::NoPreparedConfig),
+        14 => Ok(ErrorCode::ConfigGenerationExhausted),
+        15 => Ok(ErrorCode::ConfigPersistenceFailed),
         _ => Err(ProtocolError::InvalidMessage),
     }
 }
@@ -465,6 +662,31 @@ impl<'a> Cursor<'a> {
 
     fn u64(&mut self) -> Result<u64, ProtocolError> {
         Ok(u64::from_le_bytes(self.take()?))
+    }
+
+    fn boolean(&mut self) -> Result<bool, ProtocolError> {
+        match self.u8()? {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(ProtocolError::InvalidMessage),
+        }
+    }
+
+    fn bounded_bytes(&mut self, maximum: usize) -> Result<Vec<u8>, ProtocolError> {
+        let length = self.u32()? as usize;
+        if length > maximum {
+            return Err(ProtocolError::InvalidMessage);
+        }
+        let end = self
+            .position
+            .checked_add(length)
+            .ok_or(ProtocolError::InvalidMessage)?;
+        let bytes = self
+            .bytes
+            .get(self.position..end)
+            .ok_or(ProtocolError::InvalidMessage)?;
+        self.position = end;
+        Ok(bytes.to_vec())
     }
 
     fn string(&mut self) -> Result<String, ProtocolError> {
@@ -558,6 +780,10 @@ mod tests {
                 thread_count: 2,
                 handle_count: 9,
                 working_set_bytes: 4096,
+                config_available: true,
+                config_revision: 1,
+                config_generation: 1,
+                config_candidate_prepared: false,
             }),
         );
         assert_eq!(
@@ -583,6 +809,121 @@ mod tests {
             decode_response(&encode_response(&response).unwrap(), 4).unwrap(),
             response
         );
+    }
+
+    #[test]
+    fn codec_roundtrips_prepare_and_prepared() {
+        let prepare = Envelope::current(
+            5,
+            Request::PrepareConfig {
+                expected_revision: 7,
+                config_bytes: br#"{"schema_version":2}"#.to_vec(),
+            },
+        );
+        assert_eq!(
+            decode_request(&encode_request(&prepare).unwrap()).unwrap(),
+            prepare
+        );
+        let prepared = Envelope::current(
+            5,
+            Response::Prepared {
+                token: 9,
+                base_revision: 7,
+                base_generation: 4,
+            },
+        );
+        assert_eq!(
+            decode_response(&encode_response(&prepared).unwrap(), 5).unwrap(),
+            prepared
+        );
+    }
+
+    #[test]
+    fn codec_roundtrips_commit_and_applied() {
+        let commit = Envelope::current(
+            6,
+            Request::CommitConfig {
+                token: 9,
+                base_revision: 7,
+                base_generation: 4,
+            },
+        );
+        assert_eq!(
+            decode_request(&encode_request(&commit).unwrap()).unwrap(),
+            commit
+        );
+        let applied = Envelope::current(
+            6,
+            Response::Applied {
+                revision: 8,
+                generation: 5,
+                durability_warning: true,
+            },
+        );
+        assert_eq!(
+            decode_response(&encode_response(&applied).unwrap(), 6).unwrap(),
+            applied
+        );
+    }
+
+    #[test]
+    fn codec_roundtrips_available_config_observation() {
+        let request = Envelope::current(7, Request::GetConfig);
+        assert_eq!(
+            decode_request(&encode_request(&request).unwrap()).unwrap(),
+            request
+        );
+        let response = Envelope::current(
+            7,
+            Response::Config {
+                revision: 3,
+                generation: 2,
+                config_bytes: Some(br#"{"schema_version":2}"#.to_vec()),
+            },
+        );
+        assert_eq!(
+            decode_response(&encode_response(&response).unwrap(), 7).unwrap(),
+            response
+        );
+    }
+
+    #[test]
+    fn codec_roundtrips_unavailable_config_observation() {
+        let response = Envelope::current(
+            8,
+            Response::Config {
+                revision: 0,
+                generation: 0,
+                config_bytes: None,
+            },
+        );
+        assert_eq!(
+            decode_response(&encode_response(&response).unwrap(), 8).unwrap(),
+            response
+        );
+    }
+
+    #[test]
+    fn config_payload_limit_is_enforced_by_the_closed_codec() {
+        let oversized = Envelope::current(
+            1,
+            Request::PrepareConfig {
+                expected_revision: 1,
+                config_bytes: vec![0; MAX_CONFIG_BYTES + 1],
+            },
+        );
+        assert!(matches!(
+            encode_request(&oversized),
+            Err(ProtocolError::FrameTooLarge(_))
+        ));
+
+        let mut payload = Vec::from(1_u64.to_le_bytes());
+        payload.extend_from_slice(&u32::try_from(MAX_CONFIG_BYTES + 1).unwrap().to_le_bytes());
+        let body = encode_envelope(PROTOCOL_VERSION, 6, 1, &payload).unwrap();
+        assert!(matches!(
+            decode_request(&body),
+            Err(ProtocolError::InvalidMessage)
+        ));
     }
 
     #[test]

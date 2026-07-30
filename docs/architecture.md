@@ -66,9 +66,11 @@ graph TD
 - **Responsibility:**
   - Tauriランタイムの初期化。
   - システムトレイ（タスクトレイ）のアイコンとメニュー管理。
-  - 設定ファイルの読み書き（Disk I/O）。
+  - Engine Config ownerだけが行う設定ファイルの読み書き（Disk I/O）。
   - 設定画面（Webview）の表示/非表示トグル。
-  - Global State（設定データ）の保持と、各スレッドへの共有（`Arc<RwLock<Config>>`）。
+  - immutable compiled configを二つの固定slotへ保持し、generation/indexをatomic publishする。Windows hookからのread wiringはP03cで行う。
+  - P03cまでの互換動作として、durable commit/publication後、Applied応答前に既存Hook/Overlay worker pairをcommitted configから再生成する。再生成失敗はdiskをrollbackせずEngine全体を終了し、次のbounded restartでcommitted truthを再読込する。workerはdisk writerではない。
+  - Tray labelはworker projection後にTauri main threadへ非同期enqueueする。IPC owner threadは同期menu APIを呼ばず、tray自身の変更はApplied受信後にmain thread上でもlabelを整合する。
 
 ### 3.2. Hook Thread (The "Sensor")
 
@@ -102,6 +104,7 @@ TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成
   - ジェスチャーとアクションのマッピング編集。
   - 軌跡の色・太さの設定。
   - Tauri Commandを経由してRust側の設定ファイルを更新。
+  - edit/import開始時にEngineから観測したrevisionを保持し、Prepareへ渡す。Applied後は返されたconfig/revisionでquery cacheを置換し、Windows metadata durability warningを表示する。
   - **Performance Note:** この画面が開いていない時、Webviewプロセスは存在しないか、サスペンド状態になるように管理する。
 
 ---
@@ -133,7 +136,7 @@ TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成
 | **App Framework**    | `tauri` v2                         | アプリケーションシェル、設定UI、ビルドシステム   |
 | **Windows API**      | `windows-sys`                      | Win32 APIへのRawアクセス (Hooks, GDI, Input)     |
 | **Concurrency**      | `std::thread`, `crossbeam-channel` | スレッド管理と高速なメッセージパッシング         |
-| **State Mngt**       | `std::sync::{Arc, RwLock}`         | 設定データ等のスレッド間共有                     |
+| **State Mngt**       | Engine owner + fixed two-slot publication | 設定mutationの単一所有とlock-free snapshot read |
 | **Serialization**    | `serde`, `serde_json`              | 設定ファイルの保存・読み込み                     |
 | **Logging**          | `log`, `tauri-plugin-log`          | ログ出力                                         |
 | **Input Simulation** | `windows-sys` (SendInput)          | キーボード・マウス操作の自動実行                 |

@@ -239,20 +239,6 @@
       "evidence_name": "legacy_decode_reports_tagged_payload_path"
     },
     {
-      "id": "P02-CONFIG-020",
-      "obligation": "A worker apply failure restores the previous live config only after persisted rollback succeeds.",
-      "runner": "cargo-test",
-      "evidence_file": "src-tauri/src/commands.rs",
-      "evidence_name": "worker_failure_restores_previous_only_after_disk_rollback"
-    },
-    {
-      "id": "P02-CONFIG-021",
-      "obligation": "A persisted rollback failure disables the runtime and marks shared configuration unavailable with diagnostics.",
-      "runner": "cargo-test",
-      "evidence_file": "src-tauri/src/commands.rs",
-      "evidence_name": "disk_rollback_failure_requires_disabled_unavailable_state"
-    },
-    {
       "id": "P02-INPUT-001",
       "obligation": "A fresh pre-resolved context with essential reservations starts suppression and emits activation before render.",
       "runner": "cargo-test",

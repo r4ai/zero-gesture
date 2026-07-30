@@ -13,10 +13,12 @@ mod tray;
 pub mod window_info;
 
 use std::ffi::OsString;
+use std::fmt;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicBool, AtomicU32, Ordering},
-    Arc, Mutex, RwLock,
+    Arc, Mutex,
 };
 use std::thread::{self, JoinHandle};
 
@@ -24,90 +26,9 @@ use crossbeam_channel::Sender;
 use log::{debug, error, info, warn};
 use tauri::Manager;
 
-enum ConfigState {
-    Active(Box<config::ActiveConfig>),
-    Unavailable(String),
-}
-
-/// Thread-safe handle to the canonical document and its compiled snapshot.
-#[derive(Clone)]
-pub struct SharedConfig(Arc<RwLock<ConfigState>>);
-
-impl SharedConfig {
-    pub fn new(config: config::ActiveConfig) -> Self {
-        Self(Arc::new(RwLock::new(ConfigState::Active(Box::new(config)))))
-    }
-
-    pub fn unavailable(error: impl Into<String>) -> Self {
-        Self(Arc::new(RwLock::new(ConfigState::Unavailable(
-            error.into(),
-        ))))
-    }
-
-    pub fn active(&self) -> Result<config::ActiveConfig, String> {
-        match &*self
-            .0
-            .read()
-            .map_err(|_| "shared config lock poisoned".to_string())?
-        {
-            ConfigState::Active(active) => Ok(active.as_ref().clone()),
-            ConfigState::Unavailable(error) => Err(error.clone()),
-        }
-    }
-
-    pub fn document(&self) -> Result<config::ConfigDocument, String> {
-        self.active().map(|active| active.document().clone())
-    }
-
-    fn replace(
-        &self,
-        next: config::ActiveConfig,
-    ) -> Result<(bool, Option<config::ActiveConfig>), String> {
-        let mut state = self
-            .0
-            .write()
-            .map_err(|_| "shared config lock poisoned".to_string())?;
-        let previous = match &*state {
-            ConfigState::Active(active) => Some(active.as_ref().clone()),
-            ConfigState::Unavailable(_) => None,
-        };
-        let restart_required = previous
-            .as_ref()
-            .is_none_or(|active| active.document() != next.document());
-        *state = ConfigState::Active(Box::new(next));
-        Ok((restart_required, previous))
-    }
-
-    fn restore(&self, previous: Option<config::ActiveConfig>, error: String) -> Result<(), String> {
-        let mut state = self
-            .0
-            .write()
-            .map_err(|_| "shared config lock poisoned".to_string())?;
-        *state = previous.map_or(ConfigState::Unavailable(error), |active| {
-            ConfigState::Active(Box::new(active))
-        });
-        Ok(())
-    }
-
-    fn mark_unavailable(&self, error: String) -> Result<(), String> {
-        let mut state = self
-            .0
-            .write()
-            .map_err(|_| "shared config lock poisoned".to_string())?;
-        *state = ConfigState::Unavailable(error);
-        Ok(())
-    }
-}
-
 /// Absolute directory where the app stores configuration files.
 #[derive(Clone)]
 pub struct ConfigDir(pub PathBuf);
-
-impl ConfigDir {
-    pub(crate) fn as_path(&self) -> &Path {
-        self.0.as_path()
-    }
-}
 
 /// Owns the background threads (hook and overlay) and provides a way to shut
 /// them down cleanly.
@@ -121,34 +42,89 @@ struct WorkerThreads {
     overlay_tx: Sender<overlay::OverlayCommand>,
     hook_handle: Option<JoinHandle<()>>,
     overlay_handle: Option<JoinHandle<()>>,
+    #[cfg(test)]
+    projected_document: Box<config::ConfigDocument>,
 }
+
+#[derive(Debug)]
+enum RuntimeProjectionError {
+    StatePoisoned,
+    RuntimeShutDown,
+    WorkerSpawn {
+        worker: &'static str,
+        source: io::Error,
+    },
+    WorkerPanicked(&'static str),
+    TestMarker(io::Error),
+}
+
+impl fmt::Display for RuntimeProjectionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::StatePoisoned => formatter.write_str("thread runtime state is poisoned"),
+            Self::RuntimeShutDown => formatter.write_str("thread runtime is shut down"),
+            Self::WorkerSpawn { worker, source } => {
+                write!(formatter, "failed to spawn {worker} worker: {source}")
+            }
+            Self::WorkerPanicked(worker) => write!(formatter, "{worker} worker panicked"),
+            Self::TestMarker(source) => {
+                write!(formatter, "failed to write worker start marker: {source}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for RuntimeProjectionError {}
 
 impl WorkerThreads {
     /// Spawns the hook and overlay threads from the current shared config.
-    fn spawn(active: config::ActiveConfig) -> Self {
+    fn spawn(active: config::ActiveConfig) -> Result<Self, RuntimeProjectionError> {
+        #[cfg(debug_assertions)]
+        if std::env::var_os("ZG_P03_TEST_FAIL_WORKER_SPAWN").is_some() {
+            return Err(RuntimeProjectionError::WorkerSpawn {
+                worker: "replacement",
+                source: io::Error::other("injected worker spawn failure"),
+            });
+        }
         #[cfg(debug_assertions)]
         if let Some(path) = std::env::var_os("ZG_P03_TEST_WORKER_START_MARKER") {
-            std::fs::write(path, b"worker-started")
-                .expect("write P03 worker-start fault-injection marker");
+            std::fs::write(path, b"worker-started").map_err(RuntimeProjectionError::TestMarker)?;
         }
         info!("starting worker threads");
         let runtime = active.runtime();
-        let (overlay_tx, overlay_handle) = overlay::spawn(runtime.clone());
+        let (overlay_tx, overlay_handle) = overlay::spawn(runtime.clone()).map_err(|source| {
+            RuntimeProjectionError::WorkerSpawn {
+                worker: "overlay",
+                source,
+            }
+        })?;
         let (hook_control_tx, hook_thread_tid, hook_handle) =
-            hook::spawn(runtime, overlay_tx.clone());
+            match hook::spawn(runtime, overlay_tx.clone()) {
+                Ok(parts) => parts,
+                Err(source) => {
+                    let _ = overlay_tx.send(overlay::OverlayCommand::Shutdown);
+                    let _ = overlay_handle.join();
+                    return Err(RuntimeProjectionError::WorkerSpawn {
+                        worker: "hook",
+                        source,
+                    });
+                }
+            };
         info!("worker threads started");
 
-        Self {
+        Ok(Self {
             hook_control_tx,
             hook_thread_tid,
             overlay_tx,
             hook_handle: Some(hook_handle),
             overlay_handle: Some(overlay_handle),
-        }
+            #[cfg(test)]
+            projected_document: Box::new(active.document().clone()),
+        })
     }
 
     /// Sends shutdown signals to both background threads and waits for them.
-    fn shutdown(&mut self) {
+    fn shutdown(&mut self) -> Result<(), RuntimeProjectionError> {
         info!("stopping worker threads");
         // Post WM_QUIT to the hook thread's Win32 message loop.
         let tid = self.hook_thread_tid.load(Ordering::Acquire);
@@ -168,13 +144,22 @@ impl WorkerThreads {
         let _ = self.hook_control_tx.send(hook::HookControl::Shutdown);
         let _ = self.overlay_tx.send(overlay::OverlayCommand::Shutdown);
 
-        if let Some(handle) = self.hook_handle.take() {
-            let _ = handle.join();
-        }
-        if let Some(handle) = self.overlay_handle.take() {
-            let _ = handle.join();
-        }
+        let hook_panicked = self
+            .hook_handle
+            .take()
+            .is_some_and(|handle| handle.join().is_err());
+        let overlay_panicked = self
+            .overlay_handle
+            .take()
+            .is_some_and(|handle| handle.join().is_err());
         info!("worker threads stopped");
+        if hook_panicked {
+            Err(RuntimeProjectionError::WorkerPanicked("hook"))
+        } else if overlay_panicked {
+            Err(RuntimeProjectionError::WorkerPanicked("overlay"))
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -188,10 +173,8 @@ enum RuntimeState {
     ShutDown,
 }
 
-pub struct ThreadRuntime {
+pub(crate) struct ThreadRuntime {
     state: Mutex<RuntimeState>,
-    config_update_lock: Mutex<()>,
-    owns_workers: bool,
 }
 
 impl ThreadRuntime {
@@ -200,39 +183,35 @@ impl ThreadRuntime {
     ///
     /// If `config.enabled` is `false`, the runtime starts in the Disabled
     /// state and no worker threads are created.
-    pub fn start(shared_config: SharedConfig) -> Self {
-        let active = shared_config.active().ok();
-        let initial_state = if active.as_ref().is_some_and(config::ActiveConfig::enabled) {
-            info!("thread runtime starting in enabled mode");
-            RuntimeState::Running(WorkerThreads::spawn(
-                active.expect("enabled active config must exist"),
-            ))
-        } else {
-            info!("thread runtime starting in disabled mode");
-            RuntimeState::Disabled
+    fn start(active: Option<config::ActiveConfig>) -> Result<Self, RuntimeProjectionError> {
+        let initial_state = match active {
+            Some(active) if active.enabled() => {
+                info!("thread runtime starting in enabled mode");
+                RuntimeState::Running(WorkerThreads::spawn(active)?)
+            }
+            _ => {
+                info!("thread runtime starting in disabled mode");
+                RuntimeState::Disabled
+            }
         };
-        Self {
+        Ok(Self {
             state: Mutex::new(initial_state),
-            config_update_lock: Mutex::new(()),
-            owns_workers: true,
-        }
+        })
     }
 
     /// Creates the temporary P03a Settings-side config runtime.
     ///
     /// Settings keeps the existing in-process config commands until P03b but
     /// never starts Engine input or rendering workers.
-    pub fn settings() -> Self {
+    fn settings() -> Self {
         Self {
             state: Mutex::new(RuntimeState::Disabled),
-            config_update_lock: Mutex::new(()),
-            owns_workers: false,
         }
     }
 
     /// Returns `true` if [`ThreadRuntime::shutdown`] has been called,
     /// meaning the application is ready to exit.
-    pub fn should_allow_exit(&self) -> bool {
+    fn should_allow_exit(&self) -> bool {
         match self.state.lock() {
             Ok(state) => matches!(*state, RuntimeState::ShutDown),
             Err(_) => {
@@ -251,105 +230,53 @@ impl ThreadRuntime {
     ///
     /// This method is idempotent — calling it more than once is safe and has
     /// no effect after the first call.
-    pub fn shutdown(&self) {
+    pub(crate) fn shutdown(&self) -> Result<(), RuntimeProjectionError> {
         info!("thread runtime shutdown requested");
-        let _update_guard = match self.config_update_lock.lock() {
-            Ok(guard) => guard,
-            Err(_) => {
-                warn!("config update lock poisoned during shutdown");
-                return;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| RuntimeProjectionError::StatePoisoned)?;
+        let previous = std::mem::replace(&mut *state, RuntimeState::ShutDown);
+        let result = match previous {
+            RuntimeState::Running(mut workers) => workers.shutdown(),
+            RuntimeState::Disabled => {
+                info!("workers already stopped");
+                Ok(())
+            }
+            RuntimeState::ShutDown => {
+                debug!("thread runtime already shut down");
+                Ok(())
             }
         };
-
-        match self.state.lock() {
-            Ok(mut state) => {
-                let prev = std::mem::replace(&mut *state, RuntimeState::ShutDown);
-                match prev {
-                    RuntimeState::Running(mut workers) => workers.shutdown(),
-                    RuntimeState::Disabled => info!("workers already stopped"),
-                    RuntimeState::ShutDown => {
-                        debug!("thread runtime already shut down");
-                    }
-                }
-                info!("thread runtime shut down");
-            }
-            Err(_) => {
-                warn!("thread runtime lock poisoned during shutdown");
-            }
-        }
+        info!("thread runtime shut down");
+        result
     }
 
-    /// Ensures the worker state matches the current `enabled` setting.
-    ///
-    /// * `enabled=true` → (re)starts workers regardless of current state.
-    /// * `enabled=false` → stops workers if running and transitions to
-    ///   `Disabled`.
-    ///
-    /// Returns an error if the runtime has already been shut down.
-    fn apply_worker_state(
-        &self,
-        active: config::ActiveConfig,
-        enabled: bool,
-    ) -> Result<(), String> {
-        if !self.owns_workers {
-            return Ok(());
-        }
+    fn apply_config(&self, active: config::ActiveConfig) -> Result<(), RuntimeProjectionError> {
         let mut state = self
             .state
             .lock()
-            .map_err(|_| "thread runtime lock poisoned".to_string())?;
-
+            .map_err(|_| RuntimeProjectionError::StatePoisoned)?;
         if matches!(*state, RuntimeState::ShutDown) {
-            return Err("thread runtime is already shut down".to_string());
+            return Err(RuntimeProjectionError::RuntimeShutDown);
         }
 
-        if enabled {
-            let was_running = matches!(*state, RuntimeState::Running(_));
-            if was_running {
-                info!("enabled=true: restarting worker threads");
-            } else {
-                info!("enabled=true: starting worker threads");
-            }
-            // Tear down existing workers first so replacement overlay startup
-            // cannot race with the old overlay's Win32 class registration.
-            let prev = std::mem::replace(&mut *state, RuntimeState::Disabled);
-            if let RuntimeState::Running(mut workers) = prev {
-                workers.shutdown();
-            }
-            *state = RuntimeState::Running(WorkerThreads::spawn(active));
-        } else {
-            match &mut *state {
-                RuntimeState::Running(workers) => {
-                    info!("enabled=false: stopping worker threads");
-                    workers.shutdown();
-                    *state = RuntimeState::Disabled;
-                }
-                _ => {
-                    info!("enabled=false: workers already stopped");
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    fn disable_for_config_error(&self) -> Result<(), String> {
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| "thread runtime lock poisoned".to_string())?;
         let previous = std::mem::replace(&mut *state, RuntimeState::Disabled);
-        match previous {
-            RuntimeState::Running(mut workers) => workers.shutdown(),
-            RuntimeState::Disabled => {}
-            RuntimeState::ShutDown => *state = RuntimeState::ShutDown,
+        if let RuntimeState::Running(mut workers) = previous {
+            workers.shutdown()?;
+        }
+        if active.enabled() {
+            *state = RuntimeState::Running(WorkerThreads::spawn(active)?);
         }
         Ok(())
     }
 
     #[cfg(test)]
-    fn is_disabled(&self) -> bool {
-        matches!(*self.state.lock().unwrap(), RuntimeState::Disabled)
+    fn poison_for_test(&self) {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = self.state.lock().unwrap();
+            panic!("poison runtime state for projection test");
+        }));
     }
 }
 
@@ -372,6 +299,15 @@ impl Drop for EngineIpcRuntime {
 enum SettingsEngineState {
     Connected(ipc::EngineControl),
     Unavailable(String),
+}
+
+impl SettingsEngineState {
+    fn control(&self) -> Result<&ipc::EngineControl, String> {
+        match self {
+            Self::Connected(control) => Ok(control),
+            Self::Unavailable(message) => Err(message.clone()),
+        }
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -422,35 +358,6 @@ fn shutdown_engine(
     }
 }
 
-/// Replaces the in-memory config and returns whether workers should restart.
-pub fn replace_live_config(
-    shared_config: &SharedConfig,
-    next: config::ActiveConfig,
-) -> Result<(bool, Option<config::ActiveConfig>), String> {
-    shared_config.replace(next)
-}
-
-/// Restores a previous config after an update failure.
-pub fn rollback_config_update(
-    shared_config: &SharedConfig,
-    runtime: &ThreadRuntime,
-    previous_config: Option<config::ActiveConfig>,
-    error: String,
-    restart_required: bool,
-) -> Result<(), String> {
-    let enabled = previous_config
-        .as_ref()
-        .is_some_and(config::ActiveConfig::enabled);
-    shared_config.restore(previous_config.clone(), error)?;
-
-    if restart_required && enabled && !runtime.should_allow_exit() {
-        if let Some(previous) = previous_config {
-            runtime.apply_worker_state(previous, true)?;
-        }
-    }
-    Ok(())
-}
-
 /// Selects Engine or Settings mode from the executable arguments.
 pub fn run_from_args(arguments: impl IntoIterator<Item = OsString>) -> Result<(), String> {
     match process::select_mode(arguments) {
@@ -497,42 +404,60 @@ fn run_engine() -> Result<(), String> {
                 app.handle().exit(0);
                 return Ok(());
             };
-            let shared_config = match config::load(config_dir_path.as_path()) {
-                Ok(config::LoadResult::Ready(active) | config::LoadResult::Missing(active)) => {
-                    SharedConfig::new(active)
-                }
-                Err(load_error) => {
-                    error!("configuration unavailable; gestures disabled: {load_error}");
-                    SharedConfig::unavailable(load_error.to_string())
-                }
-            };
-
-            app.manage(shared_config.clone());
+            let engine_control = ipc::EngineControl::for_prepared_server(&server);
+            let (config_owner, initial_config) = config::ConfigOwner::startup(&config_dir_path);
+            let enabled = initial_config
+                .as_ref()
+                .is_some_and(config::ActiveConfig::enabled);
+            app.manage(engine_control);
             app.manage(ConfigDir(config_dir_path));
-            app.manage(ThreadRuntime::start(shared_config));
+            let thread_runtime = ThreadRuntime::start(initial_config).map_err(|error| {
+                tauri::Error::Setup((Box::new(error) as Box<dyn std::error::Error>).into())
+            })?;
+            app.manage(thread_runtime);
             app.manage(commands::CaptureState(std::sync::Mutex::new(None)));
-            tray::setup(app)?;
+            tray::setup(app, enabled)?;
 
             let stop = Arc::new(AtomicBool::new(false));
             let server_stop = Arc::clone(&stop);
             let app_handle = app.handle().clone();
             let handle = thread::Builder::new()
                 .name("engine-ipc".to_string())
-                .spawn(move || match server.run(server_stop) {
-                    Ok(ipc::ServerExit::Shutdown) => {
-                        info!("Engine shutdown requested over IPC");
-                        if let Some(runtime) = app_handle.try_state::<ThreadRuntime>() {
-                            runtime.shutdown();
+                .spawn(move || {
+                    let result = server.run(server_stop, config_owner, |active, _generation| {
+                        let runtime = app_handle.try_state::<ThreadRuntime>().ok_or_else(|| {
+                            ipc::ControlError::projection("thread runtime state is unavailable")
+                        })?;
+                        runtime
+                            .apply_config(active.clone())
+                            .map_err(ipc::ControlError::projection)?;
+                        if let Err(error) =
+                            tray::schedule_toggle_menu_label(&app_handle, active.enabled())
+                        {
+                            warn!("failed to schedule tray label reconciliation: {error}");
                         }
-                        app_handle.exit(0);
-                    }
-                    Ok(ipc::ServerExit::Stopped) => {}
-                    Err(error) => {
-                        error!("Engine IPC owner stopped: {error}");
-                        if let Some(runtime) = app_handle.try_state::<ThreadRuntime>() {
-                            runtime.shutdown();
+                        Ok(())
+                    });
+                    match result {
+                        Ok(ipc::ServerExit::Shutdown) => {
+                            info!("Engine shutdown requested over IPC");
+                            if let Some(runtime) = app_handle.try_state::<ThreadRuntime>() {
+                                if let Err(error) = runtime.shutdown() {
+                                    error!("failed to stop Engine workers: {error}");
+                                }
+                            }
+                            app_handle.exit(0);
                         }
-                        app_handle.exit(1);
+                        Ok(ipc::ServerExit::Stopped) => {}
+                        Err(error) => {
+                            error!("Engine IPC owner stopped: {error}");
+                            if let Some(runtime) = app_handle.try_state::<ThreadRuntime>() {
+                                if let Err(error) = runtime.shutdown() {
+                                    error!("failed to stop Engine workers after fatal IPC error: {error}");
+                                }
+                            }
+                            app_handle.exit(1);
+                        }
                     }
                 })
                 .map_err(|error| {
@@ -605,17 +530,7 @@ fn run_settings() -> Result<(), String> {
                     SettingsEngineState::Unavailable(message)
                 }
             };
-            let shared_config = match config::load(config_dir_path.as_path()) {
-                Ok(config::LoadResult::Ready(active) | config::LoadResult::Missing(active)) => {
-                    SharedConfig::new(active)
-                }
-                Err(load_error) => {
-                    error!("configuration unavailable in Settings: {load_error}");
-                    SharedConfig::unavailable(load_error.to_string())
-                }
-            };
             app.manage(engine);
-            app.manage(shared_config);
             app.manage(ConfigDir(config_dir_path));
             app.manage(ThreadRuntime::settings());
             app.manage(commands::CaptureState(std::sync::Mutex::new(None)));
@@ -641,7 +556,7 @@ fn run_settings() -> Result<(), String> {
     app.run(|app, event| {
         if let tauri::RunEvent::ExitRequested { .. } = event {
             if let Some(runtime) = app.try_state::<ThreadRuntime>() {
-                runtime.shutdown();
+                let _ = runtime.shutdown();
             }
         }
     });
@@ -653,18 +568,90 @@ mod tests {
     use super::*;
 
     #[test]
-    fn replace_live_config_updates_shared_state() {
-        let current =
-            config::ActiveConfig::from_document(config::ConfigDocument::default()).unwrap();
-        let shared = SharedConfig::new(current.clone());
-        let mut document = config::ConfigDocument::default();
-        document.shared.appearance.trail_thickness = 6.0;
-        let next = config::ActiveConfig::from_document(document.clone()).unwrap();
+    fn thread_runtime_applies_committed_config_to_real_worker_lifecycle() {
+        let mut initial = config::ConfigDocument::default();
+        initial.shared.enabled = false;
+        let runtime =
+            ThreadRuntime::start(Some(config::ActiveConfig::from_document(initial).unwrap()))
+                .unwrap();
 
-        let (restart_required, previous_config) =
-            replace_live_config(&shared, next.clone()).unwrap();
-        assert!(restart_required);
-        assert_eq!(previous_config.unwrap().document(), current.document());
-        assert_eq!(shared.document().unwrap(), document);
+        let mut changed = config::ConfigDocument::default();
+        changed.shared.enabled = true;
+        changed.shared.appearance.trail_thickness = 7.0;
+        match &mut changed.bindings[0] {
+            config::BindingRecord::Shared(binding)
+            | config::BindingRecord::Windows(binding)
+            | config::BindingRecord::Macos(binding) => {
+                binding.label = Some("runtime-projection".to_string());
+            }
+        }
+        runtime
+            .apply_config(config::ActiveConfig::from_document(changed.clone()).unwrap())
+            .unwrap();
+
+        {
+            let state = runtime.state.lock().unwrap();
+            let RuntimeState::Running(workers) = &*state else {
+                panic!("enabled config must start the real worker pair");
+            };
+            assert_eq!(workers.projected_document.as_ref(), &changed);
+        }
+
+        let mut disabled = changed;
+        disabled.shared.enabled = false;
+        runtime
+            .apply_config(config::ActiveConfig::from_document(disabled).unwrap())
+            .unwrap();
+        assert!(matches!(
+            *runtime.state.lock().unwrap(),
+            RuntimeState::Disabled
+        ));
+        runtime.shutdown().unwrap();
+    }
+
+    #[test]
+    fn thread_runtime_poison_is_a_typed_projection_failure() {
+        let runtime = ThreadRuntime::settings();
+        runtime.poison_for_test();
+
+        let error = runtime
+            .apply_config(
+                config::ActiveConfig::from_document(config::ConfigDocument::default()).unwrap(),
+            )
+            .unwrap_err();
+        assert!(matches!(error, RuntimeProjectionError::StatePoisoned));
+    }
+
+    #[test]
+    fn thread_runtime_worker_stop_failure_is_typed() {
+        let (hook_control_tx, _) = crossbeam_channel::unbounded();
+        let (overlay_tx, overlay_rx) = crossbeam_channel::unbounded();
+        let runtime = ThreadRuntime {
+            state: Mutex::new(RuntimeState::Running(WorkerThreads {
+                hook_control_tx,
+                hook_thread_tid: Arc::new(AtomicU32::new(0)),
+                overlay_tx,
+                hook_handle: Some(thread::spawn(|| panic!("injected hook worker failure"))),
+                overlay_handle: Some(thread::spawn(move || {
+                    let _ = overlay_rx.recv();
+                })),
+                projected_document: Box::new(config::ConfigDocument::default()),
+            })),
+        };
+        let mut disabled = config::ConfigDocument::default();
+        disabled.shared.enabled = false;
+
+        let error = runtime
+            .apply_config(config::ActiveConfig::from_document(disabled).unwrap())
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            RuntimeProjectionError::WorkerPanicked("hook")
+        ));
+        assert!(matches!(
+            *runtime.state.lock().unwrap(),
+            RuntimeState::Disabled
+        ));
     }
 }

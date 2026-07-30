@@ -4,7 +4,8 @@ import { Download, FolderOpen, Upload } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel"
-import { exportConfig, importConfig, openConfigDir } from "@/lib/api"
+import { useConfig, useImportConfig } from "@/hooks/use-config"
+import { exportConfig, openConfigDir } from "@/lib/api"
 
 export const Route = createFileRoute("/advanced/")({
   component: AdvancedSettings,
@@ -15,6 +16,9 @@ export const Route = createFileRoute("/advanced/")({
  * Displays advanced configuration options for power users
  */
 function AdvancedSettings() {
+  const { data: observed } = useConfig()
+  const { mutateAsync: importConfig } = useImportConfig()
+
   const handleImportConfig = async () => {
     try {
       const filePath = await open({
@@ -28,7 +32,10 @@ function AdvancedSettings() {
       })
 
       if (filePath) {
-        await importConfig(filePath)
+        await importConfig({
+          filePath,
+          expectedRevision: observed.revision,
+        })
         toast.success("Config imported successfully")
       }
     } catch (error) {
