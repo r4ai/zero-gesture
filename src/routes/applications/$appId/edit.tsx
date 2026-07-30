@@ -36,7 +36,13 @@ import {
   startWindowCapture,
   stopWindowCapture,
 } from "@/lib/api"
-import type { MatchMethod, MatchTarget } from "@/types/config"
+import {
+  getWindowsApplication,
+  type MatchMethod,
+  removeWindowsApplication,
+  replaceWindowsApplication,
+  type WindowsMatchTarget,
+} from "@/types/config"
 
 export const Route = createFileRoute("/applications/$appId/edit")({
   validateSearch: (
@@ -60,11 +66,11 @@ type MatchCondition = {
   value: string
 }
 
-function toMatcherTarget(field: MatchCondition["field"]): MatchTarget {
+function toMatcherTarget(field: MatchCondition["field"]): WindowsMatchTarget {
   return field === "window_title" ? "title" : field
 }
 
-function toConditionField(target: MatchTarget): MatchCondition["field"] {
+function toConditionField(target: WindowsMatchTarget): MatchCondition["field"] {
   return target === "title" ? "window_title" : target
 }
 
@@ -74,7 +80,7 @@ function useApplication() {
   const navigate = useNavigate()
 
   const isDefaultApp = appId === "default"
-  const app = isDefaultApp ? undefined : draft.apps[appId]
+  const app = isDefaultApp ? undefined : getWindowsApplication(draft, appId)
   const appName = isDefaultApp ? "default" : (app?.label ?? "")
   const conditions: MatchCondition[] = isDefaultApp
     ? []
@@ -87,31 +93,23 @@ function useApplication() {
 
   const setConditions = (nextConditions: MatchCondition[]) => {
     if (isDefaultApp) return
-    setDraft({
-      ...draft,
-      apps: {
-        ...draft.apps,
-        [appId]: {
-          ...app,
-          matchers: nextConditions.map((c) => ({
-            target: toMatcherTarget(c.field),
-            method: c.method,
-            value: c.value,
-          })),
-        },
-      },
-    })
+    if (!app) return
+    setDraft(
+      replaceWindowsApplication(draft, {
+        ...app,
+        matchers: nextConditions.map((c) => ({
+          target: toMatcherTarget(c.field),
+          method: c.method,
+          value: c.value,
+        })),
+      }),
+    )
   }
 
   const setAppName = (name: string) => {
     if (isDefaultApp) return
-    setDraft({
-      ...draft,
-      apps: {
-        ...draft.apps,
-        [appId]: { ...app, matchers: app?.matchers ?? [], label: name },
-      },
-    })
+    if (!app) return
+    setDraft(replaceWindowsApplication(draft, { ...app, label: name }))
   }
 
   const addCondition = (condition: Omit<MatchCondition, "id">) => {
@@ -134,15 +132,7 @@ function useApplication() {
 
   const deleteApp = () => {
     if (isDefaultApp) return
-    setDraft({
-      ...draft,
-      apps: Object.fromEntries(
-        Object.entries(draft.apps).filter(([id]) => id !== appId),
-      ),
-      bindings: Object.fromEntries(
-        Object.entries(draft.bindings).filter(([id]) => id !== appId),
-      ),
-    })
+    setDraft(removeWindowsApplication(draft, appId))
     navigate({ to: "/applications" })
   }
 

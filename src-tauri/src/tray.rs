@@ -48,7 +48,10 @@ fn toggle_label(enabled: bool) -> &'static str {
 pub fn setup<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
     let enabled = {
         let shared = app.state::<crate::SharedConfig>();
-        shared.0.read().map(|c| c.enabled).unwrap_or(true)
+        shared
+            .active()
+            .map(|active| active.enabled())
+            .unwrap_or(false)
     };
 
     let toggle_item = MenuItem::with_id(
@@ -108,15 +111,14 @@ fn handle_toggle<R: Runtime>(app: &AppHandle<R>) {
 
     // Read the current enabled state and build a toggled config.
     let new_config = {
-        let current = match shared_config.0.read() {
-            Ok(c) => c,
-            Err(_) => {
-                warn!("shared config lock poisoned in toggle handler");
+        let mut next = match shared_config.document() {
+            Ok(document) => document,
+            Err(error) => {
+                warn!("configuration unavailable in toggle handler: {error}");
                 return;
             }
         };
-        let mut next = current.clone();
-        next.enabled = !next.enabled;
+        next.shared.enabled = !next.shared.enabled;
         next
     };
 

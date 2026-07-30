@@ -31,8 +31,7 @@ use crate::domain::{
 use crate::executor;
 use crate::overlay::OverlayCommand;
 
-use super::app_match::match_app;
-use super::{HookConfig, HookControl};
+use super::HookControl;
 
 /// Custom message used to replay trigger-button operation outside hook callback.
 ///
@@ -55,7 +54,7 @@ struct HookThreadState {
     /// Portable gesture recognition and session decisions.
     machine: GestureMachine,
     /// Windows application matchers used before a gesture starts.
-    apps: Vec<super::app_match::CompiledApp>,
+    runtime: Arc<crate::config::RuntimeConfig>,
     /// Channel to the overlay thread.
     overlay_tx: Sender<OverlayCommand>,
     /// Deferred trigger-button replay request from hook callback.
@@ -85,14 +84,14 @@ thread_local! {
 /// Uses Win32 FFI (`unsafe`) and must keep callback/message-loop thread
 /// affinity intact.
 pub(super) fn run_loop_win32(
-    hook_config: HookConfig,
+    runtime: Arc<crate::config::RuntimeConfig>,
     overlay_tx: Sender<OverlayCommand>,
     tid_arc: Arc<AtomicU32>,
     control_rx: Receiver<HookControl>,
 ) {
     unsafe {
-        let safety_timeout_ms = hook_config.gesture.safety_timeout_ms;
-        let HookConfig { apps, gesture } = hook_config;
+        let safety_timeout_ms = runtime.gesture.safety_timeout_ms;
+        let gesture = runtime.gesture.clone();
 
         let tid = GetCurrentThreadId();
         tid_arc.store(tid, Ordering::Release);
@@ -114,7 +113,7 @@ pub(super) fn run_loop_win32(
         HOOK_STATE.with(|cell| {
             *cell.borrow_mut() = Some(HookThreadState {
                 machine: GestureMachine::new(gesture),
-                apps,
+                runtime,
                 overlay_tx,
                 pending_replay: None,
                 pending_actions: VecDeque::new(),
@@ -229,7 +228,9 @@ fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> b
                 crate::window_info::get_foreground_window_info()
             };
             debug!("window info: {:?}", window_info);
-            match_app(&hs.apps, &window_info).map(str::to_owned)
+            hs.runtime
+                .match_windows_app(&window_info)
+                .map(str::to_owned)
         }
         _ => None,
     };

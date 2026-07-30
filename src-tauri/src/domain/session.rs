@@ -156,13 +156,12 @@ impl GestureConfig {
 
     fn matched_binding_set(&self, matched_app: Option<&str>) -> Option<&AppBindingSet> {
         matched_app
-            .filter(|app_id| *app_id != crate::config::AppConfig::DEFAULT_APP_ID)
+            .filter(|app_id| *app_id != crate::config::DEFAULT_APP_ID)
             .and_then(|app_id| self.binding_sets.get(app_id))
     }
 
     fn default_binding_set(&self) -> Option<&AppBindingSet> {
-        self.binding_sets
-            .get(crate::config::AppConfig::DEFAULT_APP_ID)
+        self.binding_sets.get(crate::config::DEFAULT_APP_ID)
     }
 }
 
@@ -645,7 +644,7 @@ mod tests {
             replay_distance_threshold_px: 8,
             max_gesture_steps: 8,
             binding_sets: HashMap::from([(
-                crate::config::AppConfig::DEFAULT_APP_ID.to_string(),
+                crate::config::DEFAULT_APP_ID.to_string(),
                 AppBindingSet {
                     release_bindings,
                     hold_bindings,

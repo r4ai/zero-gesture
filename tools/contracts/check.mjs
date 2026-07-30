@@ -67,9 +67,11 @@ function rustTestPattern(name) {
 }
 
 function cargoTestName(contractCase) {
-  const moduleName = contractCase.evidence_file
-    .slice("src-tauri/src/".length, -".rs".length)
-    .replaceAll("/", "::")
+  const sourceModule = contractCase.evidence_file.slice(
+    "src-tauri/src/".length,
+    -".rs".length,
+  )
+  const moduleName = sourceModule.replace(/\/mod$/, "").replaceAll("/", "::")
   return `${moduleName}::tests::${contractCase.evidence_name}: test`
 }
 
@@ -104,8 +106,8 @@ export function validateManifest(manifest, repoRoot = REPO_ROOT, cargoList) {
     for (const field of CASE_FIELDS) {
       requireNonemptyString(contractCase[field], `${location}.${field}`)
     }
-    if (!/^P02-WIN-\d{3}$/.test(contractCase.id)) {
-      fail(`${location}.id must match P02-WIN-NNN`)
+    if (!/^P02-(?:WIN|CONFIG)-\d{3}$/.test(contractCase.id)) {
+      fail(`${location}.id must match P02-WIN-NNN or P02-CONFIG-NNN`)
     }
     if (ids.has(contractCase.id)) {
       fail(`duplicate contract id: ${contractCase.id}`)
@@ -181,7 +183,7 @@ function main() {
     REPO_ROOT,
     cargoList,
   )
-  console.log(`Validated ${count} P02 Windows contract cases.`)
+  console.log(`Validated ${count} P02 contract cases.`)
 }
 
 if (

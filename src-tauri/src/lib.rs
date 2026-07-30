@@ -13,39 +13,77 @@ pub mod window_info;
 use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicU32, Ordering},
-    Arc, Mutex, RwLock, RwLockWriteGuard,
+    Arc, Mutex, RwLock,
 };
 use std::thread::JoinHandle;
 
 use crossbeam_channel::Sender;
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
 use tauri::Manager;
 
-/// Thread-safe, clonable handle to the application configuration.
-///
-/// Wraps [`config::AppConfig`] in `Arc<RwLock<…>>` so that it can be shared
-/// across threads (e.g. the hook thread and the UI thread).
-///
-/// # Examples
-///
-/// ```
-/// use zero_gesture_lib::SharedConfig;
-/// use zero_gesture_lib::config::AppConfig;
-///
-/// let shared = SharedConfig::new(AppConfig::default());
-/// let cloned = shared.clone();
-///
-/// // Read the config from another handle.
-/// let config = cloned.0.read().unwrap();
-/// assert!(config.bindings.contains_key("default"));
-/// ```
+enum ConfigState {
+    Active(Box<config::ActiveConfig>),
+    Unavailable(String),
+}
+
+/// Thread-safe handle to the canonical document and its compiled snapshot.
 #[derive(Clone)]
-pub struct SharedConfig(pub Arc<RwLock<config::AppConfig>>);
+pub struct SharedConfig(Arc<RwLock<ConfigState>>);
 
 impl SharedConfig {
-    /// Creates a new [`SharedConfig`] from the given [`config::AppConfig`].
-    pub fn new(config: config::AppConfig) -> Self {
-        Self(Arc::new(RwLock::new(config)))
+    pub fn new(config: config::ActiveConfig) -> Self {
+        Self(Arc::new(RwLock::new(ConfigState::Active(Box::new(config)))))
+    }
+
+    pub fn unavailable(error: impl Into<String>) -> Self {
+        Self(Arc::new(RwLock::new(ConfigState::Unavailable(
+            error.into(),
+        ))))
+    }
+
+    pub fn active(&self) -> Result<config::ActiveConfig, String> {
+        match &*self
+            .0
+            .read()
+            .map_err(|_| "shared config lock poisoned".to_string())?
+        {
+            ConfigState::Active(active) => Ok(active.as_ref().clone()),
+            ConfigState::Unavailable(error) => Err(error.clone()),
+        }
+    }
+
+    pub fn document(&self) -> Result<config::ConfigDocument, String> {
+        self.active().map(|active| active.document().clone())
+    }
+
+    fn replace(
+        &self,
+        next: config::ActiveConfig,
+    ) -> Result<(bool, Option<config::ActiveConfig>), String> {
+        let mut state = self
+            .0
+            .write()
+            .map_err(|_| "shared config lock poisoned".to_string())?;
+        let previous = match &*state {
+            ConfigState::Active(active) => Some(active.as_ref().clone()),
+            ConfigState::Unavailable(_) => None,
+        };
+        let restart_required = previous
+            .as_ref()
+            .is_none_or(|active| active.document() != next.document());
+        *state = ConfigState::Active(Box::new(next));
+        Ok((restart_required, previous))
+    }
+
+    fn restore(&self, previous: Option<config::ActiveConfig>, error: String) -> Result<(), String> {
+        let mut state = self
+            .0
+            .write()
+            .map_err(|_| "shared config lock poisoned".to_string())?;
+        *state = previous.map_or(ConfigState::Unavailable(error), |active| {
+            ConfigState::Active(Box::new(active))
+        });
+        Ok(())
     }
 }
 
@@ -54,7 +92,7 @@ impl SharedConfig {
 pub struct ConfigDir(pub PathBuf);
 
 impl ConfigDir {
-    fn as_path(&self) -> &Path {
+    pub(crate) fn as_path(&self) -> &Path {
         self.0.as_path()
     }
 }
@@ -75,11 +113,12 @@ struct WorkerThreads {
 
 impl WorkerThreads {
     /// Spawns the hook and overlay threads from the current shared config.
-    fn spawn(shared_config: SharedConfig) -> Self {
+    fn spawn(active: config::ActiveConfig) -> Self {
         info!("starting worker threads");
-        let (overlay_tx, overlay_handle) = overlay::spawn(shared_config.clone());
+        let runtime = active.runtime();
+        let (overlay_tx, overlay_handle) = overlay::spawn(runtime.clone());
         let (hook_control_tx, hook_thread_tid, hook_handle) =
-            hook::spawn(shared_config, overlay_tx.clone());
+            hook::spawn(runtime, overlay_tx.clone());
         info!("worker threads started");
 
         Self {
@@ -144,10 +183,12 @@ impl ThreadRuntime {
     /// If `config.enabled` is `false`, the runtime starts in the Disabled
     /// state and no worker threads are created.
     pub fn start(shared_config: SharedConfig) -> Self {
-        let enabled = shared_config.0.read().map(|c| c.enabled).unwrap_or(true);
-        let initial_state = if enabled {
+        let active = shared_config.active().ok();
+        let initial_state = if active.as_ref().is_some_and(config::ActiveConfig::enabled) {
             info!("thread runtime starting in enabled mode");
-            RuntimeState::Running(WorkerThreads::spawn(shared_config))
+            RuntimeState::Running(WorkerThreads::spawn(
+                active.expect("enabled active config must exist"),
+            ))
         } else {
             info!("thread runtime starting in disabled mode");
             RuntimeState::Disabled
@@ -214,7 +255,11 @@ impl ThreadRuntime {
     ///   `Disabled`.
     ///
     /// Returns an error if the runtime has already been shut down.
-    fn apply_worker_state(&self, shared_config: SharedConfig, enabled: bool) -> Result<(), String> {
+    fn apply_worker_state(
+        &self,
+        active: config::ActiveConfig,
+        enabled: bool,
+    ) -> Result<(), String> {
         let mut state = self
             .state
             .lock()
@@ -237,7 +282,7 @@ impl ThreadRuntime {
             if let RuntimeState::Running(mut workers) = prev {
                 workers.shutdown();
             }
-            *state = RuntimeState::Running(WorkerThreads::spawn(shared_config));
+            *state = RuntimeState::Running(WorkerThreads::spawn(active));
         } else {
             match &mut *state {
                 RuntimeState::Running(workers) => {
@@ -258,35 +303,32 @@ impl ThreadRuntime {
 /// Replaces the in-memory config and returns whether workers should restart.
 pub fn replace_live_config(
     shared_config: &SharedConfig,
-    next: config::AppConfig,
-) -> Result<(bool, config::AppConfig), String> {
-    let mut current: RwLockWriteGuard<'_, config::AppConfig> = shared_config
-        .0
-        .write()
-        .map_err(|_| "shared config lock poisoned".to_string())?;
-
-    let previous = current.clone();
-    let restart_required = previous != next;
-    *current = next;
-    Ok((restart_required, previous))
+    next: config::ActiveConfig,
+) -> Result<(bool, Option<config::ActiveConfig>), String> {
+    shared_config.replace(next)
 }
 
 /// Restores a previous config after an update failure.
 pub fn rollback_config_update(
     shared_config: &SharedConfig,
     runtime: &ThreadRuntime,
-    previous_config: config::AppConfig,
+    previous_config: Option<config::ActiveConfig>,
+    error: String,
     restart_required: bool,
 ) {
-    let enabled = previous_config.enabled;
-    if let Err(err) = replace_live_config(shared_config, previous_config) {
+    let enabled = previous_config
+        .as_ref()
+        .is_some_and(config::ActiveConfig::enabled);
+    if let Err(err) = shared_config.restore(previous_config.clone(), error) {
         warn!("failed to roll back in-memory config after update failure: {err}");
         return;
     }
 
-    if restart_required && !runtime.should_allow_exit() {
-        if let Err(err) = runtime.apply_worker_state(shared_config.clone(), enabled) {
-            warn!("failed to roll back worker threads after update failure: {err}");
+    if restart_required && enabled && !runtime.should_allow_exit() {
+        if let Some(previous) = previous_config {
+            if let Err(err) = runtime.apply_worker_state(previous, true) {
+                warn!("failed to roll back worker threads after update failure: {err}");
+            }
         }
     }
 }
@@ -305,8 +347,15 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
             let config_dir_path = app.path().app_config_dir()?;
-            let shared_config =
-                SharedConfig::new(config::load_or_default(config_dir_path.as_path()));
+            let shared_config = match config::load(config_dir_path.as_path()) {
+                Ok(config::LoadResult::Ready(active) | config::LoadResult::Missing(active)) => {
+                    SharedConfig::new(active)
+                }
+                Err(load_error) => {
+                    error!("configuration unavailable; gestures disabled: {load_error}");
+                    SharedConfig::unavailable(load_error.to_string())
+                }
+            };
 
             app.manage(shared_config.clone());
             app.manage(ConfigDir(config_dir_path));
@@ -346,19 +395,17 @@ mod tests {
 
     #[test]
     fn replace_live_config_updates_shared_state() {
-        let shared = SharedConfig::new(config::AppConfig::default());
-
-        let next = config::AppConfig {
-            trail_thickness: 6.0,
-            ..config::AppConfig::default()
-        };
+        let current =
+            config::ActiveConfig::from_document(config::ConfigDocument::default()).unwrap();
+        let shared = SharedConfig::new(current.clone());
+        let mut document = config::ConfigDocument::default();
+        document.shared.appearance.trail_thickness = 6.0;
+        let next = config::ActiveConfig::from_document(document.clone()).unwrap();
 
         let (restart_required, previous_config) =
             replace_live_config(&shared, next.clone()).unwrap();
         assert!(restart_required);
-        assert_eq!(previous_config, config::AppConfig::default());
-
-        let current = shared.0.read().unwrap().clone();
-        assert_eq!(current, next);
+        assert_eq!(previous_config.unwrap().document(), current.document());
+        assert_eq!(shared.document().unwrap(), document);
     }
 }

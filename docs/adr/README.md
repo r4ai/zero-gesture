@@ -13,6 +13,7 @@ ADRは実装の詳細設計ではなく、後続PRが守る外部契約、不変
 | [0006](./0006-reproducible-static-quality-kpis.md) | Accepted | P01を分割し、canonical CIで再現可能な静的quality/KPIを先に測定する |
 | [0007](./0007-p02-characterization-baseline.md) | Accepted | P02直前に現行Windowsのportable化対象だけを実行可能なcharacterization baselineとして固定する |
 | [0008](./0008-portable-gesture-decision-core.md) | Accepted | gesture認識とsession判断を一つのportable moduleへ移し、Windowsを唯一のcallerとして切り替える |
+| [0009](./0009-config-schema-v2-migration-and-compile.md) | Accepted | strict schema v2、legacy分類移行、非破壊upgrade、immutable Windows compileを固定する |
 
 ## Reading order
 
@@ -21,6 +22,7 @@ ADR 0003はdomainとplatformの境界、ADR 0004はprocess間の契約と永続�
 ADR 0006はADR 0005の契約を再定義せず、P01aの静的測定範囲と後続P01b/P01cへの分割を定める。
 ADR 0007はP01bをP02の直前に必要な実行可能characterizationへ限定し、全project contract inventoryとの境界を定める。
 ADR 0008はP02aで実装したportable gesture moduleの所有権、interface、Windows effect適用境界を記録する。
+ADR 0009はP02bで実装したconfig document、legacy migration、現在利用可能な永続化、Windows compile seamを記録する。
 
 ## Status policy
 

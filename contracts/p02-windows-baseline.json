@@ -81,14 +81,14 @@
       "id": "P02-WIN-012",
       "obligation": "A valid current release binding preserves its ordered sequence when deserialized.",
       "runner": "cargo-test",
-      "evidence_file": "src-tauri/src/config.rs",
+      "evidence_file": "src-tauri/src/config/document.rs",
       "evidence_name": "deserialize_config_with_sequence_bindings"
     },
     {
       "id": "P02-WIN-013",
       "obligation": "A valid current hold binding preserves its wheel step when deserialized.",
       "runner": "cargo-test",
-      "evidence_file": "src-tauri/src/config.rs",
+      "evidence_file": "src-tauri/src/config/document.rs",
       "evidence_name": "deserialize_config_with_hold_binding"
     },
     {
@@ -102,8 +102,78 @@
       "id": "P02-WIN-015",
       "obligation": "A current configuration explicitly deserializes the disabled state.",
       "runner": "cargo-test",
-      "evidence_file": "src-tauri/src/config.rs",
+      "evidence_file": "src-tauri/src/config/document.rs",
       "evidence_name": "deserialize_json_with_enabled_false"
+    },
+    {
+      "id": "P02-CONFIG-001",
+      "obligation": "A portable legacy application and binding migrate to whole Shared records.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/document.rs",
+      "evidence_name": "migrates_portable_v1_records_to_shared"
+    },
+    {
+      "id": "P02-CONFIG-002",
+      "obligation": "A Windows matcher, physical key, or Windows application reference classifies the whole legacy record as Windows.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/document.rs",
+      "evidence_name": "migrates_windows_matcher_key_and_reference_as_whole_records"
+    },
+    {
+      "id": "P02-CONFIG-003",
+      "obligation": "Legacy ctrl migrates to physical Ctrl rather than logical primary.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/document.rs",
+      "evidence_name": "migration_preserves_physical_ctrl"
+    },
+    {
+      "id": "P02-CONFIG-004",
+      "obligation": "Legacy migration preserves application IDs, binding IDs, binding order, and application references.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/document.rs",
+      "evidence_name": "migration_preserves_ids_order_and_references"
+    },
+    {
+      "id": "P02-CONFIG-005",
+      "obligation": "Windows compilation selects Shared and Windows records in document order and excludes Macos records.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/compile.rs",
+      "evidence_name": "compile_filters_variants_without_reordering_selected_records"
+    },
+    {
+      "id": "P02-CONFIG-006",
+      "obligation": "A missing Windows appearance override inherits shared appearance and a present override replaces the whole field.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/compile.rs",
+      "evidence_name": "platform_appearance_override_replaces_the_whole_field"
+    },
+    {
+      "id": "P02-CONFIG-007",
+      "obligation": "Unknown v2 fields and newer schema versions are rejected without fallback.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/document.rs",
+      "evidence_name": "rejects_unknown_and_newer_schema_without_fallback"
+    },
+    {
+      "id": "P02-CONFIG-008",
+      "obligation": "Unsupported selectors, keys, and application references report their exact field paths.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/document.rs",
+      "evidence_name": "validation_errors_name_exact_selector_key_and_reference_paths"
+    },
+    {
+      "id": "P02-CONFIG-009",
+      "obligation": "A failed existing-config migration leaves the original active file bytes untouched.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/mod.rs",
+      "evidence_name": "failed_migration_keeps_original_file_bytes_untouched"
+    },
+    {
+      "id": "P02-CONFIG-010",
+      "obligation": "A successful existing-config migration writes an exact same-directory backup before replacing the active file with v2.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/mod.rs",
+      "evidence_name": "successful_migration_backs_up_then_atomically_replaces_active_file"
     }
   ]
 }

@@ -37,8 +37,13 @@ function GeneralSettings() {
               </span>
             </div>
             <Switch
-              isSelected={draft.enabled}
-              onChange={(enabled) => setDraft({ ...draft, enabled })}
+              isSelected={draft.shared.enabled}
+              onChange={(enabled) =>
+                setDraft({
+                  ...draft,
+                  shared: { ...draft.shared, enabled },
+                })
+              }
             />
           </div>
         </div>

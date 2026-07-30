@@ -8,7 +8,10 @@
 
 use std::cmp::Ordering;
 
-use crate::config::{AppConfig, GestureStep};
+use crate::config::{
+    GestureStep, DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX, DEFAULT_DIRECTION_SWITCH_CONFIRM_PX,
+    DEFAULT_MIN_SEGMENT_PX, MAX_GESTURE_STEPS,
+};
 
 /// Internal movement direction used while sampling mouse points.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -292,10 +295,10 @@ impl GestureRecognizer {
 impl Default for GestureRecognizer {
     fn default() -> Self {
         Self::new(
-            AppConfig::DEFAULT_MIN_SEGMENT_PX,
-            AppConfig::DEFAULT_DIRECTION_SWITCH_CONFIRM_PX,
-            AppConfig::DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX,
-            AppConfig::MAX_GESTURE_STEPS,
+            DEFAULT_MIN_SEGMENT_PX,
+            DEFAULT_DIRECTION_SWITCH_CONFIRM_PX,
+            DEFAULT_AXIS_AMBIGUITY_DEADZONE_PX,
+            MAX_GESTURE_STEPS,
         )
     }
 }
