@@ -73,7 +73,9 @@ pub fn setup<R: Runtime>(app: &mut App<R>, enabled: bool) -> tauri::Result<()> {
             }
             MENU_QUIT => {
                 let runtime = app.state::<crate::ThreadRuntime>();
-                runtime.shutdown();
+                if let Err(error) = runtime.shutdown() {
+                    warn!("failed to stop Engine workers: {error}");
+                }
                 app.exit(0);
             }
             _ => {}
@@ -123,18 +125,55 @@ fn handle_toggle<R: Runtime>(app: &AppHandle<R>) {
     };
     new_config.shared.enabled = !new_config.shared.enabled;
 
-    if let Err(err) = control.apply_config(new_config, current.revision) {
-        warn!("failed to toggle gestures: {err}");
+    match control.apply_config(new_config, current.revision) {
+        Ok(applied) => {
+            if let Some(config) = applied.current.config {
+                sync_toggle_menu_label(app, config.shared.enabled);
+            }
+        }
+        Err(error) => {
+            warn!("failed to toggle gestures: {error}");
+        }
     }
 }
 
 /// Synchronizes tray toggle menu text with the current enabled state.
-pub fn sync_toggle_menu_label<R: Runtime>(app: &AppHandle<R>, enabled: bool) {
+fn sync_toggle_menu_label<R: Runtime>(app: &AppHandle<R>, enabled: bool) {
     if let Some(toggle_item) = app.try_state::<TrayToggleMenuItem<R>>() {
         let _ = toggle_item.0.set_text(toggle_label(enabled));
     } else {
         warn!("tray toggle menu item is not available to sync label");
     }
+}
+
+type MainThreadTask = Box<dyn FnOnce() + Send + 'static>;
+
+fn schedule_toggle_menu_label_with<E>(
+    enabled: bool,
+    reconcile: impl FnOnce(bool) + Send + 'static,
+    schedule: impl FnOnce(MainThreadTask) -> Result<(), E>,
+) -> Result<(), E> {
+    schedule(Box::new(move || {
+        reconcile(enabled);
+    }))
+}
+
+/// Queues tray reconciliation without waiting for Tauri's main thread.
+///
+/// The Engine IPC owner uses this after worker projection and before returning
+/// Applied. The queued task may call the synchronous menu API only after the
+/// owner callback has returned.
+pub(crate) fn schedule_toggle_menu_label<R: Runtime>(
+    app: &AppHandle<R>,
+    enabled: bool,
+) -> tauri::Result<()> {
+    let app = app.clone();
+    let scheduler = app.clone();
+    schedule_toggle_menu_label_with(
+        enabled,
+        move |enabled| sync_toggle_menu_label(&app, enabled),
+        move |task| scheduler.run_on_main_thread(task),
+    )
 }
 
 /// Opens the settings webview window, or brings it to the foreground if it
@@ -162,4 +201,82 @@ pub fn show_settings_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()>
     window.show()?;
     window.set_focus()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{self, ConfigOwner};
+    use std::sync::{mpsc, Arc, Mutex};
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn tray_originated_commit_returns_applied_before_label_reconciliation() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut owner, _) = ConfigOwner::startup(directory.path());
+        let (revision, _, _) = owner.current_bytes(Instant::now()).unwrap();
+        let mut document = config::ConfigDocument::default();
+        document.shared.enabled = false;
+        let bytes = serde_json::to_vec(&document).unwrap();
+        let label = Arc::new(Mutex::new(toggle_label(true)));
+        let reconcile_label = Arc::clone(&label);
+        let (task_tx, task_rx) = mpsc::sync_channel(1);
+        let (applied_tx, applied_rx) = mpsc::sync_channel(1);
+
+        let worker = thread::spawn(move || {
+            let prepared = owner.prepare(1, revision, &bytes, Instant::now()).unwrap();
+            let applied = owner
+                .commit(
+                    1,
+                    prepared.token,
+                    prepared.base_revision,
+                    prepared.base_generation,
+                    Instant::now(),
+                )
+                .unwrap();
+            schedule_toggle_menu_label_with(
+                false,
+                move |enabled| {
+                    *reconcile_label.lock().unwrap() = toggle_label(enabled);
+                },
+                move |task| {
+                    task_tx.send(task).unwrap();
+                    Ok::<(), ()>(())
+                },
+            )
+            .unwrap();
+            applied_tx.send(applied).unwrap();
+        });
+
+        let applied = applied_rx.recv_timeout(Duration::from_millis(500)).unwrap();
+        assert_eq!((applied.revision, applied.generation), (2, 2));
+        assert_eq!(*label.lock().unwrap(), toggle_label(true));
+        task_rx.recv_timeout(Duration::from_millis(500)).unwrap()();
+        assert_eq!(*label.lock().unwrap(), toggle_label(false));
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn settings_originated_applied_eventually_reconciles_tray_label() {
+        let label = Arc::new(Mutex::new(toggle_label(false)));
+        let reconcile_label = Arc::clone(&label);
+        let (task_tx, task_rx) = mpsc::sync_channel(1);
+
+        schedule_toggle_menu_label_with(
+            true,
+            move |enabled| {
+                *reconcile_label.lock().unwrap() = toggle_label(enabled);
+            },
+            move |task| {
+                task_tx.send(task).unwrap();
+                Ok::<(), ()>(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(*label.lock().unwrap(), toggle_label(false));
+        task_rx.recv_timeout(Duration::from_millis(500)).unwrap()();
+        assert_eq!(*label.lock().unwrap(), toggle_label(true));
+    }
 }

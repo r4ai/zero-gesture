@@ -68,9 +68,10 @@ runtime telemetry, or update behavior.
 The P02 manifest keeps its 36 existing Windows/config obligations and adds 18
 independent Input kernel obligations.
 The current P02 manifest contains `O = 52`, `O_v = 52`, and `U = 0`.
-Two config-owner transaction obligations added after this ADR were moved to
-the P03b manifest so cross-phase evidence is not counted twice.
-All 54 entries name one runnable Rust test.
+Two config-owner recovery obligations added after this ADR were moved to
+unique post-commit projection-failure evidence in the P03b manifest so
+cross-phase evidence is not counted twice.
+All 52 entries name one runnable Rust test.
 
 ## Consequences
 

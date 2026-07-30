@@ -197,6 +197,20 @@
       "evidence_name": "revision_zero_recovers_an_invalid_startup_config"
     },
     {
+      "id": "P03B-RECOVERY-004",
+      "obligation": "A replacement worker spawn failure after durable commit terminates Engine without rolling back the committed file.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "projection_failure_after_durable_commit_terminates_engine_without_rollback"
+    },
+    {
+      "id": "P03B-RECOVERY-005",
+      "obligation": "A bounded restart after fatal projection failure loads committed truth and has no prepared candidate.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "restart_after_projection_failure_loads_committed_truth_and_frees_candidate"
+    },
+    {
       "id": "P03B-RCU-001",
       "obligation": "A guarded old slot cannot be reused until its last reader releases it.",
       "runner": "cargo-test",
@@ -247,10 +261,10 @@
     },
     {
       "id": "P03B-IPC-003",
-      "obligation": "Applied projects exact enabled, binding, and appearance changes to the live runtime callback in the Engine process.",
+      "obligation": "The compatibility projection starts real Hook and Overlay workers with exact enabled, binding, and appearance truth, then stops them when disabled.",
       "runner": "cargo-test",
-      "evidence_file": "src-tauri/src/ipc/windows.rs",
-      "evidence_name": "applied_projects_enabled_binding_and_appearance_to_the_live_runtime"
+      "evidence_file": "src-tauri/src/lib.rs",
+      "evidence_name": "thread_runtime_applies_committed_config_to_real_worker_lifecycle"
     },
     {
       "id": "P03B-IPC-004",
@@ -279,6 +293,27 @@
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/ipc/windows.rs",
       "evidence_name": "existing_pipe_with_locked_secret_is_terminal_and_does_not_spawn"
+    },
+    {
+      "id": "P03B-IPC-008",
+      "obligation": "A poisoned live runtime after durable commit is a fatal projection error that terminates Engine.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "poisoned_runtime_after_durable_commit_terminates_engine"
+    },
+    {
+      "id": "P03B-IPC-009",
+      "obligation": "A tray-originated commit returns Applied before its queued main-thread label work executes.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/tray.rs",
+      "evidence_name": "tray_originated_commit_returns_applied_before_label_reconciliation"
+    },
+    {
+      "id": "P03B-IPC-010",
+      "obligation": "A Settings-originated Applied queues and eventually executes tray label reconciliation.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/tray.rs",
+      "evidence_name": "settings_originated_applied_eventually_reconciles_tray_label"
     }
   ]
 }

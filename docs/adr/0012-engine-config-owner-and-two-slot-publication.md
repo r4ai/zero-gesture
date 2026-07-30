@@ -152,14 +152,31 @@ exact committed `ActiveConfig`; this is a projection from ConfigOwner and is
 not another config or disk writer. Direct snapshot consumption and
 old-gesture generation release remain P03c.
 
+This compatibility projection is fallible and runs after durable replacement
+and owner publication but before the Applied response is built. Runtime lock
+poison, a worker stop panic, or replacement thread spawn failure is a typed
+fatal projection error. The server first clears the committed session's
+candidate and disconnects it, then returns the fatal error to the top-level
+Engine lifecycle. That lifecycle attempts to stop and join the runtime and
+exits the whole Engine nonzero. It never rolls back the already committed
+file or publication; the next bounded Engine start reloads that truth.
+
+Tray reconciliation is deliberately outside the worker projection. The IPC
+owner only enqueues one label task with Tauri's non-waiting main-thread
+scheduler and never calls the synchronous menu API. A tray-originated toggle
+also reconciles from the returned observation after its synchronous IPC call
+has completed on the main thread. Settings-originated commits use the queued
+task. This is one local UI scheduling seam, not an event or callback framework.
+
 ### Session and Settings behavior
 
 The first ACL-protected pipe instance is reused across authenticated sessions,
 so there is no absent-endpoint window between clients. A connection read,
 decode, or response-write failure disconnects only that session, clears its
-candidate, and returns to accept. Only prepared listener/owner invariant
-failures terminate Engine. Thus losing the Applied response cannot undo the
-already replaced file or published owner truth.
+candidate, and returns to accept. Prepared listener/owner invariant failures
+and the post-commit live-projection failure above terminate Engine. Thus
+losing the Applied response cannot undo the already replaced file or published
+owner truth.
 
 Settings probes the pipe before reading the secret. A missing pipe is the only
 condition that enters bounded launch-lock startup. Once the pipe exists,
@@ -191,14 +208,18 @@ unchanged.
 
 `contracts/p03b-config-owner-rcu.json` maps each independent P03b obligation to
 one runnable Rust case.
-The manifest maintains `O = 40`, `O_v = 40`, `U = 0`, no evidence reused
+The manifest maintains `O = 45`, `O_v = 45`, `U = 0`, no evidence reused
 within or across phase manifests, and no source-constant claim as runtime
 evidence.
 The fixed-slot evidence includes a deterministic delayed-reader/reused-slot
 interleaving, counter-exhaustion behavior, and repeated writer/reader stress.
-Fault tests independently cover temporary create, write, flush, replace, and
-post-replace metadata durability warning behavior.
-The current P02 manifest has 52 independent obligations: two owner-transaction
+Fault tests independently cover temporary create, write, flush, replace,
+post-replace metadata durability warning behavior, fatal worker projection,
+and restart from committed truth. The real `ThreadRuntime` test starts,
+reconfigures, and stops the existing Hook/Overlay worker pair; separate process
+tests cover poisoned state, replacement-spawn failure, whole-Engine
+termination, no rollback, and candidate-free restart.
+The current P02 manifest has 52 independent obligations: two owner-recovery
 claims formerly counted there are now exclusively P03b evidence. The P03
 manifest keeps 45 independent obligations; inherited first-pipe readiness and
 absent-endpoint bounded startup are not recounted in P03b.

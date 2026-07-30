@@ -28,6 +28,12 @@ mod unsupported {
 
     impl std::error::Error for ControlError {}
 
+    impl ControlError {
+        pub(crate) fn projection(_error: impl fmt::Display) -> Self {
+            Self
+        }
+    }
+
     #[derive(Clone)]
     pub struct EngineControl;
 
@@ -105,7 +111,7 @@ mod unsupported {
             _on_applied: F,
         ) -> Result<ServerExit, ControlError>
         where
-            F: FnMut(&ActiveConfig, u64),
+            F: FnMut(&ActiveConfig, u64) -> Result<(), ControlError>,
         {
             Err(ControlError)
         }

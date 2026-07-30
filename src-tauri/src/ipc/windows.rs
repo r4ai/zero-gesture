@@ -74,6 +74,7 @@ pub enum ControlError {
     Protocol(ProtocolError),
     Rejected(ErrorCode),
     Io(io::Error),
+    ProjectionFailed(String),
 }
 
 impl fmt::Display for ControlError {
@@ -87,6 +88,9 @@ impl fmt::Display for ControlError {
             Self::Protocol(error) => write!(formatter, "IPC protocol failed: {error}"),
             Self::Rejected(code) => write!(formatter, "Engine rejected the request: {code:?}"),
             Self::Io(error) => write!(formatter, "IPC I/O failed: {error}"),
+            Self::ProjectionFailed(error) => {
+                write!(formatter, "Engine live projection failed: {error}")
+            }
         }
     }
 }
@@ -107,6 +111,12 @@ impl From<ProtocolError> for ControlError {
 impl From<io::Error> for ControlError {
     fn from(error: io::Error) -> Self {
         Self::Io(error)
+    }
+}
+
+impl ControlError {
+    pub(crate) fn projection(error: impl fmt::Display) -> Self {
+        Self::ProjectionFailed(error.to_string())
     }
 }
 
@@ -330,7 +340,7 @@ impl EngineServer {
         mut on_applied: F,
     ) -> Result<ServerExit, ControlError>
     where
-        F: FnMut(&config::ActiveConfig, u64),
+        F: FnMut(&config::ActiveConfig, u64) -> Result<(), ControlError>,
     {
         let Self {
             endpoint: _,
@@ -355,7 +365,7 @@ impl EngineServer {
                 &mut config_owner,
                 session,
                 &mut on_applied,
-            ) {
+            )? {
                 return Ok(ServerExit::Shutdown);
             }
         }
@@ -369,13 +379,17 @@ fn serve_connection(
     started_at: Instant,
     config_owner: &mut ConfigOwner,
     session: u64,
-    on_applied: &mut impl FnMut(&config::ActiveConfig, u64),
-) -> bool {
+    on_applied: &mut impl FnMut(&config::ActiveConfig, u64) -> Result<(), ControlError>,
+) -> Result<bool, ControlError> {
     let result =
         serve_connection_inner(pipe, secret, started_at, config_owner, session, on_applied);
     config_owner.disconnect(session);
     pipe.disconnect_client();
-    result.unwrap_or(false)
+    match result {
+        Err(error @ ControlError::ProjectionFailed(_)) => Err(error),
+        Err(_) => Ok(false),
+        Ok(shutdown_requested) => Ok(shutdown_requested),
+    }
 }
 
 fn serve_connection_inner(
@@ -384,7 +398,7 @@ fn serve_connection_inner(
     started_at: Instant,
     config_owner: &mut ConfigOwner,
     session: u64,
-    on_applied: &mut impl FnMut(&config::ActiveConfig, u64),
+    on_applied: &mut impl FnMut(&config::ActiveConfig, u64) -> Result<(), ControlError>,
 ) -> Result<bool, ControlError> {
     let mut authenticated = false;
     let mut version_matches = false;
@@ -526,11 +540,11 @@ fn serve_connection_inner(
                 ) {
                     Ok(applied) => {
                         on_applied(
-                            config_owner
-                                .active()
-                                .expect("successful commit must install active config"),
+                            config_owner.active().ok_or_else(|| {
+                                ControlError::projection("successful commit has no active config")
+                            })?,
                             applied.generation,
-                        );
+                        )?;
                         Response::Applied {
                             revision: applied.revision,
                             generation: applied.generation,
@@ -1286,7 +1300,9 @@ mod tests {
     const HELPER_ENV: &str = "ZG_P03_PROCESS_HELPER";
     const HELPER_DIR_ENV: &str = "ZG_P03_PROCESS_HELPER_DIR";
     const HELPER_SUFFIX_ENV: &str = "ZG_P03_PROCESS_HELPER_SUFFIX";
-    const HELPER_APPLIED_FILE: &str = "runtime-applied.json";
+    const HELPER_RUNTIME_ENV: &str = "ZG_P03_PROCESS_HELPER_RUNTIME";
+    const HELPER_POISON_RUNTIME_ENV: &str = "ZG_P03_PROCESS_HELPER_POISON_RUNTIME";
+    const FAIL_WORKER_SPAWN_ENV: &str = "ZG_P03_TEST_FAIL_WORKER_SPAWN";
 
     fn fixture() -> (TempDir, String, EngineControl) {
         let directory = tempfile::tempdir().unwrap();
@@ -1314,6 +1330,49 @@ mod tests {
             .stderr(Stdio::null())
             .spawn()
             .unwrap()
+    }
+
+    fn spawn_runtime_helper(
+        directory: &Path,
+        suffix: &str,
+        fail_worker_spawn: bool,
+        poison_runtime: bool,
+    ) -> Child {
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "ipc::windows::tests::process_helper",
+                "--nocapture",
+            ])
+            .env(HELPER_ENV, "1")
+            .env(HELPER_DIR_ENV, directory)
+            .env(HELPER_SUFFIX_ENV, suffix)
+            .env(HELPER_RUNTIME_ENV, "1")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        if fail_worker_spawn {
+            command.env(FAIL_WORKER_SPAWN_ENV, "1");
+        }
+        if poison_runtime {
+            command.env(HELPER_POISON_RUNTIME_ENV, "1");
+        }
+        command.spawn().unwrap()
+    }
+
+    fn wait_for_exit(child: &mut Child) -> std::process::ExitStatus {
+        let deadline = Instant::now() + CONNECT_TIMEOUT;
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                return status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "Engine helper did not terminate after fatal projection failure"
+            );
+            thread::sleep(PIPE_POLL_INTERVAL);
+        }
     }
 
     struct ChildGuard {
@@ -1347,15 +1406,27 @@ mod tests {
         let Some(server) = EngineServer::for_test(&directory, &suffix).unwrap() else {
             return;
         };
-        let (owner, _) = ConfigOwner::startup(&directory);
-        let applied_path = directory.join(HELPER_APPLIED_FILE);
-        let exit = server
-            .run(Arc::new(AtomicBool::new(false)), owner, move |active, _| {
-                if let Ok(bytes) = config::encode(active) {
-                    let _ = fs::write(&applied_path, bytes);
-                }
-            })
-            .unwrap();
+        let (owner, initial) = ConfigOwner::startup(&directory);
+        let runtime = std::env::var_os(HELPER_RUNTIME_ENV)
+            .map(|_| crate::ThreadRuntime::start(initial).unwrap());
+        if std::env::var_os(HELPER_POISON_RUNTIME_ENV).is_some() {
+            runtime.as_ref().unwrap().poison_for_test();
+        }
+        let result = server.run(Arc::new(AtomicBool::new(false)), owner, |active, _| {
+            if let Some(runtime) = &runtime {
+                runtime
+                    .apply_config(active.clone())
+                    .map_err(ControlError::projection)?;
+            }
+            Ok(())
+        });
+        if let Some(runtime) = runtime {
+            let shutdown = runtime.shutdown();
+            if result.is_ok() {
+                shutdown.unwrap();
+            }
+        }
+        let exit = result.unwrap();
         assert_eq!(exit, ServerExit::Shutdown);
     }
 
@@ -1556,42 +1627,98 @@ mod tests {
     }
 
     #[test]
-    fn applied_projects_enabled_binding_and_appearance_to_the_live_runtime() {
+    fn poisoned_runtime_after_durable_commit_terminates_engine() {
         let (directory, suffix, control) = fixture();
-        let child = spawn_helper(directory.path(), &suffix);
-        let _guard = ChildGuard::new(child, control.clone());
+        let mut initial = config::ConfigDocument::default();
+        initial.shared.enabled = false;
+        config::save_atomic(
+            &config::ActiveConfig::from_document(initial).unwrap(),
+            directory.path(),
+        )
+        .unwrap();
+        let mut child = spawn_runtime_helper(directory.path(), &suffix, false, true);
         control.connect_or_start_with(|| Ok(())).unwrap();
 
         let observed = control.current_config().unwrap();
-        let mut changed = observed.config.unwrap();
-        changed.shared.enabled = !changed.shared.enabled;
-        changed.shared.appearance.trail_thickness = 6.0;
-        match &mut changed.bindings[0] {
-            config::BindingRecord::Shared(binding)
-            | config::BindingRecord::Windows(binding)
-            | config::BindingRecord::Macos(binding) => {
-                binding.label = Some("live-applied-binding".to_string());
-            }
-        }
-        control
-            .apply_config(changed.clone(), observed.revision)
-            .unwrap();
+        let mut committed = observed.config.unwrap();
+        committed.shared.enabled = true;
+        assert!(control
+            .apply_config(committed.clone(), observed.revision)
+            .is_err());
 
-        let path = directory.path().join(HELPER_APPLIED_FILE);
-        let deadline = Instant::now() + IO_TIMEOUT;
-        let projected = loop {
-            if let Ok(bytes) = fs::read(&path) {
-                if let Ok(active) = config::decode_and_compile(&bytes) {
-                    break active.document().clone();
-                }
-            }
-            assert!(
-                Instant::now() < deadline,
-                "live projection was not observed"
-            );
-            thread::sleep(PIPE_POLL_INTERVAL);
+        assert!(!wait_for_exit(&mut child).success());
+        let loaded = config::load(directory.path()).unwrap();
+        let config::LoadResult::Ready(active) = loaded else {
+            panic!("durably replaced config must remain present");
         };
-        assert_eq!(projected, changed);
+        assert_eq!(active.document(), &committed);
+    }
+
+    #[test]
+    fn projection_failure_after_durable_commit_terminates_engine_without_rollback() {
+        let (directory, suffix, control) = fixture();
+        let mut initial = config::ConfigDocument::default();
+        initial.shared.enabled = false;
+        config::save_atomic(
+            &config::ActiveConfig::from_document(initial).unwrap(),
+            directory.path(),
+        )
+        .unwrap();
+        let mut child = spawn_runtime_helper(directory.path(), &suffix, true, false);
+        control.connect_or_start_with(|| Ok(())).unwrap();
+
+        let observed = control.current_config().unwrap();
+        let mut committed = observed.config.unwrap();
+        committed.shared.enabled = true;
+        committed.shared.appearance.trail_thickness = 6.5;
+        assert!(control
+            .apply_config(committed.clone(), observed.revision)
+            .is_err());
+
+        let status = wait_for_exit(&mut child);
+        assert!(!status.success());
+        let loaded = config::load(directory.path()).unwrap();
+        let config::LoadResult::Ready(active) = loaded else {
+            panic!("durably replaced config must remain present");
+        };
+        assert_eq!(active.document(), &committed);
+    }
+
+    #[test]
+    fn restart_after_projection_failure_loads_committed_truth_and_frees_candidate() {
+        let (directory, suffix, control) = fixture();
+        let mut initial = config::ConfigDocument::default();
+        initial.shared.enabled = false;
+        config::save_atomic(
+            &config::ActiveConfig::from_document(initial).unwrap(),
+            directory.path(),
+        )
+        .unwrap();
+        let mut failed_child = spawn_runtime_helper(directory.path(), &suffix, true, false);
+        control.connect_or_start_with(|| Ok(())).unwrap();
+
+        let observed = control.current_config().unwrap();
+        let mut committed = observed.config.unwrap();
+        committed.shared.enabled = true;
+        committed.shared.appearance.trail_thickness = 8.5;
+        assert!(control
+            .apply_config(committed.clone(), observed.revision)
+            .is_err());
+        assert!(!wait_for_exit(&mut failed_child).success());
+
+        let restarted_child = spawn_runtime_helper(directory.path(), &suffix, false, false);
+        let _guard = ChildGuard::new(restarted_child, control.clone());
+        control.connect_or_start_with(|| Ok(())).unwrap();
+        let restarted = control.current_config().unwrap();
+        assert_eq!(
+            restarted,
+            ConfigObservation {
+                revision: 1,
+                generation: 1,
+                config: Some(committed),
+            }
+        );
+        assert!(!control.status().unwrap().config_candidate_prepared);
     }
 
     #[test]

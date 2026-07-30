@@ -69,7 +69,8 @@ graph TD
   - Engine Config ownerだけが行う設定ファイルの読み書き（Disk I/O）。
   - 設定画面（Webview）の表示/非表示トグル。
   - immutable compiled configを二つの固定slotへ保持し、generation/indexをatomic publishする。Windows hookからのread wiringはP03cで行う。
-  - P03cまでの互換動作として、Applied後に既存Hook/Overlay worker pairをcommitted configから再生成する。workerはdisk writerではない。
+  - P03cまでの互換動作として、durable commit/publication後、Applied応答前に既存Hook/Overlay worker pairをcommitted configから再生成する。再生成失敗はdiskをrollbackせずEngine全体を終了し、次のbounded restartでcommitted truthを再読込する。workerはdisk writerではない。
+  - Tray labelはworker projection後にTauri main threadへ非同期enqueueする。IPC owner threadは同期menu APIを呼ばず、tray自身の変更はApplied受信後にmain thread上でもlabelを整合する。
 
 ### 3.2. Hook Thread (The "Sensor")
 

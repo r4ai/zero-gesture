@@ -188,7 +188,9 @@ pub(super) struct OverlayConfig {
 /// control the overlay. The [`JoinHandle`] can be used to wait for the
 /// thread to finish.
 ///
-pub(crate) fn spawn(runtime: Arc<RuntimeConfig>) -> (Sender<OverlayCommand>, JoinHandle<()>) {
+pub(crate) fn spawn(
+    runtime: Arc<RuntimeConfig>,
+) -> std::io::Result<(Sender<OverlayCommand>, JoinHandle<()>)> {
     info!("starting overlay thread");
     let (overlay_tx, overlay_rx) = unbounded();
 
@@ -215,11 +217,10 @@ pub(crate) fn spawn(runtime: Arc<RuntimeConfig>) -> (Sender<OverlayCommand>, Joi
                 let _ = (overlay_config, overlay_rx);
                 warn!("Overlay is only supported on Windows");
             }
-        })
-        .expect("failed to spawn overlay thread");
+        })?;
     info!("overlay thread spawned");
 
-    (overlay_tx, handle)
+    Ok((overlay_tx, handle))
 }
 
 // ---------------------------------------------------------------------------

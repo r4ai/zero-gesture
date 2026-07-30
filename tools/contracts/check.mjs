@@ -99,8 +99,11 @@ function cargoTestName(contractCase) {
     "src-tauri/src/".length,
     -".rs".length,
   )
-  const moduleName = sourceModule.replace(/\/mod$/, "").replaceAll("/", "::")
-  return `${moduleName}::tests::${contractCase.evidence_name}: test`
+  const moduleName =
+    sourceModule === "lib"
+      ? ""
+      : `${sourceModule.replace(/\/mod$/, "").replaceAll("/", "::")}::`
+  return `${moduleName}tests::${contractCase.evidence_name}: test`
 }
 
 export function validateManifest(

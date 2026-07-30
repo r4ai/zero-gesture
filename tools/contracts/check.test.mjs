@@ -137,3 +137,24 @@ test("accepts runnable integration-test evidence", () => {
     1,
   )
 })
+
+test("accepts runnable crate-root unit-test evidence", () => {
+  const repo = mkdtempSync(path.join(tmpdir(), "contracts-lib-test-"))
+  const evidence = path.join(repo, "src-tauri", "src", "lib.rs")
+  mkdirSync(path.dirname(evidence), { recursive: true })
+  writeFileSync(evidence, "#[test]\nfn runtime_projection() {}\n")
+
+  const manifest = JSON.stringify({
+    cases: [
+      {
+        ...validCase,
+        evidence_file: "src-tauri/src/lib.rs",
+        evidence_name: "runtime_projection",
+      },
+    ],
+  })
+  assert.equal(
+    validateManifestText(manifest, repo, "tests::runtime_projection: test"),
+    1,
+  )
+})
