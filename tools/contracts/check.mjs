@@ -25,6 +25,13 @@ const MANIFESTS = [
     idPattern: /^P03-(?:PROCESS|CODEC|IPC)-\d{3}$/,
     idDescription: "P03-PROCESS-NNN, P03-CODEC-NNN, or P03-IPC-NNN",
   },
+  {
+    label: "P03b",
+    path: "contracts/p03b-config-owner-rcu.json",
+    idPattern: /^P03B-(?:OWNER|RCU|CODEC|IPC|RECOVERY|PERSIST)-\d{3}$/,
+    idDescription:
+      "P03B-OWNER-NNN, P03B-RCU-NNN, P03B-CODEC-NNN, P03B-IPC-NNN, P03B-RECOVERY-NNN, or P03B-PERSIST-NNN",
+  },
 ]
 const REPO_ROOT = path.resolve(fileURLToPath(new URL("../..", import.meta.url)))
 

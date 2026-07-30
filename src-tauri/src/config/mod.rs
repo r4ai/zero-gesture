@@ -1,5 +1,7 @@
 mod compile;
 mod document;
+mod owner;
+mod publication;
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
@@ -16,9 +18,15 @@ pub use document::{
 };
 
 pub(crate) use compile::RuntimeConfig;
+pub(crate) use owner::{
+    ConfigOwner, ConfigOwnerError, ConfigOwnerStatus, PreparedToken, MAX_CONFIG_BYTES,
+};
+pub(crate) use publication::ConfigSnapshotReader;
 
 const CONFIG_FILE_NAME: &str = "zero-gesture.config.json";
 const MIGRATION_BACKUP_STEM: &str = "zero-gesture.config.v1.backup";
+const TEMPORARY_PREFIX: &str = ".zero-gesture.config.";
+const TEMPORARY_SUFFIX: &str = ".tmp";
 
 pub const MAX_GESTURE_STEPS: usize = 8;
 pub const DEFAULT_SAFETY_TIMEOUT_MS: u32 = 2_000;
@@ -56,6 +64,11 @@ impl ActiveConfig {
     pub fn enabled(&self) -> bool {
         self.runtime.enabled
     }
+}
+
+pub(crate) fn encode(active: &ActiveConfig) -> Result<Vec<u8>, ConfigError> {
+    serde_json::to_vec_pretty(active.document())
+        .map_err(|error| ConfigError::at("$", format!("failed to serialize config: {error}")))
 }
 
 pub enum LoadResult {
@@ -99,14 +112,48 @@ pub fn decode_and_compile(bytes: &[u8]) -> Result<ActiveConfig, ConfigError> {
 }
 
 pub fn save_atomic(active: &ActiveConfig, config_dir: &Path) -> Result<(), ConfigError> {
-    let bytes = serde_json::to_vec_pretty(active.document()).map_err(|error| {
-        ConfigError::at(
-            "$",
-            format!("failed to serialize validated config: {error}"),
-        )
-    })?;
+    let bytes = encode(active)?;
     atomic_write(config_path(config_dir), &bytes)
         .map_err(|error| ConfigError::at(CONFIG_FILE_NAME, format!("failed to save: {error}")))
+}
+
+pub(crate) struct SaveOutcome {
+    pub(crate) durability_warning: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PersistStage {
+    TemporaryCreate,
+    Write,
+    Flush,
+    Replace,
+    DirectorySync,
+}
+
+pub(crate) fn save_atomic_durable(
+    active: &ActiveConfig,
+    config_dir: &Path,
+) -> Result<SaveOutcome, ConfigError> {
+    let bytes = encode(active)?;
+    atomic_write_durable_with(config_path(config_dir), &bytes, |_| Ok(()))
+        .map_err(|error| ConfigError::at(CONFIG_FILE_NAME, format!("failed to save: {error}")))
+}
+
+#[cfg(test)]
+pub(crate) fn save_atomic_durable_with_fault(
+    active: &ActiveConfig,
+    config_dir: &Path,
+    failure: PersistStage,
+) -> Result<SaveOutcome, ConfigError> {
+    let bytes = encode(active)?;
+    atomic_write_durable_with(config_path(config_dir), &bytes, |stage| {
+        if stage == failure {
+            Err(io::Error::other(format!("injected {stage:?} failure")))
+        } else {
+            Ok(())
+        }
+    })
+    .map_err(|error| ConfigError::at(CONFIG_FILE_NAME, format!("failed to save: {error}")))
 }
 
 pub fn export(document: &ConfigDocument, path: &Path) -> Result<(), ConfigError> {
@@ -169,27 +216,44 @@ fn write_migration_backup(config_dir: &Path, original: &[u8]) -> io::Result<Path
 }
 
 fn atomic_write(path: PathBuf, bytes: &[u8]) -> io::Result<()> {
+    atomic_write_durable_with(path, bytes, |_| Ok(())).map(|_| ())
+}
+
+fn atomic_write_durable_with(
+    path: PathBuf,
+    bytes: &[u8],
+    mut stage: impl FnMut(PersistStage) -> io::Result<()>,
+) -> io::Result<SaveOutcome> {
     let directory = path
         .parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "config path has no parent"))?;
     fs::create_dir_all(directory)?;
+    stage(PersistStage::TemporaryCreate)?;
     let (temporary_path, mut temporary) = create_temporary_file(directory)?;
     let result = (|| {
+        stage(PersistStage::Write)?;
         temporary.write_all(bytes)?;
+        stage(PersistStage::Flush)?;
         temporary.sync_all()?;
         drop(temporary);
+        stage(PersistStage::Replace)?;
         replace_file(&temporary_path, &path)
     })();
     if result.is_err() {
         let _ = fs::remove_file(&temporary_path);
     }
-    result
+    result?;
+    let durability_warning = stage(PersistStage::DirectorySync)
+        .and_then(|()| sync_directory(directory))
+        .err()
+        .map(|error| error.to_string());
+    Ok(SaveOutcome { durability_warning })
 }
 
 fn create_temporary_file(directory: &Path) -> io::Result<(PathBuf, File)> {
     for suffix in 0_u32.. {
         let path = directory.join(format!(
-            ".zero-gesture.config.{}.{}.tmp",
+            "{TEMPORARY_PREFIX}{}.{}{TEMPORARY_SUFFIX}",
             std::process::id(),
             suffix
         ));
@@ -200,6 +264,38 @@ fn create_temporary_file(directory: &Path) -> io::Result<(PathBuf, File)> {
         }
     }
     unreachable!("u32 temporary suffix space exhausted")
+}
+
+pub(crate) fn cleanup_owned_temporary_files(directory: &Path) -> io::Result<()> {
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    for entry in entries {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let file_name = entry.file_name();
+        let Some(name) = file_name.to_str() else {
+            continue;
+        };
+        let Some(middle) = name
+            .strip_prefix(TEMPORARY_PREFIX)
+            .and_then(|name| name.strip_suffix(TEMPORARY_SUFFIX))
+        else {
+            continue;
+        };
+        let mut parts = middle.split('.');
+        if parts.next().is_some_and(|part| part.parse::<u32>().is_ok())
+            && parts.next().is_some_and(|part| part.parse::<u32>().is_ok())
+            && parts.next().is_none()
+        {
+            fs::remove_file(entry.path())?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -225,9 +321,51 @@ fn replace_file(from: &Path, to: &Path) -> io::Result<()> {
     }
 }
 
+#[cfg(windows)]
+fn sync_directory(directory: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::GENERIC_READ;
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, FlushFileBuffers, FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE,
+        FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    };
+
+    let path: Vec<u16> = directory.as_os_str().encode_wide().chain(Some(0)).collect();
+    let handle = unsafe {
+        CreateFileW(
+            path.as_ptr(),
+            GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
+            std::ptr::null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(io::Error::last_os_error());
+    }
+    let flushed = unsafe { FlushFileBuffers(handle) };
+    let error = if flushed == 0 {
+        Some(io::Error::last_os_error())
+    } else {
+        None
+    };
+    unsafe {
+        CloseHandle(handle);
+    }
+    error.map_or(Ok(()), Err)
+}
+
 #[cfg(not(windows))]
 fn replace_file(from: &Path, to: &Path) -> io::Result<()> {
     fs::rename(from, to)
+}
+
+#[cfg(not(windows))]
+fn sync_directory(directory: &Path) -> io::Result<()> {
+    File::open(directory)?.sync_all()
 }
 
 fn config_path(config_dir: &Path) -> PathBuf {
@@ -288,5 +426,19 @@ mod tests {
 
         assert!(atomic_write(path.clone(), b"replacement").is_err());
         assert_eq!(fs::read(path).unwrap(), original);
+    }
+
+    #[test]
+    fn startup_cleanup_removes_only_owned_orphan_temporary_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let owned = directory.path().join(".zero-gesture.config.12.3.tmp");
+        let unrelated = directory.path().join(".zero-gesture.config.notes.tmp");
+        fs::write(&owned, b"orphan").unwrap();
+        fs::write(&unrelated, b"keep").unwrap();
+
+        cleanup_owned_temporary_files(directory.path()).unwrap();
+
+        assert!(!owned.exists());
+        assert!(unrelated.exists());
     }
 }

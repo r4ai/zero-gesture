@@ -45,15 +45,7 @@ fn toggle_label(enabled: bool) -> &'static str {
 /// # Errors
 ///
 /// Returns [`tauri::Error`] if menu or tray construction fails.
-pub fn setup<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
-    let enabled = {
-        let shared = app.state::<crate::SharedConfig>();
-        shared
-            .active()
-            .map(|active| active.enabled())
-            .unwrap_or(false)
-    };
-
+pub fn setup<R: Runtime>(app: &mut App<R>, enabled: bool) -> tauri::Result<()> {
     let toggle_item = MenuItem::with_id(
         app,
         MENU_TOGGLE_ENABLED,
@@ -116,31 +108,22 @@ fn launch_settings_process() -> std::io::Result<()> {
 
 /// Handles the "Toggle Gestures" menu action.
 fn handle_toggle<R: Runtime>(app: &AppHandle<R>) {
-    let shared_config = app.state::<crate::SharedConfig>();
-    let runtime = app.state::<crate::ThreadRuntime>();
-    let config_dir = app.state::<crate::ConfigDir>();
+    let control = app.state::<crate::ipc::EngineControl>();
 
-    // Read the current enabled state and build a toggled config.
-    let new_config = {
-        let mut next = match shared_config.document() {
-            Ok(document) => document,
-            Err(error) => {
-                warn!("configuration unavailable in toggle handler: {error}");
-                return;
-            }
-        };
-        next.shared.enabled = !next.shared.enabled;
-        next
+    let mut new_config = match control.current_config() {
+        Ok(document) => document,
+        Err(error) => {
+            warn!("configuration unavailable in toggle handler: {error}");
+            return;
+        }
     };
+    new_config.shared.enabled = !new_config.shared.enabled;
+    let enabled = new_config.shared.enabled;
 
-    if let Err(err) = crate::commands::apply_config_update(
-        new_config,
-        app,
-        shared_config.inner(),
-        runtime.inner(),
-        config_dir.inner(),
-    ) {
+    if let Err(err) = control.apply_config(new_config) {
         warn!("failed to toggle gestures: {err}");
+    } else {
+        sync_toggle_menu_label(app, enabled);
     }
 }
 

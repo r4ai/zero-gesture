@@ -16,6 +16,7 @@ ADRは実装の詳細設計ではなく、後続PRが守る外部契約、不変
 | [0009](./0009-config-schema-v2-migration-and-compile.md) | Accepted | strict schema v2、legacy分類移行、非破壊upgrade、immutable Windows compileを固定する |
 | [0010](./0010-bounded-input-owner-kernel.md) | Accepted | boundedなplatform-neutral Input owner kernelと固定ID/effect境界を追加する |
 | [0011](./0011-p03a-process-mode-and-control-ipc.md) | Accepted | 同一executableのprocess bootstrapと認証済みWindows control IPCを固定する |
+| [0012](./0012-engine-config-owner-and-two-slot-publication.md) | Accepted | Engine config single writer、bounded Prepare/Commit/Applied、二固定slot publicationを固定する |
 
 ## Reading order
 
@@ -27,6 +28,7 @@ ADR 0008はP02aで実装したportable gesture moduleの所有権、interface、
 ADR 0009はP02bで実装したconfig document、legacy migration、現在利用可能な永続化、Windows compile seamを記録する。
 ADR 0010はP02cで実装したInput owner policy、generation pin、accepted-action completion、allocation-free handle seamを記録する。
 ADR 0011はP03aで実装したEngine/Settings bootstrap、Windows current-user endpoint、閉じたcontrol protocol、bounded retryを記録する。
+ADR 0012はP03bで実装したEngine-owned config transaction、Settings/tray mutation adapter、二固定slot publicationを記録する。
 
 ## Status policy
 

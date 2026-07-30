@@ -240,17 +240,17 @@
     },
     {
       "id": "P02-CONFIG-020",
-      "obligation": "A worker apply failure restores the previous live config only after persisted rollback succeeds.",
+      "obligation": "A config persistence failure before atomic replacement keeps the previous active snapshot and disk bytes.",
       "runner": "cargo-test",
-      "evidence_file": "src-tauri/src/commands.rs",
-      "evidence_name": "worker_failure_restores_previous_only_after_disk_rollback"
+      "evidence_file": "src-tauri/src/config/owner.rs",
+      "evidence_name": "atomic_replace_failure_keeps_disk_and_snapshot_unchanged"
     },
     {
       "id": "P02-CONFIG-021",
-      "obligation": "A persisted rollback failure disables the runtime and marks shared configuration unavailable with diagnostics.",
+      "obligation": "A durability failure after atomic replacement does not roll back and still publishes the committed snapshot.",
       "runner": "cargo-test",
-      "evidence_file": "src-tauri/src/commands.rs",
-      "evidence_name": "disk_rollback_failure_requires_disabled_unavailable_state"
+      "evidence_file": "src-tauri/src/config/owner.rs",
+      "evidence_name": "post_replace_directory_sync_failure_still_publishes"
     },
     {
       "id": "P02-INPUT-001",

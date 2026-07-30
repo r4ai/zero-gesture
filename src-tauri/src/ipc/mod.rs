@@ -10,6 +10,7 @@ pub use windows::{ControlError, EngineControl, EngineServer, ServerExit};
 #[cfg(not(windows))]
 mod unsupported {
     use super::EngineStatus;
+    use crate::config::{ConfigDocument, ConfigOwner};
     use std::fmt;
     use std::path::Path;
     use std::sync::{atomic::AtomicBool, Arc};
@@ -47,6 +48,18 @@ mod unsupported {
         pub fn shutdown(&self) -> Result<bool, ControlError> {
             Err(ControlError)
         }
+
+        pub(crate) fn current_config(&self) -> Result<ConfigDocument, ControlError> {
+            Err(ControlError)
+        }
+
+        pub(crate) fn apply_config(&self, _document: ConfigDocument) -> Result<(), ControlError> {
+            Err(ControlError)
+        }
+
+        pub(crate) fn apply_config_bytes(&self, _bytes: Vec<u8>) -> Result<(), ControlError> {
+            Err(ControlError)
+        }
     }
 
     pub struct EngineServer;
@@ -62,7 +75,11 @@ mod unsupported {
             Err(ControlError)
         }
 
-        pub fn run(self, _stop: Arc<AtomicBool>) -> Result<ServerExit, ControlError> {
+        pub fn run(
+            self,
+            _stop: Arc<AtomicBool>,
+            _config_owner: ConfigOwner,
+        ) -> Result<ServerExit, ControlError> {
             Err(ControlError)
         }
     }

@@ -2,6 +2,7 @@ use super::protocol::{
     self, EngineStatus, Envelope, ErrorCode, ProcessRole, ProtocolError, Request, Response,
     AUTH_SECRET_BYTES, CAPABILITIES, MAX_REQUESTS_PER_CONNECTION,
 };
+use crate::config::{self, ConfigOwner, ConfigOwnerError, ConfigOwnerStatus, PreparedToken};
 use std::ffi::OsStr;
 use std::fmt;
 use std::fs;
@@ -150,6 +151,49 @@ impl EngineControl {
         }
     }
 
+    pub(crate) fn current_config(&self) -> Result<config::ConfigDocument, ControlError> {
+        let mut session = Session::connect(&self.endpoint)?;
+        let (_, _, bytes) = session.current_config()?;
+        config::decode_and_compile(&bytes)
+            .map(|active| active.document().clone())
+            .map_err(|_| ControlError::Rejected(ErrorCode::ConfigValidationFailed))
+    }
+
+    pub(crate) fn apply_config(
+        &self,
+        document: config::ConfigDocument,
+    ) -> Result<(), ControlError> {
+        let bytes = serde_json::to_vec(&document)
+            .map_err(|_| ControlError::Rejected(ErrorCode::ConfigValidationFailed))?;
+        self.apply_config_bytes(bytes)
+    }
+
+    pub(crate) fn apply_config_bytes(&self, bytes: Vec<u8>) -> Result<(), ControlError> {
+        let mut session = Session::connect(&self.endpoint)?;
+        let (revision, _, _) = session.current_config()?;
+        let prepared = match session.exchange(Request::PrepareConfig {
+            expected_revision: revision,
+            config_bytes: bytes,
+        })? {
+            Response::Prepared {
+                token,
+                base_revision,
+                base_generation,
+            } => (token, base_revision, base_generation),
+            Response::Error(code) => return Err(ControlError::Rejected(code)),
+            _ => return Err(ControlError::Protocol(ProtocolError::InvalidMessage)),
+        };
+        match session.exchange(Request::CommitConfig {
+            token: prepared.0,
+            base_revision: prepared.1,
+            base_generation: prepared.2,
+        })? {
+            Response::Applied { .. } => Ok(()),
+            Response::Error(code) => Err(ControlError::Rejected(code)),
+            _ => Err(ControlError::Protocol(ProtocolError::InvalidMessage)),
+        }
+    }
+
     pub fn shutdown(&self) -> Result<bool, ControlError> {
         let mut session = Session::connect(&self.endpoint)?;
         match session.exchange(Request::Shutdown)? {
@@ -197,6 +241,12 @@ impl EngineControl {
         Ok(Self {
             endpoint: Endpoint::current_user(config_dir, suffix)?,
         })
+    }
+
+    pub(crate) fn for_prepared_server(server: &EngineServer) -> Self {
+        Self {
+            endpoint: server.endpoint.clone(),
+        }
     }
 }
 
@@ -251,7 +301,11 @@ impl EngineServer {
         }))
     }
 
-    pub fn run(self, stop: Arc<AtomicBool>) -> Result<ServerExit, ControlError> {
+    pub fn run(
+        self,
+        stop: Arc<AtomicBool>,
+        mut config_owner: ConfigOwner,
+    ) -> Result<ServerExit, ControlError> {
         let Self {
             endpoint,
             _singleton,
@@ -262,6 +316,7 @@ impl EngineServer {
         let security = SecurityDescriptor::for_sid(&endpoint.sid)?;
         let started_at = Instant::now();
         let mut prepared_pipe = Some(first_pipe);
+        let mut next_session = 1_u64;
 
         while !stop.load(Ordering::Acquire) {
             let pipe = match prepared_pipe.take() {
@@ -271,7 +326,9 @@ impl EngineServer {
             if !pipe.wait_for_client(&stop)? {
                 return Ok(ServerExit::Stopped);
             }
-            if serve_connection(pipe, &secret, started_at)? {
+            let session = next_session;
+            next_session = next_session.checked_add(1).unwrap_or(1);
+            if serve_connection(pipe, &secret, started_at, &mut config_owner, session)? {
                 return Ok(ServerExit::Shutdown);
             }
         }
@@ -280,9 +337,23 @@ impl EngineServer {
 }
 
 fn serve_connection(
+    pipe: Pipe,
+    secret: &[u8; AUTH_SECRET_BYTES],
+    started_at: Instant,
+    config_owner: &mut ConfigOwner,
+    session: u64,
+) -> Result<bool, ControlError> {
+    let result = serve_connection_inner(pipe, secret, started_at, config_owner, session);
+    config_owner.disconnect(session);
+    result
+}
+
+fn serve_connection_inner(
     mut pipe: Pipe,
     secret: &[u8; AUTH_SECRET_BYTES],
     started_at: Instant,
+    config_owner: &mut ConfigOwner,
+    session: u64,
 ) -> Result<bool, ControlError> {
     let mut authenticated = false;
     let mut version_matches = false;
@@ -372,16 +443,80 @@ fn serve_connection(
             match request.message {
                 Request::Hello { .. } => Response::Error(ErrorCode::InvalidMessage),
                 Request::Ping => Response::Pong,
-                Request::GetStatus => Response::Status(process_status(started_at)?),
+                Request::GetStatus => {
+                    let config = config_owner.status(Instant::now());
+                    Response::Status(process_status(started_at, config)?)
+                }
                 Request::Shutdown if version_matches => {
                     let already_requested = shutdown_requested;
                     shutdown_requested = true;
                     Response::Shutdown { already_requested }
                 }
                 Request::Shutdown => Response::Error(ErrorCode::ExecutableVersionMismatch),
+                Request::GetConfig => match config_owner.current_bytes(Instant::now()) {
+                    Ok((revision, generation, config_bytes)) => Response::Config {
+                        revision,
+                        generation,
+                        config_bytes,
+                    },
+                    Err(error) => Response::Error(config_error_code(error)),
+                },
+                Request::PrepareConfig { .. } | Request::CommitConfig { .. }
+                    if !version_matches =>
+                {
+                    Response::Error(ErrorCode::ExecutableVersionMismatch)
+                }
+                Request::PrepareConfig {
+                    expected_revision,
+                    config_bytes,
+                } => match config_owner.prepare(
+                    session,
+                    expected_revision,
+                    &config_bytes,
+                    Instant::now(),
+                ) {
+                    Ok(prepared) => Response::Prepared {
+                        token: prepared.token.0,
+                        base_revision: prepared.base_revision,
+                        base_generation: prepared.base_generation,
+                    },
+                    Err(error) => Response::Error(config_error_code(error)),
+                },
+                Request::CommitConfig {
+                    token,
+                    base_revision,
+                    base_generation,
+                } => match config_owner.commit(
+                    session,
+                    PreparedToken(token),
+                    base_revision,
+                    base_generation,
+                    Instant::now(),
+                ) {
+                    Ok(applied) => Response::Applied {
+                        revision: applied.revision,
+                        generation: applied.generation,
+                        durability_warning: applied.durability_warning,
+                    },
+                    Err(error) => Response::Error(config_error_code(error)),
+                },
             }
         };
         send_response(&mut pipe, request.request_id, response)?;
+    }
+}
+
+fn config_error_code(error: ConfigOwnerError) -> ErrorCode {
+    match error {
+        ConfigOwnerError::Unavailable => ErrorCode::ConfigUnavailable,
+        ConfigOwnerError::PayloadTooLarge => ErrorCode::ConfigPayloadTooLarge,
+        ConfigOwnerError::Busy => ErrorCode::ConfigBusy,
+        ConfigOwnerError::RevisionConflict => ErrorCode::ConfigRevisionConflict,
+        ConfigOwnerError::ValidationFailed => ErrorCode::ConfigValidationFailed,
+        ConfigOwnerError::TokenMismatch => ErrorCode::ConfigTokenMismatch,
+        ConfigOwnerError::NoPreparedConfig => ErrorCode::NoPreparedConfig,
+        ConfigOwnerError::GenerationExhausted => ErrorCode::ConfigGenerationExhausted,
+        ConfigOwnerError::PersistenceFailed => ErrorCode::ConfigPersistenceFailed,
     }
 }
 
@@ -493,6 +628,18 @@ impl Session {
         self.pipe.set_deadline(deadline);
         let response_body = protocol::read_frame(&mut self.pipe)?;
         Ok(protocol::decode_response(&response_body, request_id)?.message)
+    }
+
+    fn current_config(&mut self) -> Result<(u64, u64, Vec<u8>), ControlError> {
+        match self.exchange(Request::GetConfig)? {
+            Response::Config {
+                revision,
+                generation,
+                config_bytes,
+            } => Ok((revision, generation, config_bytes)),
+            Response::Error(code) => Err(ControlError::Rejected(code)),
+            _ => Err(ControlError::Protocol(ProtocolError::InvalidMessage)),
+        }
     }
 }
 
@@ -978,7 +1125,10 @@ fn generate_secret() -> Result<[u8; AUTH_SECRET_BYTES], ControlError> {
     }
 }
 
-fn process_status(started_at: Instant) -> Result<EngineStatus, ControlError> {
+fn process_status(
+    started_at: Instant,
+    config: ConfigOwnerStatus,
+) -> Result<EngineStatus, ControlError> {
     let process = unsafe { GetCurrentProcess() };
     let mut handle_count = 0;
     if unsafe { GetProcessHandleCount(process, &mut handle_count) } == 0 {
@@ -999,6 +1149,10 @@ fn process_status(started_at: Instant) -> Result<EngineStatus, ControlError> {
         thread_count: current_process_thread_count()?,
         handle_count,
         working_set_bytes: u64::try_from(memory.WorkingSetSize).unwrap_or(u64::MAX),
+        config_available: config.available,
+        config_revision: config.revision,
+        config_generation: config.generation,
+        config_candidate_prepared: config.candidate_prepared,
     })
 }
 
@@ -1126,7 +1280,8 @@ mod tests {
         let Some(server) = EngineServer::for_test(&directory, &suffix).unwrap() else {
             return;
         };
-        let exit = server.run(Arc::new(AtomicBool::new(false))).unwrap();
+        let (owner, _) = ConfigOwner::startup(&directory);
+        let exit = server.run(Arc::new(AtomicBool::new(false)), owner).unwrap();
         assert_eq!(exit, ServerExit::Shutdown);
     }
 
@@ -1157,6 +1312,50 @@ mod tests {
             .connect_or_start_with(|| Ok(()))
             .expect("one helper must own the endpoint");
         assert_eq!(control.status().unwrap().role, ProcessRole::Engine);
+    }
+
+    #[test]
+    fn settings_config_mutation_has_engine_as_only_writer() {
+        let (directory, suffix, control) = fixture();
+        let child = spawn_helper(directory.path(), &suffix);
+        let _guard = ChildGuard::new(child, control.clone());
+        control.connect_or_start_with(|| Ok(())).unwrap();
+
+        let mut document = control.current_config().unwrap();
+        document.shared.appearance.trail_thickness = 9.0;
+        control.apply_config(document.clone()).unwrap();
+
+        assert_eq!(control.current_config().unwrap(), document);
+        let status = control.status().unwrap();
+        assert_eq!((status.config_revision, status.config_generation), (2, 2));
+        assert!(directory.path().join("zero-gesture.config.json").exists());
+    }
+
+    #[test]
+    fn prepared_candidate_is_cleaned_when_settings_disconnects() {
+        let (directory, suffix, control) = fixture();
+        let child = spawn_helper(directory.path(), &suffix);
+        let _guard = ChildGuard::new(child, control.clone());
+        control.connect_or_start_with(|| Ok(())).unwrap();
+
+        let mut session = Session::connect(&control.endpoint).unwrap();
+        let (revision, _, mut bytes) = session.current_config().unwrap();
+        bytes.push(b' ');
+        assert!(matches!(
+            session
+                .exchange(Request::PrepareConfig {
+                    expected_revision: revision,
+                    config_bytes: bytes,
+                })
+                .unwrap(),
+            Response::Prepared { .. }
+        ));
+        drop(session);
+
+        let mut document = control.current_config().unwrap();
+        document.shared.enabled = !document.shared.enabled;
+        control.apply_config(document).unwrap();
+        assert!(!control.status().unwrap().config_candidate_prepared);
     }
 
     #[test]
