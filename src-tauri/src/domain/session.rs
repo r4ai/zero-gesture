@@ -1,6 +1,6 @@
-use std::collections::HashMap;
+use std::sync::Arc;
 
-use crate::config::{Action, GestureStep};
+use crate::config::GestureStep;
 
 use super::recognition::GestureRecognizer;
 
@@ -35,6 +35,34 @@ impl TriggerButton {
     }
 }
 
+/// Numeric identity of one compiled binding set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct BindingSetId(u32);
+
+impl BindingSetId {
+    pub(crate) fn from_index(index: usize) -> Option<Self> {
+        u32::try_from(index).ok().map(Self)
+    }
+
+    pub(crate) fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// Numeric identity of one compiled action and display label.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct ActionId(u32);
+
+impl ActionId {
+    pub(crate) fn from_index(index: usize) -> Option<Self> {
+        u32::try_from(index).ok().map(Self)
+    }
+
+    pub(crate) fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
 /// Platform-normalized mouse input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MouseEvent {
@@ -47,33 +75,31 @@ pub(crate) enum MouseEvent {
 }
 
 /// One release-mode binding used by the gesture machine.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) struct ReleaseBinding {
     pub(crate) trigger: TriggerButton,
     pub(crate) sequence: Vec<GestureStep>,
-    pub(crate) action: Action,
-    pub(crate) label: String,
+    pub(crate) action: ActionId,
 }
 
 /// One hold-mode binding used by the gesture machine.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) struct HoldBinding {
     pub(crate) trigger: TriggerButton,
     pub(crate) sequence: Vec<GestureStep>,
     pub(crate) step: GestureStep,
-    pub(crate) action: Action,
-    pub(crate) label: String,
+    pub(crate) action: ActionId,
 }
 
 /// Precompiled bindings for one application ID or the default set.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) struct AppBindingSet {
     pub(crate) release_bindings: Vec<ReleaseBinding>,
     pub(crate) hold_bindings: Vec<HoldBinding>,
 }
 
 /// Immutable recognition and binding configuration owned by a gesture machine.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) struct GestureConfig {
     pub(crate) safety_timeout_ms: u32,
     pub(crate) min_segment_px: i32,
@@ -81,12 +107,13 @@ pub(crate) struct GestureConfig {
     pub(crate) axis_ambiguity_deadzone_px: i32,
     pub(crate) replay_distance_threshold_px: i32,
     pub(crate) max_gesture_steps: usize,
-    pub(crate) binding_sets: HashMap<String, AppBindingSet>,
+    pub(crate) default_binding_set: BindingSetId,
+    pub(crate) binding_sets: Vec<AppBindingSet>,
 }
 
 impl GestureConfig {
     fn has_any_binding_for_trigger(&self, trigger: TriggerButton) -> bool {
-        self.binding_sets.values().any(|set| {
+        self.binding_sets.iter().any(|set| {
             set.release_bindings
                 .iter()
                 .any(|binding| binding.trigger == trigger)
@@ -97,8 +124,12 @@ impl GestureConfig {
         })
     }
 
-    fn has_binding_for_trigger(&self, trigger: TriggerButton, matched_app: Option<&str>) -> bool {
-        self.matched_binding_set(matched_app).is_some_and(|set| {
+    fn has_binding_for_trigger(
+        &self,
+        trigger: TriggerButton,
+        binding_set: Option<BindingSetId>,
+    ) -> bool {
+        self.matched_binding_set(binding_set).is_some_and(|set| {
             set.release_bindings
                 .iter()
                 .any(|binding| binding.trigger == trigger)
@@ -121,9 +152,9 @@ impl GestureConfig {
         &self,
         trigger: TriggerButton,
         sequence: &[GestureStep],
-        matched_app: Option<&str>,
+        binding_set: Option<BindingSetId>,
     ) -> Option<&ReleaseBinding> {
-        self.matched_binding_set(matched_app)
+        self.matched_binding_set(binding_set)
             .and_then(|set| {
                 set.release_bindings
                     .iter()
@@ -143,10 +174,10 @@ impl GestureConfig {
         trigger: TriggerButton,
         sequence: &[GestureStep],
         step: GestureStep,
-        matched_app: Option<&str>,
+        binding_set: Option<BindingSetId>,
     ) -> Option<&HoldBinding> {
         resolve_hold_from_set(
-            self.matched_binding_set(matched_app),
+            self.matched_binding_set(binding_set),
             trigger,
             sequence,
             step,
@@ -154,14 +185,14 @@ impl GestureConfig {
         .or_else(|| resolve_hold_from_set(self.default_binding_set(), trigger, sequence, step))
     }
 
-    fn matched_binding_set(&self, matched_app: Option<&str>) -> Option<&AppBindingSet> {
-        matched_app
-            .filter(|app_id| *app_id != crate::config::DEFAULT_APP_ID)
-            .and_then(|app_id| self.binding_sets.get(app_id))
+    fn matched_binding_set(&self, binding_set: Option<BindingSetId>) -> Option<&AppBindingSet> {
+        binding_set
+            .filter(|set| *set != self.default_binding_set)
+            .and_then(|set| self.binding_sets.get(set.index()))
     }
 
     fn default_binding_set(&self) -> Option<&AppBindingSet> {
-        self.binding_sets.get(crate::config::DEFAULT_APP_ID)
+        self.binding_sets.get(self.default_binding_set.index())
     }
 }
 
@@ -171,7 +202,7 @@ pub(crate) enum GestureInput {
         event: MouseEvent,
         point: Point,
         tick: u32,
-        matched_app: Option<String>,
+        binding_set: Option<BindingSetId>,
     },
     SafetyTimer {
         tick: u32,
@@ -194,31 +225,31 @@ pub(crate) struct ReplayRequest {
 }
 
 /// The one session transition selected for an input.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GestureTransition {
     Continue,
-    ContinueWithAction { action: Action, repeat: u16 },
+    ContinueWithAction { action: ActionId, repeat: u16 },
     Complete,
-    FinishWithAction { action: Action },
+    FinishWithAction { action: ActionId },
     Replay(ReplayRequest),
     Cancel,
 }
 
 /// A platform-neutral rendering effect.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RenderEffect {
     StartGesture,
     TrackPoint(Point),
-    UpdateLabel(Option<String>),
+    UpdateLabel(Option<ActionId>),
     EndGesture,
 }
 
 /// Up to two rendering effects emitted by one transition.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct RenderEffects([Option<RenderEffect>; 2]);
 
 impl RenderEffects {
-    fn push(&mut self, effect: RenderEffect) {
+    pub(super) fn push(&mut self, effect: RenderEffect) {
         let slot = self
             .0
             .iter_mut()
@@ -248,6 +279,7 @@ impl IntoIterator for RenderEffects {
 }
 
 /// Closed decision returned for one input.
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct Decision {
     pub(crate) disposition: Disposition,
     pub(crate) transition: GestureTransition,
@@ -268,25 +300,26 @@ enum SessionState {
     Idle,
     Gesturing {
         entered_tick: u32,
+        config: Arc<GestureConfig>,
         trigger: TriggerButton,
         recognizer: GestureRecognizer,
         origin: Point,
         last_point: Point,
         travel_distance_px: f64,
-        last_label: Option<String>,
-        matched_app: Option<String>,
+        last_label: Option<ActionId>,
+        binding_set: Option<BindingSetId>,
         used_hold_action: bool,
     },
 }
 
 /// Owned portable gesture recognition and session decision module.
 pub(crate) struct GestureMachine {
-    config: GestureConfig,
+    config: Arc<GestureConfig>,
     state: SessionState,
 }
 
 impl GestureMachine {
-    pub(crate) fn new(config: GestureConfig) -> Self {
+    pub(crate) fn new(config: Arc<GestureConfig>) -> Self {
         Self {
             config,
             state: SessionState::Idle,
@@ -301,6 +334,14 @@ impl GestureMachine {
         matches!(self.state, SessionState::Idle) && self.config.has_any_binding_for_trigger(trigger)
     }
 
+    pub(crate) fn publish_config(&mut self, config: Arc<GestureConfig>) {
+        self.config = config;
+    }
+
+    pub(super) fn cancel(&mut self) {
+        self.state = SessionState::Idle;
+    }
+
     /// Evaluates one normalized input and returns the effects for the caller.
     pub(crate) fn handle(&mut self, input: GestureInput) -> Decision {
         match input {
@@ -308,8 +349,8 @@ impl GestureMachine {
                 event,
                 point,
                 tick,
-                matched_app,
-            } => self.handle_pointer(event, point, tick, matched_app),
+                binding_set,
+            } => self.handle_pointer(event, point, tick, binding_set),
             GestureInput::SafetyTimer { tick } => self.handle_safety_timer(tick),
         }
     }
@@ -319,37 +360,36 @@ impl GestureMachine {
         event: MouseEvent,
         point: Point,
         tick: u32,
-        matched_app: Option<String>,
+        binding_set: Option<BindingSetId>,
     ) -> Decision {
         match &mut self.state {
             SessionState::Idle => {
                 let MouseEvent::ButtonDown(trigger) = event else {
                     return Decision::pass(GestureTransition::Continue);
                 };
-                if !self
-                    .config
-                    .has_binding_for_trigger(trigger, matched_app.as_deref())
-                {
+                if !self.config.has_binding_for_trigger(trigger, binding_set) {
                     return Decision::pass(GestureTransition::Continue);
                 }
 
+                let config = Arc::clone(&self.config);
                 let mut recognizer = GestureRecognizer::new(
-                    self.config.min_segment_px,
-                    self.config.direction_switch_confirm_px,
-                    self.config.axis_ambiguity_deadzone_px,
-                    self.config.max_gesture_steps,
+                    config.min_segment_px,
+                    config.direction_switch_confirm_px,
+                    config.axis_ambiguity_deadzone_px,
+                    config.max_gesture_steps,
                 );
                 recognizer.add_point(point.x, point.y);
 
                 self.state = SessionState::Gesturing {
                     entered_tick: tick,
+                    config,
                     trigger,
                     recognizer,
                     origin: point,
                     last_point: point,
                     travel_distance_px: 0.0,
                     last_label: None,
-                    matched_app,
+                    binding_set,
                     used_hold_action: false,
                 };
 
@@ -363,13 +403,14 @@ impl GestureMachine {
                 decision
             }
             SessionState::Gesturing {
+                config,
                 trigger,
                 recognizer,
                 origin,
                 last_point,
                 travel_distance_px,
                 last_label,
-                matched_app,
+                binding_set,
                 used_hold_action,
                 ..
             } => match event {
@@ -378,8 +419,7 @@ impl GestureMachine {
                     *last_point = point;
                     recognizer.add_point(point.x, point.y);
 
-                    let next_label =
-                        resolve_label(&self.config, *trigger, recognizer, matched_app.as_deref());
+                    let next_label = resolve_label(config, *trigger, recognizer, *binding_set);
                     let mut decision = Decision::pass(GestureTransition::Continue);
                     decision.render.push(RenderEffect::TrackPoint(point));
                     update_label(&mut decision.render, last_label, next_label);
@@ -387,10 +427,10 @@ impl GestureMachine {
                 }
                 MouseEvent::WheelUp(steps) => process_wheel_input(
                     WheelContext {
-                        config: &self.config,
+                        config,
                         trigger: *trigger,
                         recognizer,
-                        matched_app: matched_app.as_deref(),
+                        binding_set: *binding_set,
                         last_label,
                         used_hold_action,
                     },
@@ -399,10 +439,10 @@ impl GestureMachine {
                 ),
                 MouseEvent::WheelDown(steps) => process_wheel_input(
                     WheelContext {
-                        config: &self.config,
+                        config,
                         trigger: *trigger,
                         recognizer,
-                        matched_app: matched_app.as_deref(),
+                        binding_set: *binding_set,
                         last_label,
                         used_hold_action,
                     },
@@ -411,8 +451,7 @@ impl GestureMachine {
                 ),
                 MouseEvent::ButtonDown(button) => {
                     recognizer.add_input_step(button.to_step());
-                    let next_label =
-                        resolve_label(&self.config, *trigger, recognizer, matched_app.as_deref());
+                    let next_label = resolve_label(config, *trigger, recognizer, *binding_set);
                     let mut decision = Decision {
                         disposition: Disposition::Suppress,
                         transition: GestureTransition::Continue,
@@ -431,17 +470,17 @@ impl GestureMachine {
                     }
 
                     let sequence = recognizer.finalize_sequence();
-                    let matched_action = sequence.as_deref().and_then(|sequence| {
-                        self.config
-                            .resolve_release(*trigger, sequence, matched_app.as_deref())
-                            .map(|binding| binding.action.clone())
+                    let matched_action = sequence.as_ref().and_then(|sequence| {
+                        config
+                            .resolve_release(*trigger, sequence.as_slice(), *binding_set)
+                            .map(|binding| binding.action)
                     });
                     let transition = if let Some(action) = matched_action {
                         GestureTransition::FinishWithAction { action }
                     } else if !*used_hold_action
                         && should_replay_unmatched(
                             *travel_distance_px,
-                            self.config.replay_distance_threshold_px,
+                            config.replay_distance_threshold_px,
                         )
                     {
                         GestureTransition::Replay(ReplayRequest {
@@ -489,8 +528,8 @@ struct WheelContext<'a> {
     config: &'a GestureConfig,
     trigger: TriggerButton,
     recognizer: &'a mut GestureRecognizer,
-    matched_app: Option<&'a str>,
-    last_label: &'a mut Option<String>,
+    binding_set: Option<BindingSetId>,
+    last_label: &'a mut Option<ActionId>,
     used_hold_action: &'a mut bool,
 }
 
@@ -499,33 +538,35 @@ fn process_wheel_input(ctx: WheelContext<'_>, step: GestureStep, steps: u16) -> 
         return Decision::pass(GestureTransition::Continue);
     }
 
-    let current_sequence = ctx.recognizer.current_sequence().unwrap_or_default();
-    if let Some(binding) =
-        ctx.config
-            .resolve_hold(ctx.trigger, &current_sequence, step, ctx.matched_app)
+    let current_sequence = ctx.recognizer.current_sequence();
+    let sequence = current_sequence
+        .as_ref()
+        .map_or(&[][..], |sequence| sequence.as_slice());
+    if let Some(binding) = ctx
+        .config
+        .resolve_hold(ctx.trigger, sequence, step, ctx.binding_set)
     {
         *ctx.used_hold_action = true;
         let mut decision = Decision {
             disposition: Disposition::Suppress,
             transition: GestureTransition::ContinueWithAction {
-                action: binding.action.clone(),
+                action: binding.action,
                 repeat: steps,
             },
             render: RenderEffects::default(),
         };
-        update_label(
-            &mut decision.render,
-            ctx.last_label,
-            Some(binding.label.clone()),
-        );
+        update_label(&mut decision.render, ctx.last_label, Some(binding.action));
         ctx.recognizer.reset_sequence();
         return decision;
     }
 
     for _ in 0..usize::from(steps) {
         ctx.recognizer.add_input_step(step);
+        if ctx.recognizer.current_sequence().is_none() {
+            break;
+        }
     }
-    let next_label = resolve_label(ctx.config, ctx.trigger, ctx.recognizer, ctx.matched_app);
+    let next_label = resolve_label(ctx.config, ctx.trigger, ctx.recognizer, ctx.binding_set);
     let mut decision = Decision {
         disposition: Disposition::Suppress,
         transition: GestureTransition::Continue,
@@ -558,22 +599,22 @@ fn resolve_label(
     config: &GestureConfig,
     trigger: TriggerButton,
     recognizer: &GestureRecognizer,
-    matched_app: Option<&str>,
-) -> Option<String> {
+    binding_set: Option<BindingSetId>,
+) -> Option<ActionId> {
     recognizer.current_sequence().and_then(|sequence| {
         config
-            .resolve_release(trigger, &sequence, matched_app)
-            .map(|binding| binding.label.clone())
+            .resolve_release(trigger, sequence.as_slice(), binding_set)
+            .map(|binding| binding.action)
     })
 }
 
 fn update_label(
     render: &mut RenderEffects,
-    last_label: &mut Option<String>,
-    next_label: Option<String>,
+    last_label: &mut Option<ActionId>,
+    next_label: Option<ActionId>,
 ) {
     if *last_label != next_label {
-        render.push(RenderEffect::UpdateLabel(next_label.clone()));
+        render.push(RenderEffect::UpdateLabel(next_label));
         *last_label = next_label;
     }
 }
@@ -592,23 +633,20 @@ fn segment_distance(a: Point, b: Point) -> f64 {
 mod tests {
     use super::*;
 
-    fn key_action(key: &str) -> Action {
-        Action::Keyboard {
-            keys: vec![key.to_string()],
-        }
+    fn key_action(key: &str) -> ActionId {
+        ActionId::from_index(usize::from(key.as_bytes()[0])).unwrap()
     }
 
     fn release_binding(
         trigger: TriggerButton,
         sequence: Vec<GestureStep>,
-        action: Action,
-        label: &str,
+        action: ActionId,
+        _label: &str,
     ) -> ReleaseBinding {
         ReleaseBinding {
             trigger,
             sequence,
             action,
-            label: label.to_string(),
         }
     }
 
@@ -616,15 +654,14 @@ mod tests {
         trigger: TriggerButton,
         sequence: Vec<GestureStep>,
         step: GestureStep,
-        action: Action,
-        label: &str,
+        action: ActionId,
+        _label: &str,
     ) -> HoldBinding {
         HoldBinding {
             trigger,
             sequence,
             step,
             action,
-            label: label.to_string(),
         }
     }
 
@@ -643,13 +680,11 @@ mod tests {
             axis_ambiguity_deadzone_px: 0,
             replay_distance_threshold_px: 8,
             max_gesture_steps: 8,
-            binding_sets: HashMap::from([(
-                crate::config::DEFAULT_APP_ID.to_string(),
-                AppBindingSet {
-                    release_bindings,
-                    hold_bindings,
-                },
-            )]),
+            default_binding_set: BindingSetId::from_index(0).unwrap(),
+            binding_sets: vec![AppBindingSet {
+                release_bindings,
+                hold_bindings,
+            }],
         }
     }
 
@@ -658,7 +693,7 @@ mod tests {
             event,
             point: Point::new(x, y),
             tick,
-            matched_app: None,
+            binding_set: None,
         }
     }
 
@@ -671,17 +706,17 @@ mod tests {
         ));
     }
 
-    fn assert_action(transition: GestureTransition, expected: &Action, repeat: u16) {
+    fn assert_action(transition: GestureTransition, expected: ActionId, repeat: u16) {
         match transition {
             GestureTransition::ContinueWithAction {
                 action,
                 repeat: actual,
             } => {
-                assert_eq!(&action, expected);
+                assert_eq!(action, expected);
                 assert_eq!(actual, repeat);
             }
             GestureTransition::FinishWithAction { action } => {
-                assert_eq!(&action, expected);
+                assert_eq!(action, expected);
                 assert_eq!(repeat, 1);
             }
             other => panic!("expected action transition, got {other:?}"),
@@ -696,7 +731,7 @@ mod tests {
             key_action("a"),
             "A",
         )]);
-        let mut machine = GestureMachine::new(config);
+        let mut machine = GestureMachine::new(config.into());
 
         let decision = machine.handle(pointer(
             MouseEvent::ButtonDown(TriggerButton::Right),
@@ -723,7 +758,7 @@ mod tests {
             key_action("a"),
             "A",
         )]);
-        let mut machine = GestureMachine::new(config);
+        let mut machine = GestureMachine::new(config.into());
 
         let decision = machine.handle(pointer(
             MouseEvent::ButtonDown(TriggerButton::Left),
@@ -746,7 +781,7 @@ mod tests {
             key_action("a"),
             "A",
         )]);
-        let mut machine = GestureMachine::new(config);
+        let mut machine = GestureMachine::new(config.into());
         start(
             &mut machine,
             TriggerButton::Right,
@@ -770,10 +805,10 @@ mod tests {
         let config = test_config(vec![release_binding(
             TriggerButton::Right,
             vec![GestureStep::Right, GestureStep::Down],
-            action.clone(),
+            action,
             "Reload",
         )]);
-        let mut machine = GestureMachine::new(config);
+        let mut machine = GestureMachine::new(config.into());
         start(
             &mut machine,
             TriggerButton::Right,
@@ -791,7 +826,7 @@ mod tests {
         ));
 
         assert_eq!(decision.disposition, Disposition::Suppress);
-        assert_action(decision.transition, &action, 1);
+        assert_action(decision.transition, action, 1);
         assert!(matches!(
             decision.render.last(),
             Some(RenderEffect::EndGesture)
@@ -807,7 +842,7 @@ mod tests {
             key_action("a"),
             "A",
         )]);
-        let mut machine = GestureMachine::new(config);
+        let mut machine = GestureMachine::new(config.into());
         start(
             &mut machine,
             TriggerButton::Right,
@@ -840,7 +875,7 @@ mod tests {
             key_action("a"),
             "A",
         )]);
-        let mut machine = GestureMachine::new(config);
+        let mut machine = GestureMachine::new(config.into());
         start(
             &mut machine,
             TriggerButton::Right,
@@ -867,7 +902,7 @@ mod tests {
             key_action("a"),
             "A",
         )]);
-        let mut machine = GestureMachine::new(config);
+        let mut machine = GestureMachine::new(config.into());
         start(
             &mut machine,
             TriggerButton::Right,
@@ -894,7 +929,7 @@ mod tests {
             key_action("a"),
             "A",
         )]);
-        let mut machine = GestureMachine::new(config);
+        let mut machine = GestureMachine::new(config.into());
         start(
             &mut machine,
             TriggerButton::Right,
@@ -923,7 +958,7 @@ mod tests {
             "A",
         )]);
         config.replay_distance_threshold_px = 32;
-        let mut machine = GestureMachine::new(config);
+        let mut machine = GestureMachine::new(config.into());
         start(
             &mut machine,
             TriggerButton::Right,
@@ -953,7 +988,7 @@ mod tests {
         config.min_segment_px = 30;
         config.direction_switch_confirm_px = 24;
         config.replay_distance_threshold_px = 6;
-        let mut machine = GestureMachine::new(config);
+        let mut machine = GestureMachine::new(config.into());
         start(
             &mut machine,
             TriggerButton::Right,
@@ -978,10 +1013,10 @@ mod tests {
         let config = test_config(vec![release_binding(
             TriggerButton::Middle,
             vec![GestureStep::WheelUp],
-            action.clone(),
+            action,
             "PageUp",
         )]);
-        let mut machine = GestureMachine::new(config);
+        let mut machine = GestureMachine::new(config.into());
         start(&mut machine, TriggerButton::Middle, Point::new(0, 0), 100);
         machine.handle(pointer(MouseEvent::WheelUp(1), 0, 0, 110));
 
@@ -992,7 +1027,7 @@ mod tests {
             120,
         ));
 
-        assert_action(decision.transition, &action, 1);
+        assert_action(decision.transition, action, 1);
     }
 
     #[test]
@@ -1004,17 +1039,17 @@ mod tests {
                 TriggerButton::Right,
                 Vec::new(),
                 GestureStep::WheelUp,
-                action.clone(),
+                action,
                 "PageUp",
             )],
         );
-        let mut machine = GestureMachine::new(config);
+        let mut machine = GestureMachine::new(config.into());
         start(&mut machine, TriggerButton::Right, Point::new(0, 0), 100);
 
         let decision = machine.handle(pointer(MouseEvent::WheelUp(2), 0, 0, 110));
 
         assert_eq!(decision.disposition, Disposition::Suppress);
-        assert_action(decision.transition, &action, 2);
+        assert_action(decision.transition, action, 2);
     }
 
     #[test]
@@ -1030,7 +1065,7 @@ mod tests {
                 "PageDown",
             )],
         );
-        let mut machine = GestureMachine::new(config);
+        let mut machine = GestureMachine::new(config.into());
         start(
             &mut machine,
             TriggerButton::Right,
@@ -1058,11 +1093,11 @@ mod tests {
                 TriggerButton::Right,
                 vec![GestureStep::Right],
                 GestureStep::WheelDown,
-                action.clone(),
+                action,
                 "Right + WheelDown",
             )],
         );
-        let mut machine = GestureMachine::new(config);
+        let mut machine = GestureMachine::new(config.into());
         start(
             &mut machine,
             TriggerButton::Right,
@@ -1073,7 +1108,7 @@ mod tests {
 
         let decision = machine.handle(pointer(MouseEvent::WheelDown(1), 150, 100, 1020));
 
-        assert_action(decision.transition, &action, 1);
+        assert_action(decision.transition, action, 1);
     }
 
     #[test]
@@ -1093,12 +1128,12 @@ mod tests {
                     TriggerButton::Right,
                     vec![GestureStep::Right],
                     GestureStep::WheelDown,
-                    specific_action.clone(),
+                    specific_action,
                     "Right WheelDown",
                 ),
             ],
         );
-        let mut machine = GestureMachine::new(config);
+        let mut machine = GestureMachine::new(config.into());
         start(
             &mut machine,
             TriggerButton::Right,
@@ -1109,7 +1144,7 @@ mod tests {
 
         let decision = machine.handle(pointer(MouseEvent::WheelDown(1), 150, 100, 1020));
 
-        assert_action(decision.transition, &specific_action, 1);
+        assert_action(decision.transition, specific_action, 1);
     }
 
     #[test]
@@ -1123,19 +1158,19 @@ mod tests {
                     TriggerButton::Right,
                     Vec::new(),
                     GestureStep::WheelUp,
-                    wildcard_action.clone(),
+                    wildcard_action,
                     "Any WheelUp",
                 ),
                 hold_binding(
                     TriggerButton::Right,
                     vec![GestureStep::Right],
                     GestureStep::WheelUp,
-                    specific_action.clone(),
+                    specific_action,
                     "Right WheelUp",
                 ),
             ],
         );
-        let mut machine = GestureMachine::new(config);
+        let mut machine = GestureMachine::new(config.into());
         start(
             &mut machine,
             TriggerButton::Right,
@@ -1147,8 +1182,8 @@ mod tests {
         let first = machine.handle(pointer(MouseEvent::WheelUp(1), 150, 100, 1020));
         let second = machine.handle(pointer(MouseEvent::WheelUp(1), 150, 100, 1030));
 
-        assert_action(first.transition, &specific_action, 1);
-        assert_action(second.transition, &wildcard_action, 1);
+        assert_action(first.transition, specific_action, 1);
+        assert_action(second.transition, wildcard_action, 1);
     }
 
     #[test]
@@ -1159,7 +1194,7 @@ mod tests {
             key_action("x"),
             "X",
         )]);
-        let mut machine = GestureMachine::new(config);
+        let mut machine = GestureMachine::new(config.into());
         start(&mut machine, TriggerButton::Right, Point::new(0, 0), 100);
 
         let decision = machine.handle(pointer(
@@ -1181,33 +1216,31 @@ mod tests {
         let mut config = test_config(vec![release_binding(
             TriggerButton::Right,
             vec![GestureStep::Right],
-            default_action.clone(),
+            default_action,
             "Default",
         )]);
-        config.binding_sets.insert(
-            "explorer".to_string(),
-            AppBindingSet {
-                release_bindings: vec![release_binding(
-                    TriggerButton::Right,
-                    vec![GestureStep::Right],
-                    app_action.clone(),
-                    "App",
-                )],
-                hold_bindings: Vec::new(),
-            },
-        );
+        let app_set = BindingSetId::from_index(config.binding_sets.len()).unwrap();
+        config.binding_sets.push(AppBindingSet {
+            release_bindings: vec![release_binding(
+                TriggerButton::Right,
+                vec![GestureStep::Right],
+                app_action,
+                "App",
+            )],
+            hold_bindings: Vec::new(),
+        });
 
         let app = config
-            .resolve_release(
-                TriggerButton::Right,
-                &[GestureStep::Right],
-                Some("explorer"),
-            )
+            .resolve_release(TriggerButton::Right, &[GestureStep::Right], Some(app_set))
             .expect("app binding");
         assert_eq!(app.action, app_action);
 
         let fallback = config
-            .resolve_release(TriggerButton::Right, &[GestureStep::Right], Some("unknown"))
+            .resolve_release(
+                TriggerButton::Right,
+                &[GestureStep::Right],
+                Some(BindingSetId::from_index(99).unwrap()),
+            )
             .expect("default fallback");
         assert_eq!(fallback.action, default_action);
 
@@ -1227,30 +1260,28 @@ mod tests {
                 TriggerButton::Right,
                 Vec::new(),
                 GestureStep::WheelUp,
-                default_action.clone(),
+                default_action,
                 "Default",
             )],
         );
-        config.binding_sets.insert(
-            "explorer".to_string(),
-            AppBindingSet {
-                release_bindings: Vec::new(),
-                hold_bindings: vec![hold_binding(
-                    TriggerButton::Right,
-                    Vec::new(),
-                    GestureStep::WheelUp,
-                    app_action.clone(),
-                    "App",
-                )],
-            },
-        );
+        let app_set = BindingSetId::from_index(config.binding_sets.len()).unwrap();
+        config.binding_sets.push(AppBindingSet {
+            release_bindings: Vec::new(),
+            hold_bindings: vec![hold_binding(
+                TriggerButton::Right,
+                Vec::new(),
+                GestureStep::WheelUp,
+                app_action,
+                "App",
+            )],
+        });
 
         let app = config
             .resolve_hold(
                 TriggerButton::Right,
                 &[],
                 GestureStep::WheelUp,
-                Some("explorer"),
+                Some(app_set),
             )
             .expect("app hold binding");
         assert_eq!(app.action, app_action);
@@ -1270,7 +1301,7 @@ mod tests {
             "Right",
         )]);
         config.direction_switch_confirm_px = 8;
-        let mut machine = GestureMachine::new(config);
+        let mut machine = GestureMachine::new(config.into());
         start(&mut machine, TriggerButton::Right, Point::new(0, 0), 100);
 
         let pending = machine.handle(pointer(MouseEvent::MouseMove, 7, 0, 110));
@@ -1279,7 +1310,7 @@ mod tests {
         assert_eq!(pending.render.len(), 1);
         assert!(matches!(
             confirmed.render.last(),
-            Some(RenderEffect::UpdateLabel(Some(label))) if label == "Right"
+            Some(RenderEffect::UpdateLabel(Some(label))) if *label == key_action("a")
         ));
     }
 
@@ -1291,7 +1322,7 @@ mod tests {
             key_action("a"),
             "Right Down",
         )]);
-        let mut machine = GestureMachine::new(config);
+        let mut machine = GestureMachine::new(config.into());
         start(
             &mut machine,
             TriggerButton::Right,
@@ -1304,7 +1335,7 @@ mod tests {
 
         assert!(matches!(
             decision.render.last(),
-            Some(RenderEffect::UpdateLabel(Some(label))) if label == "Right Down"
+            Some(RenderEffect::UpdateLabel(Some(label))) if *label == key_action("a")
         ));
     }
 
@@ -1316,7 +1347,7 @@ mod tests {
             key_action("a"),
             "A",
         )]);
-        let mut machine = GestureMachine::new(config);
+        let mut machine = GestureMachine::new(config.into());
         start(
             &mut machine,
             TriggerButton::Right,

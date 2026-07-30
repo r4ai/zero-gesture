@@ -26,7 +26,9 @@ enum Direction {
 #[derive(Debug)]
 pub(super) struct GestureRecognizer {
     /// Confirmed sequence steps (movement and explicit input events).
-    steps: Vec<GestureStep>,
+    steps: [GestureStep; MAX_GESTURE_STEPS],
+    /// Number of initialized entries in `steps`.
+    step_count: u8,
     /// Last recorded cursor position.
     last_point: Option<(i32, i32)>,
     /// Direction currently being accumulated.
@@ -44,7 +46,7 @@ pub(super) struct GestureRecognizer {
     /// Deadzone used to ignore tiny ambiguous diagonal motion.
     axis_ambiguity_deadzone_px: i32,
     /// Hard limit for sequence length.
-    max_steps: usize,
+    max_steps: u8,
     /// Set once sequence length exceeds `max_steps`.
     overflowed: bool,
 }
@@ -58,7 +60,8 @@ impl GestureRecognizer {
         max_steps: usize,
     ) -> Self {
         Self {
-            steps: Vec::new(),
+            steps: [GestureStep::Up; MAX_GESTURE_STEPS],
+            step_count: 0,
             last_point: None,
             current_dir: None,
             pending_dir: None,
@@ -67,7 +70,8 @@ impl GestureRecognizer {
             min_segment_px,
             direction_switch_confirm_px,
             axis_ambiguity_deadzone_px,
-            max_steps,
+            max_steps: u8::try_from(max_steps)
+                .expect("validated maximum gesture steps must fit in u8"),
             overflowed: false,
         }
     }
@@ -138,25 +142,29 @@ impl GestureRecognizer {
     ///
     /// Includes an in-progress movement segment when it is already over
     /// `min_segment_px`.
-    pub(super) fn current_sequence(&self) -> Option<Vec<GestureStep>> {
+    pub(super) fn current_sequence(&self) -> Option<GestureSequence> {
         if self.overflowed {
             return None;
         }
 
-        let mut seq = self.steps.clone();
+        let mut seq = GestureSequence {
+            steps: self.steps,
+            len: self.step_count,
+        };
         if let Some(dir) = self.current_dir {
             if self.segment_accum >= self.min_segment_px {
                 let step = Self::direction_to_step(dir);
-                if seq.last() != Some(&step) {
-                    if seq.len() >= self.max_steps {
+                if seq.as_slice().last() != Some(&step) {
+                    if seq.len >= self.max_steps {
                         return None;
                     }
-                    seq.push(step);
+                    seq.steps[usize::from(seq.len)] = step;
+                    seq.len += 1;
                 }
             }
         }
 
-        if seq.is_empty() {
+        if seq.len == 0 {
             None
         } else {
             Some(seq)
@@ -167,12 +175,15 @@ impl GestureRecognizer {
     ///
     /// Returns `None` when no valid steps were captured, or when the sequence
     /// overflowed the configured step limit.
-    pub(super) fn finalize_sequence(&mut self) -> Option<Vec<GestureStep>> {
+    pub(super) fn finalize_sequence(&mut self) -> Option<GestureSequence> {
         self.flush_current_segment();
-        if self.overflowed || self.steps.is_empty() {
+        if self.overflowed || self.step_count == 0 {
             None
         } else {
-            Some(self.steps.clone())
+            Some(GestureSequence {
+                steps: self.steps,
+                len: self.step_count,
+            })
         }
     }
 
@@ -181,7 +192,7 @@ impl GestureRecognizer {
     /// This clears all confirmed and in-progress steps so subsequent input is
     /// interpreted as a fresh sequence within the same gesture session.
     pub(super) fn reset_sequence(&mut self) {
-        self.steps.clear();
+        self.step_count = 0;
         self.current_dir = None;
         self.pending_dir = None;
         self.pending_accum = 0;
@@ -272,14 +283,16 @@ impl GestureRecognizer {
     }
 
     fn push_step(&mut self, step: GestureStep, dedupe_consecutive: bool) {
-        if dedupe_consecutive && self.steps.last() == Some(&step) {
+        let steps = &self.steps[..usize::from(self.step_count)];
+        if dedupe_consecutive && steps.last() == Some(&step) {
             return;
         }
-        if self.steps.len() >= self.max_steps {
+        if self.step_count >= self.max_steps {
             self.overflowed = true;
             return;
         }
-        self.steps.push(step);
+        self.steps[usize::from(self.step_count)] = step;
+        self.step_count += 1;
     }
 
     fn direction_to_step(dir: Direction) -> GestureStep {
@@ -289,6 +302,19 @@ impl GestureRecognizer {
             Direction::Up => GestureStep::Up,
             Direction::Down => GestureStep::Down,
         }
+    }
+}
+
+/// One fixed-capacity recognized sequence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct GestureSequence {
+    steps: [GestureStep; MAX_GESTURE_STEPS],
+    len: u8,
+}
+
+impl GestureSequence {
+    pub(super) fn as_slice(&self) -> &[GestureStep] {
+        &self.steps[..usize::from(self.len)]
     }
 }
 
@@ -316,7 +342,8 @@ mod tests {
         rec.add_point(160, 160);
 
         assert_eq!(
-            rec.finalize_sequence(),
+            rec.finalize_sequence()
+                .map(|sequence| sequence.as_slice().to_vec()),
             Some(vec![
                 GestureStep::Right,
                 GestureStep::WheelUp,
@@ -332,8 +359,8 @@ mod tests {
         rec.add_input_step(GestureStep::WheelDown);
         rec.add_input_step(GestureStep::WheelUp);
 
-        assert_eq!(rec.current_sequence(), None);
-        assert_eq!(rec.finalize_sequence(), None);
+        assert!(rec.current_sequence().is_none());
+        assert!(rec.finalize_sequence().is_none());
     }
 
     #[test]
@@ -342,8 +369,16 @@ mod tests {
         rec.add_point(100, 100);
         rec.add_point(100, 160);
 
-        assert_eq!(rec.current_sequence(), Some(vec![GestureStep::Down]));
-        assert_eq!(rec.finalize_sequence(), Some(vec![GestureStep::Down]));
+        assert_eq!(
+            rec.current_sequence()
+                .map(|sequence| sequence.as_slice().to_vec()),
+            Some(vec![GestureStep::Down])
+        );
+        assert_eq!(
+            rec.finalize_sequence()
+                .map(|sequence| sequence.as_slice().to_vec()),
+            Some(vec![GestureStep::Down])
+        );
     }
 
     #[test]
@@ -354,14 +389,19 @@ mod tests {
         rec.add_input_step(GestureStep::WheelUp);
 
         assert_eq!(
-            rec.current_sequence(),
+            rec.current_sequence()
+                .map(|sequence| sequence.as_slice().to_vec()),
             Some(vec![GestureStep::Right, GestureStep::WheelUp])
         );
 
         rec.reset_sequence();
-        assert_eq!(rec.current_sequence(), None);
+        assert!(rec.current_sequence().is_none());
 
         rec.add_input_step(GestureStep::WheelDown);
-        assert_eq!(rec.finalize_sequence(), Some(vec![GestureStep::WheelDown]));
+        assert_eq!(
+            rec.finalize_sequence()
+                .map(|sequence| sequence.as_slice().to_vec()),
+            Some(vec![GestureStep::WheelDown])
+        );
     }
 }
