@@ -81,14 +81,14 @@
       "id": "P02-WIN-012",
       "obligation": "A valid current release binding preserves its ordered sequence when deserialized.",
       "runner": "cargo-test",
-      "evidence_file": "src-tauri/src/config.rs",
+      "evidence_file": "src-tauri/src/config/document.rs",
       "evidence_name": "deserialize_config_with_sequence_bindings"
     },
     {
       "id": "P02-WIN-013",
       "obligation": "A valid current hold binding preserves its wheel step when deserialized.",
       "runner": "cargo-test",
-      "evidence_file": "src-tauri/src/config.rs",
+      "evidence_file": "src-tauri/src/config/document.rs",
       "evidence_name": "deserialize_config_with_hold_binding"
     },
     {
@@ -102,8 +102,155 @@
       "id": "P02-WIN-015",
       "obligation": "A current configuration explicitly deserializes the disabled state.",
       "runner": "cargo-test",
-      "evidence_file": "src-tauri/src/config.rs",
+      "evidence_file": "src-tauri/src/config/document.rs",
       "evidence_name": "deserialize_json_with_enabled_false"
+    },
+    {
+      "id": "P02-CONFIG-001",
+      "obligation": "A portable legacy application and binding migrate to whole Shared records.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/document.rs",
+      "evidence_name": "migrates_portable_v1_records_to_shared"
+    },
+    {
+      "id": "P02-CONFIG-002",
+      "obligation": "A Windows matcher, physical key, or Windows application reference classifies the whole legacy record as Windows.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/document.rs",
+      "evidence_name": "migrates_windows_matcher_key_and_reference_as_whole_records"
+    },
+    {
+      "id": "P02-CONFIG-003",
+      "obligation": "Legacy ctrl migrates to physical Ctrl rather than logical primary.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/document.rs",
+      "evidence_name": "migration_preserves_physical_ctrl"
+    },
+    {
+      "id": "P02-CONFIG-004",
+      "obligation": "Legacy migration preserves application IDs, binding IDs, binding order, and application references.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/document.rs",
+      "evidence_name": "migration_preserves_ids_order_and_references"
+    },
+    {
+      "id": "P02-CONFIG-005",
+      "obligation": "Windows compilation selects Shared and Windows records in document order and excludes Macos records.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/compile.rs",
+      "evidence_name": "compile_filters_variants_without_reordering_selected_records"
+    },
+    {
+      "id": "P02-CONFIG-006",
+      "obligation": "A missing Windows appearance override inherits shared appearance and a present override replaces the whole field.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/compile.rs",
+      "evidence_name": "platform_appearance_override_replaces_the_whole_field"
+    },
+    {
+      "id": "P02-CONFIG-007",
+      "obligation": "An unknown nested v2 field is rejected with its exact field path and without fallback.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/document.rs",
+      "evidence_name": "rejects_unknown_v2_field_with_nested_path"
+    },
+    {
+      "id": "P02-CONFIG-008",
+      "obligation": "An unsupported selector reports its exact field path.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/document.rs",
+      "evidence_name": "unsupported_selector_reports_exact_field_path"
+    },
+    {
+      "id": "P02-CONFIG-009",
+      "obligation": "A failed existing-config migration leaves the original active file bytes untouched.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/mod.rs",
+      "evidence_name": "failed_migration_keeps_original_file_bytes_untouched"
+    },
+    {
+      "id": "P02-CONFIG-010",
+      "obligation": "A successful existing-config migration writes an exact same-directory backup before replacing the active file with v2.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/mod.rs",
+      "evidence_name": "successful_migration_backs_up_then_atomically_replaces_active_file"
+    },
+    {
+      "id": "P02-CONFIG-011",
+      "obligation": "A newer schema version is rejected without fallback.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/document.rs",
+      "evidence_name": "rejects_newer_schema_without_fallback"
+    },
+    {
+      "id": "P02-CONFIG-012",
+      "obligation": "An unsupported platform key reports its exact field path.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/document.rs",
+      "evidence_name": "unsupported_key_reports_exact_field_path"
+    },
+    {
+      "id": "P02-CONFIG-013",
+      "obligation": "An unknown application reference reports its exact field path.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/document.rs",
+      "evidence_name": "bad_application_reference_reports_exact_field_path"
+    },
+    {
+      "id": "P02-CONFIG-014",
+      "obligation": "Windows and Macos bindings may define the same gesture signature.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/document.rs",
+      "evidence_name": "windows_and_macos_may_use_the_same_gesture"
+    },
+    {
+      "id": "P02-CONFIG-015",
+      "obligation": "A Shared gesture conflicts with the same Windows gesture signature.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/document.rs",
+      "evidence_name": "shared_gesture_conflicts_with_windows"
+    },
+    {
+      "id": "P02-CONFIG-016",
+      "obligation": "A Shared gesture conflicts with the same Macos gesture signature.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/document.rs",
+      "evidence_name": "shared_gesture_conflicts_with_macos"
+    },
+    {
+      "id": "P02-CONFIG-017",
+      "obligation": "A nested invalid v2 enum reports its exact field path.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/document.rs",
+      "evidence_name": "v2_decode_reports_nested_enum_path"
+    },
+    {
+      "id": "P02-CONFIG-018",
+      "obligation": "A nested unknown legacy field reports its exact field path.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/document.rs",
+      "evidence_name": "legacy_decode_reports_nested_unknown_field_path"
+    },
+    {
+      "id": "P02-CONFIG-019",
+      "obligation": "An invalid nested legacy tagged payload reports its exact field path.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/config/document.rs",
+      "evidence_name": "legacy_decode_reports_tagged_payload_path"
+    },
+    {
+      "id": "P02-CONFIG-020",
+      "obligation": "A worker apply failure restores the previous live config only after persisted rollback succeeds.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/commands.rs",
+      "evidence_name": "worker_failure_restores_previous_only_after_disk_rollback"
+    },
+    {
+      "id": "P02-CONFIG-021",
+      "obligation": "A persisted rollback failure disables the runtime and marks shared configuration unavailable with diagnostics.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/commands.rs",
+      "evidence_name": "disk_rollback_failure_requires_disabled_unavailable_state"
     }
   ]
 }

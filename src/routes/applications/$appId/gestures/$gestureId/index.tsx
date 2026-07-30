@@ -12,8 +12,12 @@ import {
   GESTURE_MODES,
   GESTURE_STEPS,
   type GestureStep,
+  getWindowsBindings,
   HOLD_STEPS,
   type HoldStep,
+  type Key,
+  removeWindowsBinding,
+  replaceWindowsBinding,
   TRIGGER_BUTTONS,
   type TriggerButton,
 } from "@/types/config"
@@ -64,32 +68,16 @@ function useGesture() {
   })
   const { draft, setDraft } = useConfigDraft()
 
-  const gesture = draft.bindings[appId]?.find((item) => item.id === gestureId)
+  const gesture = getWindowsBindings(draft, appId).find(
+    (item) => item.id === gestureId,
+  )
 
   const setGesture = (updatedGesture: NonNullable<typeof gesture>) => {
-    const bindings = draft.bindings[appId]
-    if (!bindings) return
-    setDraft({
-      ...draft,
-      bindings: {
-        ...draft.bindings,
-        [appId]: bindings.map((item) =>
-          item.id === gestureId ? updatedGesture : item,
-        ),
-      },
-    })
+    setDraft(replaceWindowsBinding(draft, updatedGesture))
   }
 
   const removeGesture = () => {
-    const bindings = draft.bindings[appId]
-    if (!bindings) return
-    setDraft({
-      ...draft,
-      bindings: {
-        ...draft.bindings,
-        [appId]: bindings.filter((item) => item.id !== gestureId),
-      },
-    })
+    setDraft(removeWindowsBinding(draft, appId, gestureId))
   }
 
   return { gesture, setGesture, removeGesture, appId, gestureId }
@@ -175,7 +163,7 @@ function ActionTabContent() {
   const onKeysChange = (updatedKeys: string[]) => {
     setGesture({
       ...gesture,
-      action: { ...gesture.action, keys: updatedKeys },
+      action: { ...gesture.action, keys: updatedKeys as Key[] },
     })
   }
 
@@ -256,9 +244,21 @@ function GestureTabContent() {
       console.error("Invalid gesture mode:", mode)
       return
     }
+    const { trigger, sequence } = gesture.gesture
     setGesture({
       ...gesture,
-      gesture: { step: "wheel_up", ...gesture.gesture, mode },
+      gesture:
+        mode === "hold"
+          ? {
+              trigger,
+              sequence,
+              mode,
+              step:
+                gesture.gesture.mode === "hold"
+                  ? gesture.gesture.step
+                  : "wheel_up",
+            }
+          : { trigger, sequence, mode },
     })
   }
 
@@ -293,7 +293,7 @@ function GestureTabContent() {
   }
 
   const holdStep =
-    gesture.gesture.mode === "hold" ? gesture.gesture.step : "wheel-up"
+    gesture.gesture.mode === "hold" ? gesture.gesture.step : "wheel_up"
   const onHoldStepChange = (step?: string) => {
     if (!isValidHoldStep(step)) {
       // TODO: handle invalid value
@@ -514,7 +514,7 @@ function ActionEditPage() {
   const handleKeysConfirm = (updatedKeys: string[]) => {
     setGesture({
       ...gesture,
-      action: { ...gesture.action, keys: updatedKeys },
+      action: { ...gesture.action, keys: updatedKeys as Key[] },
     })
     closeKeyboardInput()
   }

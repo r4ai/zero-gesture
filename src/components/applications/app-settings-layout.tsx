@@ -6,7 +6,15 @@ import { twMerge } from "tailwind-merge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { useConfigDraft } from "@/contexts/config-draft"
-import type { AppDefinition, GestureBinding } from "@/types/config"
+import {
+  type AppConfig,
+  addWindowsApplication,
+  addWindowsBinding,
+  type GestureBinding,
+  getWindowsApplication,
+  getWindowsApplicationIds,
+  getWindowsBindings,
+} from "@/types/config"
 
 interface AppSettingsLayoutProps {
   appId: string
@@ -20,22 +28,13 @@ interface AppItem {
   icon: "fallback" | "terminal" | "generic"
 }
 
-function toAppItems(
-  appIds: string[],
-  apps: Record<string, AppDefinition>,
-): AppItem[] {
+function toAppItems(appIds: string[], config: AppConfig): AppItem[] {
   return appIds.map((id) => {
     if (id === "default") return { id, name: "default", icon: "fallback" }
-    const name = apps[id]?.label ?? ""
+    const name = getWindowsApplication(config, id)?.label ?? ""
     if (id.includes("term")) return { id, name, icon: "terminal" }
     return { id, name, icon: "generic" }
   })
-}
-
-function getAppIdsFromBindings(bindings: Record<string, GestureBinding[]>) {
-  const ids = Object.keys(bindings)
-  const rest = ids.filter((id) => id !== "default").sort()
-  return ["default", ...rest]
 }
 
 function createNextAppId(appIds: string[]): string {
@@ -98,7 +97,7 @@ interface AppPanelLayoutProps {
 
 export function AppPanelLayout({ appId, children }: AppPanelLayoutProps) {
   const { draft } = useConfigDraft()
-  const appIds = getAppIdsFromBindings(draft.bindings)
+  const appIds = getWindowsApplicationIds(draft)
 
   if (!appIds.includes(appId)) {
     return <Navigate to="/applications" />
@@ -117,19 +116,18 @@ export function AppPanelLayout({ appId, children }: AppPanelLayoutProps) {
 function AppPanel({ appId }: { appId: string }) {
   const navigate = useNavigate()
   const { draft, setDraft } = useConfigDraft()
-  const appIds = getAppIdsFromBindings(draft.bindings)
-  const apps = toAppItems(appIds, draft.apps)
+  const appIds = getWindowsApplicationIds(draft)
+  const apps = toAppItems(appIds, draft)
 
   const addApp = () => {
     const nextId = createNextAppId(appIds)
-    setDraft({
-      ...draft,
-      apps: { ...draft.apps, [nextId]: { label: nextId, matchers: [] } },
-      bindings: {
-        ...draft.bindings,
-        [nextId]: [],
-      },
-    })
+    setDraft(
+      addWindowsApplication(draft, {
+        id: nextId,
+        label: nextId,
+        matchers: [],
+      }),
+    )
     navigate({
       to: "/applications/$appId/edit",
       params: { appId: nextId },
@@ -146,7 +144,7 @@ function AppPanel({ appId }: { appId: string }) {
       <div className="flex flex-1 flex-col gap-1 overflow-y-auto p-2">
         {apps.map((app) => {
           const isActive = appId === app.id
-          const firstGesture = draft.bindings[app.id]?.[0]
+          const firstGesture = getWindowsBindings(draft, app.id)[0]
 
           return (
             <div
@@ -231,8 +229,8 @@ function GesturePanel({
 }) {
   const navigate = useNavigate()
   const { draft, setDraft } = useConfigDraft()
-  const bindings = draft.bindings[appId] ?? []
-  const appIds = getAppIdsFromBindings(draft.bindings)
+  const bindings = getWindowsBindings(draft, appId)
+  const appIds = getWindowsApplicationIds(draft)
 
   if (!appIds.includes(appId)) {
     return <Navigate to="/applications" />
@@ -242,6 +240,7 @@ function GesturePanel({
     const nextBinding: GestureBinding = {
       id: nanoid(11),
       label: "New Gesture",
+      application_id: appId === "default" ? undefined : appId,
       gesture: {
         mode: "release",
         trigger: "right_click",
@@ -250,13 +249,7 @@ function GesturePanel({
       action: { type: "keyboard", keys: [] },
     }
 
-    setDraft({
-      ...draft,
-      bindings: {
-        ...draft.bindings,
-        [appId]: [...bindings, nextBinding],
-      },
-    })
+    setDraft(addWindowsBinding(draft, nextBinding))
 
     navigate({
       to: "/applications/$appId/gestures/$gestureId",

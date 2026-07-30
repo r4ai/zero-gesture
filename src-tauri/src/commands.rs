@@ -7,6 +7,45 @@ use std::sync::Mutex;
 use tauri::Emitter;
 use tauri_plugin_opener::OpenerExt;
 
+#[derive(Debug, PartialEq, Eq)]
+enum ApplyFailureRecovery {
+    RestorePrevious,
+    DisableUnavailable(String),
+}
+
+fn choose_apply_failure_recovery(
+    previous: Option<&config::ActiveConfig>,
+    worker_error: &str,
+    rollback_disk: impl FnOnce(&config::ActiveConfig) -> Result<(), config::ConfigError>,
+) -> ApplyFailureRecovery {
+    let Some(previous) = previous else {
+        return ApplyFailureRecovery::DisableUnavailable(format!(
+            "failed to apply worker state: {worker_error}; no previous config is available for disk rollback"
+        ));
+    };
+    match rollback_disk(previous) {
+        Ok(()) => ApplyFailureRecovery::RestorePrevious,
+        Err(rollback_error) => ApplyFailureRecovery::DisableUnavailable(format!(
+            "failed to apply worker state: {worker_error}; failed to roll back persisted config: {rollback_error}"
+        )),
+    }
+}
+
+fn disable_unavailable(
+    shared_config: &SharedConfig,
+    runtime: &ThreadRuntime,
+    diagnostic: String,
+) -> String {
+    let diagnostic = match runtime.disable_for_config_error() {
+        Ok(()) => diagnostic,
+        Err(error) => format!("{diagnostic}; failed to stop worker threads: {error}"),
+    };
+    if let Err(error) = shared_config.mark_unavailable(diagnostic.clone()) {
+        return format!("{diagnostic}; failed to mark configuration unavailable: {error}");
+    }
+    diagnostic
+}
+
 /// Tauri managed state holding an active [`capture::win32::CaptureHandle`].
 ///
 /// `None` means no capture is in progress.
@@ -22,12 +61,8 @@ pub fn show_settings_window(app: tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn get_config(
     shared_config: tauri::State<'_, SharedConfig>,
-) -> Result<config::AppConfig, String> {
-    shared_config
-        .0
-        .read()
-        .map(|c| c.clone())
-        .map_err(|_| "failed to read shared config".to_string())
+) -> Result<config::ConfigDocument, String> {
+    shared_config.document()
 }
 
 /// Persists and applies a new configuration.
@@ -36,14 +71,24 @@ pub fn get_config(
 /// the `enabled` field. This function is called by both the `update_config`
 /// Tauri command and the tray toggle handler.
 pub fn apply_config_update<R: tauri::Runtime>(
-    new_config: config::AppConfig,
+    new_config: config::ConfigDocument,
     app: &tauri::AppHandle<R>,
     shared_config: &SharedConfig,
     runtime: &ThreadRuntime,
     config_dir: &ConfigDir,
 ) -> Result<(), String> {
-    let new_config = new_config.validated();
+    let candidate =
+        config::ActiveConfig::from_document(new_config).map_err(|error| error.to_string())?;
+    apply_compiled_config_update(candidate, app, shared_config, runtime, config_dir)
+}
 
+fn apply_compiled_config_update<R: tauri::Runtime>(
+    candidate: config::ActiveConfig,
+    app: &tauri::AppHandle<R>,
+    shared_config: &SharedConfig,
+    runtime: &ThreadRuntime,
+    config_dir: &ConfigDir,
+) -> Result<(), String> {
     let _update_guard = runtime
         .config_update_lock
         .lock()
@@ -53,29 +98,50 @@ pub fn apply_config_update<R: tauri::Runtime>(
         return Err("thread runtime is already shut down".to_string());
     }
 
+    config::save_atomic(&candidate, config_dir.as_path()).map_err(|error| error.to_string())?;
+
+    let enabled = candidate.enabled();
+    let document = candidate.document().clone();
     let (restart_required, previous_config) =
-        crate::replace_live_config(shared_config, new_config.clone())?;
+        crate::replace_live_config(shared_config, candidate.clone())?;
     if restart_required {
-        if let Err(err) = runtime.apply_worker_state(shared_config.clone(), new_config.enabled) {
-            crate::rollback_config_update(
-                shared_config,
-                runtime,
-                previous_config,
-                restart_required,
-            );
-            return Err(format!("failed to apply worker state: {err}"));
+        if let Err(err) = runtime.apply_worker_state(candidate, enabled) {
+            let apply_error = format!("failed to apply worker state: {err}");
+            let recovery =
+                choose_apply_failure_recovery(previous_config.as_ref(), &err, |previous| {
+                    config::save_atomic(previous, config_dir.as_path())
+                });
+            match recovery {
+                ApplyFailureRecovery::RestorePrevious => {
+                    if let Err(rollback_error) = crate::rollback_config_update(
+                        shared_config,
+                        runtime,
+                        previous_config,
+                        apply_error.clone(),
+                        restart_required,
+                    ) {
+                        let diagnostic = disable_unavailable(
+                            shared_config,
+                            runtime,
+                            format!(
+                                "{apply_error}; failed to restore previous live config: {rollback_error}"
+                            ),
+                        );
+                        return Err(diagnostic);
+                    }
+                    return Err(apply_error);
+                }
+                ApplyFailureRecovery::DisableUnavailable(diagnostic) => {
+                    return Err(disable_unavailable(shared_config, runtime, diagnostic));
+                }
+            }
         }
     }
 
-    if let Err(err) = config::save(&new_config, config_dir.as_path()) {
-        crate::rollback_config_update(shared_config, runtime, previous_config, restart_required);
-        return Err(format!("failed to save config: {err}"));
-    }
-
-    tray::sync_toggle_menu_label(app, new_config.enabled);
+    tray::sync_toggle_menu_label(app, enabled);
 
     // Notify frontend that config has been updated
-    let _ = app.emit("config-updated", new_config.clone());
+    let _ = app.emit("config-updated", document);
 
     if restart_required {
         info!("config updated and worker state applied");
@@ -95,11 +161,10 @@ pub fn import_config(
     runtime: tauri::State<'_, ThreadRuntime>,
     config_dir: tauri::State<'_, ConfigDir>,
 ) -> Result<(), String> {
-    let raw = fs::read_to_string(&file_path).map_err(|e| format!("failed to read file: {e}"))?;
-    let new_config: config::AppConfig =
-        serde_json::from_str(&raw).map_err(|e| format!("invalid config JSON: {e}"))?;
-    apply_config_update(
-        new_config,
+    let raw = fs::read(&file_path).map_err(|e| format!("failed to read file: {e}"))?;
+    let candidate = config::decode_and_compile(&raw).map_err(|error| error.to_string())?;
+    apply_compiled_config_update(
+        candidate,
         &app,
         shared_config.inner(),
         runtime.inner(),
@@ -113,14 +178,8 @@ pub fn export_config(
     file_path: String,
     shared_config: tauri::State<'_, SharedConfig>,
 ) -> Result<(), String> {
-    let config = shared_config
-        .0
-        .read()
-        .map(|c| c.clone())
-        .map_err(|_| "failed to read shared config".to_string())?;
-    let body = serde_json::to_string_pretty(&config)
-        .map_err(|e| format!("failed to serialize config: {e}"))?;
-    fs::write(&file_path, body).map_err(|e| format!("failed to write file: {e}"))
+    let document = shared_config.document()?;
+    config::export(&document, std::path::Path::new(&file_path)).map_err(|error| error.to_string())
 }
 
 /// Tauri command that opens the config directory in the system file manager.
@@ -215,10 +274,53 @@ pub fn stop_window_capture(capture_state: tauri::State<'_, CaptureState>) -> Res
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn active() -> config::ActiveConfig {
+        config::ActiveConfig::from_document(config::ConfigDocument::default()).unwrap()
+    }
+
+    #[test]
+    fn worker_failure_restores_previous_only_after_disk_rollback() {
+        let previous = active();
+        let recovery = choose_apply_failure_recovery(Some(&previous), "worker failed", |_| Ok(()));
+        assert_eq!(recovery, ApplyFailureRecovery::RestorePrevious);
+    }
+
+    #[test]
+    fn disk_rollback_failure_requires_disabled_unavailable_state() {
+        let previous = active();
+        let recovery = choose_apply_failure_recovery(Some(&previous), "worker failed", |_| {
+            Err(config::ConfigError::at(
+                "zero-gesture.config.json",
+                "disk full",
+            ))
+        });
+        let ApplyFailureRecovery::DisableUnavailable(diagnostic) = recovery else {
+            panic!("rollback failure must not restore the previous live config");
+        };
+        assert!(diagnostic.contains("worker failed"));
+        assert!(diagnostic.contains("disk full"));
+        let mut document = config::ConfigDocument::default();
+        document.shared.enabled = false;
+        let current = config::ActiveConfig::from_document(document).unwrap();
+        let shared = SharedConfig::new(current);
+        let runtime = ThreadRuntime::start(shared.clone());
+        let diagnostic = disable_unavailable(&shared, &runtime, diagnostic);
+        assert!(runtime.is_disabled());
+        match shared.active() {
+            Err(error) => assert_eq!(error, diagnostic),
+            Ok(_) => panic!("rollback failure must mark the config unavailable"),
+        }
+    }
+}
+
 /// Tauri command that persists and applies a new configuration.
 #[tauri::command]
 pub fn update_config(
-    new_config: config::AppConfig,
+    new_config: config::ConfigDocument,
     app: tauri::AppHandle,
     shared_config: tauri::State<'_, SharedConfig>,
     runtime: tauri::State<'_, ThreadRuntime>,

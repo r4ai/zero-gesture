@@ -31,6 +31,7 @@ mod window;
 #[cfg(windows)]
 mod direct2d;
 
+use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
 use crossbeam_channel::{unbounded, Sender};
@@ -45,7 +46,7 @@ use windows_sys::Win32::{
     Graphics::Gdi::HDC,
 };
 
-use crate::SharedConfig;
+use crate::config::RuntimeConfig;
 
 // ---------------------------------------------------------------------------
 // TrailRenderer trait
@@ -187,25 +188,13 @@ pub(super) struct OverlayConfig {
 /// control the overlay. The [`JoinHandle`] can be used to wait for the
 /// thread to finish.
 ///
-/// # Examples
-///
-/// ```no_run
-/// use zero_gesture_lib::overlay::{self, OverlayCommand};
-/// use zero_gesture_lib::SharedConfig;
-/// use zero_gesture_lib::config::AppConfig;
-///
-/// let config = SharedConfig::new(AppConfig::default());
-/// let (tx, handle) = overlay::spawn(config);
-/// tx.send(OverlayCommand::Shutdown).unwrap();
-/// handle.join().unwrap();
-/// ```
-pub fn spawn(shared_config: SharedConfig) -> (Sender<OverlayCommand>, JoinHandle<()>) {
+pub(crate) fn spawn(runtime: Arc<RuntimeConfig>) -> (Sender<OverlayCommand>, JoinHandle<()>) {
     info!("starting overlay thread");
     let (overlay_tx, overlay_rx) = unbounded();
 
     // Snapshot config before entering the thread.
     let overlay_config = {
-        let cfg = shared_config.0.read().unwrap();
+        let cfg = &runtime.appearance;
         OverlayConfig {
             color: parse_hex_color(&cfg.trail_color),
             pen_width: cfg.trail_thickness.round() as i32,

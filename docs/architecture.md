@@ -150,7 +150,7 @@ TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成
 │   ├── src/
 │   │   ├── main.rs             // Entry point, Tauri setup
 │   │   ├── lib.rs              // WorkerThreads管理、スレッド起動
-│   │   ├── config.rs           // 設定データ構造体
+│   │   ├── config/             // schema v2、legacy migration、immutable compile
 │   │   ├── commands.rs         // Tauri IPC コマンドハンドラ
 │   │   ├── executor.rs         // アクション実行 (SendInput等)
 │   │   ├── domain/

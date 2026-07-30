@@ -1,30 +1,76 @@
-/** What property of the foreground window to inspect. */
-export const MATCH_TARGETS = ["process_name", "window_class", "title"] as const
+/** Versioned configuration document shared directly with the Rust backend. */
+export interface AppConfig {
+  schema_version: 2
+  shared: SharedSettings
+  applications: ApplicationRecord[]
+  bindings: BindingRecord[]
+  platforms: {
+    windows: PlatformOverride
+    macos: PlatformOverride
+  }
+}
+
+export interface SharedSettings {
+  enabled: boolean
+  recognition: RecognitionSettings
+  appearance: AppearanceSettings
+}
+
+export interface RecognitionSettings {
+  safety_timeout_ms: number
+  min_segment_px: number
+  direction_switch_confirm_px: number
+  axis_ambiguity_deadzone_px: number
+  replay_distance_threshold_px: number
+  max_gesture_steps: number
+}
+
+export interface AppearanceSettings {
+  trail_color: string
+  trail_thickness: number
+  label_font_family: string
+  label_font_size: number
+  label_font_weight: number
+  label_padding: number
+}
+
+export interface PlatformOverride {
+  appearance?: AppearanceSettings
+}
+
+export const MATCH_TARGETS = [
+  "process_name",
+  "window_class",
+  "title",
+  "bundle_identifier",
+] as const
 export type MatchTarget = (typeof MATCH_TARGETS)[number]
 
-/** How to compare the target value against the pattern. */
 export const MATCH_METHODS = ["exact", "contains", "regex"] as const
 export type MatchMethod = (typeof MATCH_METHODS)[number]
 
-/** A single matching rule for identifying an application. */
 export interface AppMatcher {
-  /** What property of the foreground window to inspect. */
   target: MatchTarget
-  /** How to compare the target value against the pattern. */
   method: MatchMethod
-  /** The pattern to match against. */
   value: string
 }
 
-/** Definition of an application for per-app gesture bindings. */
 export interface AppDefinition {
-  /** Human-readable name shown in UI. */
+  id: string
   label?: string
-  /** Matching rules (OR logic — any match counts). */
   matchers: AppMatcher[]
 }
 
-/** Mouse button that starts a gesture session. */
+export type WindowsMatchTarget = Exclude<MatchTarget, "bundle_identifier">
+export interface WindowsAppDefinition extends Omit<AppDefinition, "matchers"> {
+  matchers: Array<Omit<AppMatcher, "target"> & { target: WindowsMatchTarget }>
+}
+
+export type ApplicationRecord =
+  | { platform: "shared"; application: AppDefinition }
+  | { platform: "windows"; application: AppDefinition }
+  | { platform: "macos"; application: AppDefinition }
+
 export const TRIGGER_BUTTONS = [
   "left_click",
   "right_click",
@@ -32,7 +78,6 @@ export const TRIGGER_BUTTONS = [
 ] as const
 export type TriggerButton = (typeof TRIGGER_BUTTONS)[number]
 
-/** One element inside a gesture sequence. */
 export const GESTURE_STEPS = [
   "up",
   "down",
@@ -46,239 +91,370 @@ export const GESTURE_STEPS = [
 ] as const
 export type GestureStep = (typeof GESTURE_STEPS)[number]
 
-/** Valid step values for `hold`-mode bindings (backend-supported only). */
 export const HOLD_STEPS = ["wheel_up", "wheel_down"] as const
 export type HoldStep = (typeof HOLD_STEPS)[number]
 
-/** Timing mode for a gesture binding. */
 export const GESTURE_MODES = ["release", "hold"] as const
 export type GestureMode = (typeof GESTURE_MODES)[number]
 
-/** Base properties shared by all gesture patterns. */
 interface GesturePatternBase {
-  /** Button that starts this gesture. */
   trigger: TriggerButton
-  /**
-   * Ordered sequence of movement/input steps.
-   * - `release` mode: the full sequence to match on trigger release.
-   * - `hold` mode: current recognized sequence required before `step` fires.
-   */
   sequence: GestureStep[]
 }
 
-/**
- * Gesture pattern definition for `release`-mode bindings.
- * `mode` defaults to `"release"` when omitted, and `step` is not used.
- */
 interface ReleaseGesturePattern extends GesturePatternBase {
-  /** Whether this gesture runs on trigger release (default) or while holding trigger. */
   mode: "release"
+  step?: never
 }
 
-/**
- * Gesture pattern definition for `hold`-mode bindings.
- * Backend only supports `wheel_up` / `wheel_down` for `step`.
- */
 interface HoldGesturePattern extends GesturePatternBase {
-  /** Whether this gesture runs while holding the trigger. */
   mode: "hold"
-  /** Single non-movement input step for `hold` mode (wheel only). */
   step: HoldStep
 }
 
-/** Gesture pattern definition. */
 export type GesturePattern = ReleaseGesturePattern | HoldGesturePattern
 
-/** An action that can be triggered by a gesture. */
-export type Action = { type: "keyboard"; keys: string[] }
+export type Key =
+  | "primary"
+  | "secondary"
+  | "shift"
+  | "ctrl"
+  | "alt"
+  | "win"
+  | "command"
+  | "option"
+  | "left"
+  | "right"
+  | "up"
+  | "down"
+  | "tab"
+  | "enter"
+  | "escape"
+  | "backspace"
+  | "delete"
+  | "home"
+  | "end"
+  | "pageup"
+  | "pagedown"
+  | "space"
+  | "a"
+  | "b"
+  | "c"
+  | "d"
+  | "e"
+  | "f"
+  | "g"
+  | "h"
+  | "i"
+  | "j"
+  | "k"
+  | "l"
+  | "m"
+  | "n"
+  | "o"
+  | "p"
+  | "q"
+  | "r"
+  | "s"
+  | "t"
+  | "u"
+  | "v"
+  | "w"
+  | "x"
+  | "y"
+  | "z"
+  | "0"
+  | "1"
+  | "2"
+  | "3"
+  | "4"
+  | "5"
+  | "6"
+  | "7"
+  | "8"
+  | "9"
+  | `f${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23 | 24}`
 
-/** A single gesture binding. */
+export type Action = { type: "keyboard"; keys: Key[] }
+
 export interface GestureBinding {
-  /** Stable identifier for this gesture binding. */
   id: string
   label?: string
-  /** Gesture pattern to match. */
+  application_id?: string
   gesture: GesturePattern
-  /** Action to execute when the gesture matches. */
   action: Action
 }
 
-/** Application-wide configuration persisted as JSON. */
-export interface AppConfig {
-  /** Whether gesture recognition is enabled. */
-  enabled: boolean
+export type BindingRecord =
+  | { platform: "shared"; binding: GestureBinding }
+  | { platform: "windows"; binding: GestureBinding }
+  | { platform: "macos"; binding: GestureBinding }
 
-  /** CSS colour string used to draw the gesture trail (e.g. `"#00BFFF"`). */
-  trail_color: string
-
-  /** Thickness in logical pixels for the gesture trail line. */
-  trail_thickness: number
-
-  /** Timeout in milliseconds used for stuck-state recovery. */
-  safety_timeout_ms: number
-
-  /** Minimum movement distance (in pixels) required to confirm a gesture direction segment. */
-  min_segment_px: number
-
-  /** Minimum movement distance (in pixels) required to switch to a new direction candidate. */
-  direction_switch_confirm_px: number
-
-  /** Deadzone (in pixels) used to ignore tiny ambiguous diagonal movement. */
-  axis_ambiguity_deadzone_px: number
-
-  /**
-   * Maximum cursor travel distance (in pixels) to replay the original
-   * trigger-button click when no gesture binding matches.
-   * If movement exceeds this threshold, replay is skipped.
-   */
-  replay_distance_threshold_px: number
-
-  /** Font family name for the gesture label overlay. */
-  label_font_family: string
-
-  /** Font size in pixels for the gesture label overlay. */
-  label_font_size: number
-
-  /** Font weight for the gesture label overlay (Win32 range: 0..=1000). */
-  label_font_weight: number
-
-  /** Padding in pixels around the gesture label text. */
-  label_padding: number
-
-  /** Named app definitions for per-app gesture bindings. */
-  apps: Record<string, AppDefinition>
-
-  /**
-   * Gesture bindings grouped by app ID.
-   * - `"default"` is the global fallback set.
-   * - other keys reference entries in `apps`.
-   */
-  bindings: Record<string, GestureBinding[]>
-}
-
-/** Hard maximum number of steps inside one gesture sequence. */
 export const MAX_GESTURE_STEPS = 8
 
-/** Default gesture bindings matching the Rust backend. */
-export const DEFAULT_BINDINGS: GestureBinding[] = [
-  {
-    id: "back",
-    label: "Back",
-    gesture: {
-      trigger: "right_click",
-      mode: "release",
-      sequence: ["left"],
-    },
-    action: { type: "keyboard", keys: ["alt", "left"] },
-  },
-  {
-    id: "forward",
-    label: "Forward",
-    gesture: {
-      trigger: "right_click",
-      mode: "release",
-      sequence: ["right"],
-    },
-    action: { type: "keyboard", keys: ["alt", "right"] },
-  },
-  {
-    id: "scroll-up",
-    label: "Scroll Up",
-    gesture: {
-      trigger: "right_click",
-      mode: "release",
-      sequence: ["up"],
-    },
-    action: { type: "keyboard", keys: ["pageup"] },
-  },
-  {
-    id: "scroll-down",
-    label: "Scroll Down",
-    gesture: {
-      trigger: "right_click",
-      mode: "release",
-      sequence: ["down"],
-    },
-    action: { type: "keyboard", keys: ["pagedown"] },
-  },
-  {
-    id: "top-of-page",
-    label: "Top of Page",
-    gesture: {
-      trigger: "right_click",
-      mode: "release",
-      sequence: ["down", "up"],
-    },
-    action: { type: "keyboard", keys: ["ctrl", "home"] },
-  },
-  {
-    id: "bottom-of-page",
-    label: "Bottom of Page",
-    gesture: {
-      trigger: "right_click",
-      mode: "release",
-      sequence: ["up", "down"],
-    },
-    action: { type: "keyboard", keys: ["ctrl", "end"] },
-  },
-  {
-    id: "next-tab",
-    label: "Next Tab",
-    gesture: {
-      trigger: "right_click",
-      mode: "release",
-      sequence: ["up", "right"],
-    },
-    action: { type: "keyboard", keys: ["ctrl", "tab"] },
-  },
-  {
-    id: "previous-tab",
-    label: "Previous Tab",
-    gesture: {
-      trigger: "right_click",
-      mode: "release",
-      sequence: ["up", "left"],
-    },
-    action: { type: "keyboard", keys: ["ctrl", "shift", "tab"] },
-  },
-  {
-    id: "reload",
-    label: "Reload",
-    gesture: {
-      trigger: "right_click",
-      mode: "release",
-      sequence: ["right", "down"],
-    },
-    action: { type: "keyboard", keys: ["ctrl", "r"] },
-  },
-  {
-    id: "close-tab",
-    label: "Close Tab",
-    gesture: {
-      trigger: "right_click",
-      mode: "release",
-      sequence: ["down", "right"],
-    },
-    action: { type: "keyboard", keys: ["ctrl", "w"] },
-  },
+const DEFAULT_BINDINGS: GestureBinding[] = [
+  releaseBinding("back", "Back", ["left"], ["alt", "left"]),
+  releaseBinding("forward", "Forward", ["right"], ["alt", "right"]),
+  releaseBinding("scroll-up", "Scroll Up", ["up"], ["pageup"]),
+  releaseBinding("scroll-down", "Scroll Down", ["down"], ["pagedown"]),
+  releaseBinding(
+    "top-of-page",
+    "Top of Page",
+    ["down", "up"],
+    ["ctrl", "home"],
+  ),
+  releaseBinding(
+    "bottom-of-page",
+    "Bottom of Page",
+    ["up", "down"],
+    ["ctrl", "end"],
+  ),
+  releaseBinding("next-tab", "Next Tab", ["up", "right"], ["ctrl", "tab"]),
+  releaseBinding(
+    "previous-tab",
+    "Previous Tab",
+    ["up", "left"],
+    ["ctrl", "shift", "tab"],
+  ),
+  releaseBinding("reload", "Reload", ["right", "down"], ["ctrl", "r"]),
+  releaseBinding("close-tab", "Close Tab", ["down", "right"], ["ctrl", "w"]),
 ]
 
-/** Default configuration values matching the Rust backend. */
-export const DEFAULTS = {
-  enabled: true,
-  trail_color: "#00BFFF",
-  trail_thickness: 3.0,
-  safety_timeout_ms: 2000,
-  min_segment_px: 12,
-  direction_switch_confirm_px: 8,
-  axis_ambiguity_deadzone_px: 2,
-  replay_distance_threshold_px: 12,
-  label_font_family: "Yu Gothic UI Semibold",
-  label_font_size: 36.0,
-  label_font_weight: 400,
-  label_padding: 24.0,
-  apps: {},
-  bindings: {
-    default: DEFAULT_BINDINGS,
+function releaseBinding(
+  id: string,
+  label: string,
+  sequence: GestureStep[],
+  keys: Key[],
+): GestureBinding {
+  return {
+    id,
+    label,
+    gesture: { trigger: "right_click", mode: "release", sequence },
+    action: { type: "keyboard", keys },
+  }
+}
+
+export const DEFAULTS: AppConfig = {
+  schema_version: 2,
+  shared: {
+    enabled: true,
+    recognition: {
+      safety_timeout_ms: 2000,
+      min_segment_px: 12,
+      direction_switch_confirm_px: 8,
+      axis_ambiguity_deadzone_px: 2,
+      replay_distance_threshold_px: 12,
+      max_gesture_steps: 8,
+    },
+    appearance: {
+      trail_color: "#00BFFF",
+      trail_thickness: 3,
+      label_font_family: "Yu Gothic UI Semibold",
+      label_font_size: 36,
+      label_font_weight: 400,
+      label_padding: 24,
+    },
   },
-} satisfies AppConfig
+  applications: [],
+  bindings: DEFAULT_BINDINGS.map((binding) => ({
+    platform: hasWindowsKey(binding) ? "windows" : "shared",
+    binding,
+  })),
+  platforms: { windows: {}, macos: {} },
+}
+
+function isWindowsRecord(record: ApplicationRecord | BindingRecord): boolean {
+  return record.platform === "shared" || record.platform === "windows"
+}
+
+type WindowsApplicationRecord = (
+  | Extract<ApplicationRecord, { platform: "shared" }>
+  | Extract<ApplicationRecord, { platform: "windows" }>
+) & { application: WindowsAppDefinition }
+
+function isWindowsApplicationRecord(
+  record: ApplicationRecord,
+): record is WindowsApplicationRecord {
+  return (
+    isWindowsRecord(record) &&
+    record.application.matchers.every(
+      (matcher) => matcher.target !== "bundle_identifier",
+    )
+  )
+}
+
+function hasWindowsKey(binding: GestureBinding): boolean {
+  return binding.action.keys.some((key) =>
+    (["ctrl", "alt", "win"] as Key[]).includes(key),
+  )
+}
+
+function applicationPlatform(
+  config: AppConfig,
+  applicationId: string | undefined,
+): "shared" | "windows" {
+  if (!applicationId) return "shared"
+  const record = config.applications.find(
+    (candidate) =>
+      isWindowsRecord(candidate) && candidate.application.id === applicationId,
+  )
+  return record?.platform === "windows" ? "windows" : "shared"
+}
+
+function classifyApplication(
+  application: WindowsAppDefinition,
+): "shared" | "windows" {
+  return application.matchers.some(
+    (matcher) => matcher.target === "window_class",
+  )
+    ? "windows"
+    : "shared"
+}
+
+function classifyBinding(
+  config: AppConfig,
+  binding: GestureBinding,
+): "shared" | "windows" {
+  return hasWindowsKey(binding) ||
+    applicationPlatform(config, binding.application_id) === "windows"
+    ? "windows"
+    : "shared"
+}
+
+export function getWindowsApplications(
+  config: AppConfig,
+): WindowsAppDefinition[] {
+  return config.applications
+    .filter(isWindowsApplicationRecord)
+    .map((record) => record.application)
+}
+
+export function getWindowsApplication(
+  config: AppConfig,
+  id: string,
+): WindowsAppDefinition | undefined {
+  return getWindowsApplications(config).find(
+    (application) => application.id === id,
+  )
+}
+
+export function getWindowsApplicationIds(config: AppConfig): string[] {
+  return ["default", ...getWindowsApplications(config).map(({ id }) => id)]
+}
+
+export function getWindowsBindings(
+  config: AppConfig,
+  applicationId: string,
+): GestureBinding[] {
+  return config.bindings
+    .filter(isWindowsRecord)
+    .map((record) => record.binding)
+    .filter(
+      (binding) => (binding.application_id ?? "default") === applicationId,
+    )
+}
+
+export function addWindowsApplication(
+  config: AppConfig,
+  application: WindowsAppDefinition,
+): AppConfig {
+  const platform = classifyApplication(application)
+  return {
+    ...config,
+    applications: [...config.applications, { platform, application }],
+  }
+}
+
+export function replaceWindowsApplication(
+  config: AppConfig,
+  application: WindowsAppDefinition,
+): AppConfig {
+  const platform = classifyApplication(application)
+  const next: AppConfig = {
+    ...config,
+    applications: config.applications.map((record) =>
+      isWindowsRecord(record) && record.application.id === application.id
+        ? { platform, application }
+        : record,
+    ),
+  }
+  return {
+    ...next,
+    bindings: next.bindings.map((record) => {
+      if (
+        !isWindowsRecord(record) ||
+        record.binding.application_id !== application.id
+      ) {
+        return record
+      }
+      return {
+        platform: classifyBinding(next, record.binding),
+        binding: record.binding,
+      }
+    }),
+  }
+}
+
+export function removeWindowsApplication(
+  config: AppConfig,
+  applicationId: string,
+): AppConfig {
+  return {
+    ...config,
+    applications: config.applications.filter(
+      (record) =>
+        !isWindowsRecord(record) || record.application.id !== applicationId,
+    ),
+    bindings: config.bindings.filter(
+      (record) =>
+        !isWindowsRecord(record) ||
+        record.binding.application_id !== applicationId,
+    ),
+  }
+}
+
+export function addWindowsBinding(
+  config: AppConfig,
+  binding: GestureBinding,
+): AppConfig {
+  return {
+    ...config,
+    bindings: [
+      ...config.bindings,
+      { platform: classifyBinding(config, binding), binding },
+    ],
+  }
+}
+
+export function replaceWindowsBinding(
+  config: AppConfig,
+  binding: GestureBinding,
+): AppConfig {
+  return {
+    ...config,
+    bindings: config.bindings.map((record) =>
+      isWindowsRecord(record) &&
+      record.binding.application_id === binding.application_id &&
+      record.binding.id === binding.id
+        ? { platform: classifyBinding(config, binding), binding }
+        : record,
+    ),
+  }
+}
+
+export function removeWindowsBinding(
+  config: AppConfig,
+  applicationId: string,
+  bindingId: string,
+): AppConfig {
+  const reference = applicationId === "default" ? undefined : applicationId
+  return {
+    ...config,
+    bindings: config.bindings.filter(
+      (record) =>
+        !isWindowsRecord(record) ||
+        record.binding.application_id !== reference ||
+        record.binding.id !== bindingId,
+    ),
+  }
+}

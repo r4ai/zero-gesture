@@ -1,6 +1,7 @@
 import { createFileRoute, Navigate, useParams } from "@tanstack/react-router"
 import { GesturePanelLayout } from "@/components/applications/app-settings-layout"
 import { useConfigDraft } from "@/contexts/config-draft"
+import { getWindowsBindings } from "@/types/config"
 import { GestureNotFound } from "./-components/gesture-not-found"
 
 export const Route = createFileRoute("/applications/$appId/gestures/")({
@@ -10,7 +11,7 @@ export const Route = createFileRoute("/applications/$appId/gestures/")({
 function GesturesEmptyPage() {
   const { appId } = useParams({ from: "/applications/$appId/gestures/" })
   const { draft } = useConfigDraft()
-  const firstGesture = draft.bindings[appId]?.[0]
+  const firstGesture = getWindowsBindings(draft, appId)[0]
 
   if (firstGesture) {
     return (

@@ -24,7 +24,7 @@ Each case has exactly five fields:
 - the repository-relative Rust evidence file;
 - the exact `#[test]` function name.
 
-The manifest contains 15 one-to-one cases.
+The manifest initially contains 15 one-to-one Windows characterization cases.
 They characterize only:
 
 - configured and unconfigured trigger-down suppression;
@@ -47,7 +47,7 @@ It is not a JSON Schema, a contract DSL, or a registry of future evidence types.
 The existing least-privilege quality job runs that command, while the existing Windows Rust test job runs every referenced test.
 The path check does not resolve symlinks; repository-controlled input in no-secret, read-only CI makes that an accepted residual risk for this phase.
 
-Within this deliberately bounded inventory, `O = 15`, `O_v = 15`, and `U = 0`.
+Within this deliberately bounded initial inventory, `O = 15`, `O_v = 15`, and `U = 0`.
 There are 15 unit-level logical cases, so `T = T_u = 15` and `T_i = T_e = 0`.
 These values describe only the P02 characterization boundary and must not be reported as whole-product contract coverage.
 
@@ -76,4 +76,4 @@ The following remain explicitly deferred:
 
 P02 gets a small, executable preservation gate without a new dependency or framework.
 A manifest change must name a runnable Rust test and remains reviewable as a short list of observed obligations.
-Later phases must add their own evidence at the layer where the behavior becomes implementable rather than extending this file with speculative cases.
+Later P02 phases may extend the same manifest with independently runnable evidence at the layer where the behavior becomes implementable, but must not add speculative cases.
