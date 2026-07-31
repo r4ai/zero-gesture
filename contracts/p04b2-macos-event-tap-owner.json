@@ -23,10 +23,10 @@
     },
     {
       "id": "P04B2-ORDER-001",
-      "obligation": "The macOS run-loop worker drains every accepted normalized input in callback order.",
+      "obligation": "The bounded SPSC consumer receives distinct normalized event, point, and timestamp values in callback order.",
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/hook/macos.rs",
-      "evidence_name": "worker_drain_consumes_every_accepted_input_in_callback_order"
+      "evidence_name": "spsc_consumer_receives_distinct_inputs_in_callback_order"
     },
     {
       "id": "P04B2-NORMALIZE-001",
@@ -48,6 +48,13 @@
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/hook/macos.rs",
       "evidence_name": "degraded_owner_publishes_ready_and_stops_deterministically"
+    },
+    {
+      "id": "P04B2-LIFECYCLE-002",
+      "obligation": "Only a timed-out CFRunLoop slice continues normally; finished and unexpected results select the degraded transition.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos.rs",
+      "evidence_name": "run_loop_result_classification_degrades_finished_and_unexpected_results"
     }
   ]
 }

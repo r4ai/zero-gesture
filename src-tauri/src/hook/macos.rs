@@ -26,6 +26,10 @@ const EVENT_QUEUE_CAPACITY: usize = 64;
 #[cfg(target_os = "macos")]
 const RUN_LOOP_SLICE_SECONDS: f64 = 0.01;
 const DEGRADED_STOP_POLL: Duration = Duration::from_millis(10);
+const RUN_LOOP_FINISHED: i32 = 1;
+const RUN_LOOP_STOPPED: i32 = 2;
+const RUN_LOOP_TIMED_OUT: i32 = 3;
+const RUN_LOOP_HANDLED_SOURCE: i32 = 4;
 
 const EVENT_LEFT_MOUSE_DOWN: u32 = 1;
 const EVENT_LEFT_MOUSE_UP: u32 = 2;
@@ -121,10 +125,25 @@ extern "C" {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct NormalizedInput {
-    sequence: u64,
     event: MouseEvent,
     point: Point,
     timestamp_ns: u64,
+}
+
+#[derive(Clone, Copy)]
+struct RawInput {
+    event_type: u32,
+    button: i64,
+    scroll: i64,
+    x: f64,
+    y: f64,
+    timestamp_ns: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RunLoopDisposition {
+    Continue,
+    Degrade,
 }
 
 struct SpscQueue<T: Copy, const N: usize> {
@@ -174,7 +193,6 @@ impl<T: Copy, const N: usize> SpscQueue<T, N> {
 
 struct TapState {
     queue: SpscQueue<NormalizedInput, EVENT_QUEUE_CAPACITY>,
-    next_sequence: AtomicU64,
     received: AtomicU64,
     enqueued: AtomicU64,
     dropped: AtomicU64,
@@ -191,7 +209,6 @@ impl TapState {
     fn new() -> Self {
         Self {
             queue: SpscQueue::new(),
-            next_sequence: AtomicU64::new(0),
             received: AtomicU64::new(0),
             enqueued: AtomicU64::new(0),
             dropped: AtomicU64::new(0),
@@ -205,13 +222,15 @@ impl TapState {
         }
     }
 
-    fn capture(&self, event: MouseEvent, point: Point, timestamp_ns: u64) {
+    fn capture_raw(&self, raw: RawInput) {
+        let Some(event) = normalize_event(raw.event_type, raw.button, raw.scroll) else {
+            return;
+        };
         self.received.fetch_add(1, Ordering::Relaxed);
         let input = NormalizedInput {
-            sequence: self.next_sequence.fetch_add(1, Ordering::Relaxed),
             event,
-            point,
-            timestamp_ns,
+            point: Point::new(raw.x.round() as i32, raw.y.round() as i32),
+            timestamp_ns: raw.timestamp_ns,
         };
         if self.queue.push(input) {
             self.enqueued.fetch_add(1, Ordering::Relaxed);
@@ -229,6 +248,7 @@ impl TapState {
         self.reenable_requested.swap(false, Ordering::AcqRel)
     }
 
+    #[cfg(target_os = "macos")]
     fn drain(&self) {
         while self.queue.pop().is_some() {
             // P04b2 deliberately stops at the normalized Engine boundary.
@@ -301,6 +321,12 @@ enum StartupMode {
     CreationFailed,
 }
 
+#[derive(Clone, Copy)]
+enum StartupFailure {
+    PermissionDenied,
+    CreationFailed,
+}
+
 #[cfg(target_os = "macos")]
 pub(super) fn run_loop_macos(
     stop: Arc<AtomicBool>,
@@ -311,22 +337,43 @@ pub(super) fn run_loop_macos(
     match mode {
         StartupMode::Active(resources) => run_active(stop, events, state, resources),
         StartupMode::PermissionDenied => {
-            warn!("macOS input owner is pass-through: Listen Event access is unavailable");
-            run_degraded(stop, events)
+            dispatch_startup_failure(StartupFailure::PermissionDenied, stop, events)
         }
         StartupMode::CreationFailed => {
-            warn!("macOS input owner is pass-through: event tap creation failed");
-            run_degraded(stop, events)
+            dispatch_startup_failure(StartupFailure::CreationFailed, stop, events)
         }
     }
 }
 
+fn dispatch_startup_failure(
+    failure: StartupFailure,
+    stop: Arc<AtomicBool>,
+    events: Sender<HookEvent>,
+) -> Result<(), HookFailure> {
+    #[cfg(target_os = "macos")]
+    match failure {
+        StartupFailure::PermissionDenied => {
+            warn!("macOS input owner is pass-through: Listen Event access is unavailable");
+        }
+        StartupFailure::CreationFailed => {
+            warn!("macOS input owner is pass-through: event tap creation failed");
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = failure;
+    run_degraded(stop, events)
+}
+
 fn run_degraded(stop: Arc<AtomicBool>, events: Sender<HookEvent>) -> Result<(), HookFailure> {
     publish_ready(&events)?;
+    wait_for_stop(&stop);
+    Ok(())
+}
+
+fn wait_for_stop(stop: &AtomicBool) {
     while !stop.load(Ordering::Acquire) {
         thread::sleep(DEGRADED_STOP_POLL);
     }
-    Ok(())
 }
 
 #[cfg(target_os = "macos")]
@@ -338,8 +385,14 @@ fn run_active(
 ) -> Result<(), HookFailure> {
     publish_ready(&events)?;
     while !stop.load(Ordering::Acquire) {
-        unsafe {
-            CFRunLoopRunInMode(kCFRunLoopDefaultMode, RUN_LOOP_SLICE_SECONDS, false);
+        let result =
+            unsafe { CFRunLoopRunInMode(kCFRunLoopDefaultMode, RUN_LOOP_SLICE_SECONDS, false) };
+        if classify_run_loop_result(result) == RunLoopDisposition::Degrade {
+            state.drain();
+            drop(resources);
+            drop(state);
+            wait_for_stop(&stop);
+            return Ok(());
         }
         state.drain();
         state.reenable_if_requested(resources.tap);
@@ -347,6 +400,14 @@ fn run_active(
     state.drain();
     drop(resources);
     Ok(())
+}
+
+fn classify_run_loop_result(result: i32) -> RunLoopDisposition {
+    if result == RUN_LOOP_TIMED_OUT {
+        RunLoopDisposition::Continue
+    } else {
+        RunLoopDisposition::Degrade
+    }
 }
 
 fn publish_ready(events: &Sender<HookEvent>) -> Result<(), HookFailure> {
@@ -421,13 +482,14 @@ unsafe extern "C" fn event_tap_callback(
     } else {
         0
     };
-    if let Some(mouse_event) = normalize_event(event_type, button, scroll) {
-        state.capture(
-            mouse_event,
-            Point::new(location.x.round() as i32, location.y.round() as i32),
-            CGEventGetTimestamp(event),
-        );
-    }
+    state.capture_raw(RawInput {
+        event_type,
+        button,
+        scroll,
+        x: location.x,
+        y: location.y,
+        timestamp_ns: CGEventGetTimestamp(event),
+    });
     event
 }
 
@@ -485,37 +547,86 @@ mod tests {
     #[test]
     fn callback_core_normalizes_mouse_input_without_allocating() {
         let state = TapState::new();
-        let point = Point::new(17, -9);
         let (_, allocations) = count_allocations(|| {
-            state.capture(MouseEvent::ButtonDown(TriggerButton::Right), point, 41);
-            state.capture(MouseEvent::MouseMove, point, 42);
-            state.capture(MouseEvent::WheelDown(3), point, 43);
+            state.capture_raw(RawInput {
+                event_type: EVENT_RIGHT_MOUSE_DOWN,
+                button: 0,
+                scroll: 0,
+                x: 17.4,
+                y: -8.6,
+                timestamp_ns: 41,
+            });
+            state.capture_raw(RawInput {
+                event_type: EVENT_MOUSE_MOVED,
+                button: 0,
+                scroll: 0,
+                x: 5.6,
+                y: 9.4,
+                timestamp_ns: 42,
+            });
+            state.capture_raw(RawInput {
+                event_type: EVENT_SCROLL_WHEEL,
+                button: 0,
+                scroll: -3,
+                x: -2.6,
+                y: 11.7,
+                timestamp_ns: 43,
+            });
         });
 
         assert_eq!(allocations, 0);
         assert_eq!(
             state.queue.pop(),
             Some(NormalizedInput {
-                sequence: 0,
                 event: MouseEvent::ButtonDown(TriggerButton::Right),
-                point,
+                point: Point::new(17, -9),
                 timestamp_ns: 41,
             })
         );
-        assert_eq!(state.queue.pop().unwrap().sequence, 1);
-        assert_eq!(state.queue.pop().unwrap().sequence, 2);
+        assert_eq!(
+            state.queue.pop(),
+            Some(NormalizedInput {
+                event: MouseEvent::MouseMove,
+                point: Point::new(6, 9),
+                timestamp_ns: 42,
+            })
+        );
+        assert_eq!(
+            state.queue.pop(),
+            Some(NormalizedInput {
+                event: MouseEvent::WheelDown(3),
+                point: Point::new(-3, 12),
+                timestamp_ns: 43,
+            })
+        );
     }
 
     #[test]
     fn callback_queue_overload_drops_new_input_and_preserves_fifo_order() {
         let state = TapState::new();
         for timestamp_ns in 0..EVENT_QUEUE_CAPACITY as u64 {
-            state.capture(MouseEvent::MouseMove, Point::new(0, 0), timestamp_ns);
+            state.capture_raw(RawInput {
+                event_type: EVENT_MOUSE_MOVED,
+                button: 0,
+                scroll: 0,
+                x: timestamp_ns as f64,
+                y: -(timestamp_ns as f64),
+                timestamp_ns,
+            });
         }
-        state.capture(MouseEvent::MouseMove, Point::new(1, 1), 99);
+        state.capture_raw(RawInput {
+            event_type: EVENT_MOUSE_MOVED,
+            button: 0,
+            scroll: 0,
+            x: 99.0,
+            y: 99.0,
+            timestamp_ns: 99,
+        });
 
         for expected in 0..EVENT_QUEUE_CAPACITY as u64 {
-            assert_eq!(state.queue.pop().unwrap().sequence, expected);
+            let input = state.queue.pop().unwrap();
+            assert_eq!(input.point, Point::new(expected as i32, -(expected as i32)));
+            assert_eq!(input.timestamp_ns, expected);
         }
         assert!(state.queue.pop().is_none());
         assert_eq!(
@@ -542,15 +653,63 @@ mod tests {
     }
 
     #[test]
-    fn worker_drain_consumes_every_accepted_input_in_callback_order() {
+    fn spsc_consumer_receives_distinct_inputs_in_callback_order() {
         let state = TapState::new();
-        state.capture(MouseEvent::MouseMove, Point::new(1, 2), 1);
-        state.capture(MouseEvent::MouseMove, Point::new(3, 4), 2);
+        let raw_inputs = [
+            RawInput {
+                event_type: EVENT_LEFT_MOUSE_DOWN,
+                button: 0,
+                scroll: 0,
+                x: 1.0,
+                y: 2.0,
+                timestamp_ns: 10,
+            },
+            RawInput {
+                event_type: EVENT_MOUSE_MOVED,
+                button: 0,
+                scroll: 0,
+                x: 3.0,
+                y: 4.0,
+                timestamp_ns: 20,
+            },
+            RawInput {
+                event_type: EVENT_SCROLL_WHEEL,
+                button: 0,
+                scroll: 2,
+                x: 5.0,
+                y: 6.0,
+                timestamp_ns: 30,
+            },
+        ];
+        for raw in raw_inputs {
+            state.capture_raw(raw);
+        }
 
-        state.drain();
-
+        assert_eq!(
+            state.queue.pop(),
+            Some(NormalizedInput {
+                event: MouseEvent::ButtonDown(TriggerButton::Left),
+                point: Point::new(1, 2),
+                timestamp_ns: 10,
+            })
+        );
+        assert_eq!(
+            state.queue.pop(),
+            Some(NormalizedInput {
+                event: MouseEvent::MouseMove,
+                point: Point::new(3, 4),
+                timestamp_ns: 20,
+            })
+        );
+        assert_eq!(
+            state.queue.pop(),
+            Some(NormalizedInput {
+                event: MouseEvent::WheelUp(2),
+                point: Point::new(5, 6),
+                timestamp_ns: 30,
+            })
+        );
         assert!(state.queue.pop().is_none());
-        assert_eq!(state.snapshot().processed, 2);
     }
 
     #[test]
@@ -595,11 +754,46 @@ mod tests {
 
     #[test]
     fn degraded_owner_publishes_ready_and_stops_deterministically() {
-        let stop = Arc::new(AtomicBool::new(true));
-        let (events, receiver) = crossbeam_channel::bounded(1);
+        for failure in [
+            StartupFailure::PermissionDenied,
+            StartupFailure::CreationFailed,
+        ] {
+            let stop = Arc::new(AtomicBool::new(false));
+            let (events, receiver) = crossbeam_channel::bounded(1);
+            let (completed, completion) = crossbeam_channel::bounded(1);
+            let thread_stop = Arc::clone(&stop);
+            let handle = thread::spawn(move || {
+                dispatch_startup_failure(failure, thread_stop, events).unwrap();
+                completed.send(()).unwrap();
+            });
 
-        run_degraded(stop, events).unwrap();
+            assert!(matches!(
+                receiver.recv_timeout(Duration::from_millis(100)),
+                Ok(HookEvent::Ready(1))
+            ));
+            assert!(!handle.is_finished());
+            stop.store(true, Ordering::Release);
+            completion.recv_timeout(Duration::from_millis(100)).unwrap();
+            handle.join().unwrap();
+        }
+    }
 
-        assert!(matches!(receiver.try_recv(), Ok(HookEvent::Ready(1))));
+    #[test]
+    fn run_loop_result_classification_degrades_finished_and_unexpected_results() {
+        assert_eq!(
+            classify_run_loop_result(RUN_LOOP_TIMED_OUT),
+            RunLoopDisposition::Continue
+        );
+        for result in [
+            RUN_LOOP_FINISHED,
+            RUN_LOOP_STOPPED,
+            RUN_LOOP_HANDLED_SOURCE,
+            -1,
+        ] {
+            assert_eq!(
+                classify_run_loop_result(result),
+                RunLoopDisposition::Degrade
+            );
+        }
     }
 }

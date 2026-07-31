@@ -50,7 +50,8 @@ formatting, process/window/context query, configuration read, action,
 renderer, Tauri, or WebView call. Queue saturation increments one atomic drop
 counter and passes the event. The producer publishes each initialized slot
 with release ordering; the run-loop consumer reads it with acquire ordering,
-so accepted callback order is retained.
+so accepted callback order is retained without a second sequence counter or
+atomic read-modify-write.
 
 P04b2 stops at this normalized Engine boundary. It does not call `InputKernel`
 because there is no pre-resolved macOS context and no suppression/replay/action
@@ -81,7 +82,11 @@ histogram allocation.
 Readiness is published after the startup permission/setup decision. Active
 owners run Core Foundation in fixed 10 ms slices, drain accepted normalized
 events, handle one coalesced re-enable request, and observe the Engine stop
-atomic. Degraded owners observe the same stop atomic at the same bound.
+atomic. Only `kCFRunLoopRunTimedOut` continues that loop normally. A finished,
+stopped, handled-source, or unknown result first destroys the tap resources,
+then observes the stop atomic in the same bounded degraded wait without
+publishing readiness again. Degraded startup owners observe the same stop
+atomic at the same bound.
 
 Shutdown sets the stop atomic before Windows-specific wakeup handling. The
 macOS owner drains accepted events, disables and invalidates the tap, removes
@@ -91,9 +96,9 @@ restarted or synchronized from the callback.
 
 ## Verification
 
-`contracts/p04b2-macos-event-tap-owner.json` maps seven independently
-falsifiable obligations to seven uniquely named macOS tests:
-`O = 7`, `O_v = 7`, `U = 0`, `T = 7`, `T_u = 6`, `T_i = 1`, `T_e = 0`,
+`contracts/p04b2-macos-event-tap-owner.json` maps eight independently
+falsifiable obligations to eight uniquely named macOS tests:
+`O = 8`, `O_v = 8`, `U = 0`, `T = 8`, `T_u = 7`, `T_i = 1`, `T_e = 0`,
 `T_r = 0`, `P = 0`, `D = 0`, and `F = 0`.
 
 The Apple Silicon macOS CI job compiles every target with Clippy, runs the
@@ -101,6 +106,12 @@ library/contract tests without requiring real permission or injected events,
 builds the ad-hoc signed application, and reruns the existing packaged
 same-executable/UDS gates. Windows format, Clippy, tests, rustdoc, contracts,
 frontend checks, and Tauri build remain regression gates.
+
+Deterministic core tests cover raw-field normalization, queue behavior,
+run-loop result classification, and both degraded-startup dispatch paths. They
+do not prove an actual permission denial, real `CGEvent` injection, or live
+Mach-port/source invalidation in non-interactive CI; those OS-boundary cases
+remain manual integration evidence.
 
 ## Deferrals
 
