@@ -239,11 +239,15 @@ jobs:
           ZG_P04A_APP_BUNDLE: ${{ github.workspace }}/src-tauri/target/aarch64-apple-darwin/debug/bundle/macos/Zero Gesture.app
         run: cargo test --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin --test p04a_macos_packaging -- --test-threads=1
 
-      - name: Upload validated application bundle
+      - name: Archive validated application bundle
+        shell: bash
+        run: ditto -c -k --sequesterRsrc --keepParent "src-tauri/target/aarch64-apple-darwin/debug/bundle/macos/Zero Gesture.app" "$RUNNER_TEMP/zero-gesture-macos-26-arm64.zip"
+
+      - name: Upload validated application archive
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: zero-gesture-macos-26-arm64-${{ github.run_id }}
-          path: src-tauri/target/aarch64-apple-darwin/debug/bundle/macos/Zero Gesture.app
+          path: ${{ runner.temp }}/zero-gesture-macos-26-arm64.zip
           if-no-files-found: error
           retention-days: 14
 

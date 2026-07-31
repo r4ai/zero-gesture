@@ -70,9 +70,10 @@ Pull requests run on the official `macos-26` arm64 runner.
 They build an ad-hoc signed debug `.app` with Tauri, verify the complete
 signature, inspect the bundle and Mach-O target, and launch the packaged main
 executable as `--engine`.
-Core Graphics process-window inspection and descendant-process inspection
-run after the packaged Engine remains alive through a bounded startup
-observation window and verify zero content windows and zero WebKit descendants.
+One bounded startup loop checks that the packaged Engine remains alive while
+repeated Core Graphics `.optionAll` process-window inspection and
+descendant-process inspection fail on any observed content window or WebKit
+descendant, including hidden or off-screen windows and startup-only processes.
 The release executable contains no marker-file or arbitrary-path test hook.
 This evidence validates bundle and process topology only.
 Ad-hoc signing is not evidence of Developer ID trust, Gatekeeper acceptance, or
@@ -90,9 +91,13 @@ It requires these GitHub Actions secret names:
 - `APPLE_TEAM_ID`
 - `KEYCHAIN_PASSWORD`
 
-The workflow imports the certificate into a temporary keychain, lets Tauri
-sign, notarize, and staple the arm64 `.app` and `.dmg`, then requires
-`codesign`, `spctl`, and `stapler` validation before uploading artifacts.
+Before its first fallible `security` command, the workflow exports the
+deterministic temporary-keychain path so `always()` cleanup also covers partial
+certificate-import failures.
+It lets Tauri sign, notarize, and staple the arm64 `.app` and `.dmg`, requires
+`codesign`, `spctl`, and `stapler` validation of the application and the unique
+DMG, then uploads the DMG and a `ditto` metadata-preserving archive of the
+application bundle.
 The common P04a bundle tests assert signature validity and Hardened Runtime for
 both ad-hoc debug and Developer ID release artifacts; they do not reinterpret
 those assertions as Developer ID trust.
@@ -142,7 +147,9 @@ The following facts are automated by the P04a pull-request gate:
 - native Apple Silicon compilation;
 - one bundle identifier and one arm64 main executable;
 - Hardened Runtime and a valid ad-hoc signature;
-- packaged `--engine` startup with no content window or WebKit descendant.
+- packaged `--engine` startup with no content window or WebKit descendant
+  observed anywhere in the bounded startup interval; and
+- metadata-preserving archival of the validated application bundle.
 
 The full ADR 0001 packaging spike remains open until all of these are recorded
 from the intended release path and a real Apple Silicon user session:

@@ -80,6 +80,7 @@ jobs:
         run: |
           certificate="$RUNNER_TEMP/developer-id.p12"
           keychain="$RUNNER_TEMP/zero-gesture.keychain-db"
+          echo "ZG_RELEASE_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
           printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$certificate"
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$keychain"
           security default-keychain -s "$keychain"
@@ -96,7 +97,6 @@ jobs:
             "$keychain"
           security find-identity -v -p codesigning "$keychain" |
             grep -F "\"$APPLE_SIGNING_IDENTITY\""
-          echo "ZG_RELEASE_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
 
       - name: Build, sign, notarize, and staple
         run: pnpm tauri build --bundles app,dmg --target aarch64-apple-darwin --ci
@@ -110,19 +110,27 @@ jobs:
         shell: bash
         run: |
           app="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Zero Gesture.app"
-          dmg="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name '*.dmg' -type f -print -quit)"
-          test -n "$dmg"
+          shopt -s nullglob
+          dmgs=(src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg)
+          test "${#dmgs[@]}" -eq 1
+          dmg="${dmgs[0]}"
           codesign --verify --deep --strict --verbose=2 "$app"
           spctl --assess --type execute --verbose=4 "$app"
+          codesign --verify --strict "$dmg"
+          spctl --assess --type open --context context:primary-signature "$dmg"
           xcrun stapler validate "$app"
           xcrun stapler validate "$dmg"
+
+      - name: Archive signed application bundle
+        shell: bash
+        run: ditto -c -k --sequesterRsrc --keepParent "src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Zero Gesture.app" "$RUNNER_TEMP/zero-gesture-developer-id-macos-26-arm64.zip"
 
       - name: Upload signed and notarized artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: zero-gesture-developer-id-macos-26-arm64-${{ github.run_id }}
           path: |
-            src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Zero Gesture.app
+            ${{ runner.temp }}/zero-gesture-developer-id-macos-26-arm64.zip
             src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
           if-no-files-found: error
           retention-days: 14

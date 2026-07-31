@@ -51,23 +51,29 @@ struct EngineProcess {
 }
 
 impl EngineProcess {
-    fn start(bundle: &Path) -> Self {
-        let mut child = Command::new(main_executable(bundle))
-            .arg("--engine")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("packaged Engine must start");
+    fn start(bundle: &Path, mut observe: impl FnMut(u32)) -> Self {
+        let mut engine = Self {
+            child: Command::new(main_executable(bundle))
+                .arg("--engine")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("packaged Engine must start"),
+        };
         let deadline = Instant::now() + Duration::from_secs(2);
-        while Instant::now() < deadline {
+        loop {
             assert!(
-                child.try_wait().unwrap().is_none(),
+                engine.child.try_wait().unwrap().is_none(),
                 "packaged Engine exited during the startup observation window"
             );
+            observe(engine.id());
+            if Instant::now() >= deadline {
+                break;
+            }
             thread::sleep(Duration::from_millis(50));
         }
-        Self { child }
+        engine
     }
 
     fn id(&self) -> u32 {
@@ -113,38 +119,12 @@ fn descendant_commands(root: u32) -> Vec<String> {
     commands
 }
 
-fn content_window_count(pid: u32) -> usize {
-    let directory = tempfile::tempdir().unwrap();
-    let source = directory.path().join("window-count.swift");
-    fs::write(
-        &source,
-        r#"import CoreGraphics
-import Foundation
-
-let pid = Int32(CommandLine.arguments[1])!
-let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
-let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID)
-    as? [[String: Any]] ?? []
-let count = windows.filter { window in
-    let owner = (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value
-    let layer = (window[kCGWindowLayer as String] as? NSNumber)?.intValue
-    return owner == pid && layer == 0
-}.count
-print(count)
-"#,
-    )
-    .unwrap();
-    String::from_utf8(
-        command_output(
-            "/usr/bin/swift",
-            &[source.to_str().unwrap(), &pid.to_string()],
-        )
-        .stdout,
-    )
-    .unwrap()
-    .trim()
-    .parse()
-    .unwrap()
+fn content_window_count(probe: &Path, pid: u32) -> usize {
+    String::from_utf8(command_output(probe.to_str().unwrap(), &[&pid.to_string()]).stdout)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap()
 }
 
 #[test]
@@ -213,19 +193,50 @@ fn bundle_code_signature_enables_hardened_runtime() {
 #[test]
 fn engine_mode_owns_no_content_window() {
     let bundle = app_bundle();
-    let engine = EngineProcess::start(&bundle);
-    assert_eq!(content_window_count(engine.id()), 0);
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("window-count.swift");
+    let probe = directory.path().join("window-count");
+    fs::write(
+        &source,
+        r#"import CoreGraphics
+import Foundation
+
+let pid = Int32(CommandLine.arguments[1])!
+let options: CGWindowListOption = [.optionAll, .excludeDesktopElements]
+let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID)
+    as? [[String: Any]] ?? []
+let count = windows.filter { window in
+    let owner = (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value
+    let layer = (window[kCGWindowLayer as String] as? NSNumber)?.intValue
+    return owner == pid && layer == 0
+}.count
+print(count)
+"#,
+    )
+    .unwrap();
+    command_output(
+        "/usr/bin/swiftc",
+        &[source.to_str().unwrap(), "-o", probe.to_str().unwrap()],
+    );
+    let _engine = EngineProcess::start(&bundle, |pid| {
+        assert_eq!(
+            content_window_count(&probe, pid),
+            0,
+            "Engine owned a content window during startup"
+        );
+    });
 }
 
 #[test]
 fn engine_mode_starts_no_webview_process() {
     let bundle = app_bundle();
-    let engine = EngineProcess::start(&bundle);
-    let descendants = descendant_commands(engine.id());
-    assert!(
-        descendants
-            .iter()
-            .all(|command| !command.to_ascii_lowercase().contains("webkit")),
-        "unexpected Engine descendant processes: {descendants:?}"
-    );
+    let _engine = EngineProcess::start(&bundle, |pid| {
+        let descendants = descendant_commands(pid);
+        assert!(
+            descendants
+                .iter()
+                .all(|command| !command.to_ascii_lowercase().contains("webkit")),
+            "unexpected Engine descendant processes: {descendants:?}"
+        );
+    });
 }
