@@ -1,0 +1,60 @@
+{
+  "cases": [
+    {
+      "id": "P04A-TARGET-001",
+      "obligation": "The packaged main executable contains only the Apple Silicon arm64 architecture.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/tests/p04a_macos_packaging.rs",
+      "evidence_name": "bundle_architecture_is_apple_silicon_arm64"
+    },
+    {
+      "id": "P04A-IDENTITY-001",
+      "obligation": "The packaged application keeps the stable dev.r4ai.zero-gesture bundle identifier.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/tests/p04a_macos_packaging.rs",
+      "evidence_name": "bundle_identifier_is_stable"
+    },
+    {
+      "id": "P04A-TARGET-002",
+      "obligation": "The packaged application requires macOS 26.0, the stable macOS generation recorded for P04a.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/tests/p04a_macos_packaging.rs",
+      "evidence_name": "bundle_requires_the_current_stable_macos_generation"
+    },
+    {
+      "id": "P04A-BUNDLE-001",
+      "obligation": "The application bundle contains exactly one main executable.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/tests/p04a_macos_packaging.rs",
+      "evidence_name": "bundle_contains_one_main_executable"
+    },
+    {
+      "id": "P04A-SIGNING-001",
+      "obligation": "The complete packaged application passes strict recursive code-signature verification.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/tests/p04a_macos_packaging.rs",
+      "evidence_name": "bundle_code_signature_is_valid"
+    },
+    {
+      "id": "P04A-SIGNING-002",
+      "obligation": "The packaged application code signature enables Hardened Runtime.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/tests/p04a_macos_packaging.rs",
+      "evidence_name": "bundle_code_signature_enables_hardened_runtime"
+    },
+    {
+      "id": "P04A-PROCESS-001",
+      "obligation": "The packaged same executable starts in Engine mode without owning a content window.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/tests/p04a_macos_packaging.rs",
+      "evidence_name": "engine_mode_owns_no_content_window"
+    },
+    {
+      "id": "P04A-PROCESS-002",
+      "obligation": "The packaged same executable starts in Engine mode without a WebKit descendant process.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/tests/p04a_macos_packaging.rs",
+      "evidence_name": "engine_mode_starts_no_webview_process"
+    }
+  ]
+}

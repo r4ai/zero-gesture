@@ -101,6 +101,55 @@ pub fn setup<R: Runtime>(app: &mut App<R>, enabled: bool) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Creates the macOS packaging-spike status item without starting a WebView.
+///
+/// P04a proves only the same-bundle process topology. Gesture control remains
+/// unavailable until the macOS IPC and native adapters are implemented.
+#[cfg(target_os = "macos")]
+pub fn setup_macos_packaging_spike<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
+    let open_settings_item =
+        MenuItem::with_id(app, MENU_OPEN_SETTINGS, "Open Settings", true, None::<&str>)?;
+    let quit_item = MenuItem::with_id(app, MENU_QUIT, "Quit", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&open_settings_item, &quit_item])?;
+
+    let mut tray = TrayIconBuilder::with_id("main-tray")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(move |app, event| match event.id().as_ref() {
+            MENU_OPEN_SETTINGS => {
+                if let Err(error) = launch_settings_process() {
+                    warn!("failed to launch Settings: {error}");
+                }
+            }
+            MENU_QUIT => {
+                let runtime = app.state::<crate::ThreadRuntime>();
+                if let Err(error) = runtime.shutdown() {
+                    warn!("failed to stop macOS packaging-spike Engine: {error}");
+                }
+                app.exit(0);
+            }
+            _ => {}
+        })
+        .on_tray_icon_event(|_tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                if let Err(error) = launch_settings_process() {
+                    warn!("failed to launch Settings: {error}");
+                }
+            }
+        });
+
+    if let Some(icon) = app.default_window_icon().cloned() {
+        tray = tray.icon(icon);
+    }
+    tray.build(app)?;
+    Ok(())
+}
+
 fn launch_settings_process() -> std::io::Result<()> {
     std::process::Command::new(std::env::current_exe()?)
         .arg("--settings")

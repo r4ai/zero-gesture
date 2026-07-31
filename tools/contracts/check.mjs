@@ -4,7 +4,7 @@ import { existsSync, readFileSync, statSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 
-const ALLOWED_RUNNERS = new Set(["cargo-test"])
+const ALLOWED_RUNNERS = new Set(["cargo-test", "macos-cargo-test"])
 const CASE_FIELDS = [
   "evidence_file",
   "evidence_name",
@@ -39,6 +39,13 @@ const MANIFESTS = [
       /^P03C-(?:HOT|CONTEXT|GENERATION|INPUT|ACTION|OVERLOAD|REPLAY|RENDER|LIFECYCLE)-\d{3}$/,
     idDescription:
       "P03C-HOT-NNN, P03C-CONTEXT-NNN, P03C-GENERATION-NNN, P03C-INPUT-NNN, P03C-ACTION-NNN, P03C-OVERLOAD-NNN, P03C-REPLAY-NNN, P03C-RENDER-NNN, or P03C-LIFECYCLE-NNN",
+  },
+  {
+    label: "P04a",
+    path: "contracts/p04a-macos-packaging.json",
+    idPattern: /^P04A-(?:TARGET|IDENTITY|BUNDLE|SIGNING|PROCESS)-\d{3}$/,
+    idDescription:
+      "P04A-TARGET-NNN, P04A-IDENTITY-NNN, P04A-BUNDLE-NNN, P04A-SIGNING-NNN, or P04A-PROCESS-NNN",
   },
 ]
 const REPO_ROOT = path.resolve(fileURLToPath(new URL("../..", import.meta.url)))
@@ -196,7 +203,7 @@ export function validateManifest(
       )
     }
 
-    if (cargoList !== undefined) {
+    if (cargoList !== undefined && contractCase.runner === "cargo-test") {
       const expected = cargoTestName(contractCase)
       const listedCount = cargoList
         .split(/\r?\n/)

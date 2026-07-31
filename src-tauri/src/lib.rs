@@ -15,7 +15,9 @@ pub mod window_info;
 use std::ffi::OsString;
 use std::fmt;
 use std::io;
-use std::path::{Path, PathBuf};
+#[cfg(windows)]
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, AtomicU32, Ordering},
     Arc, Mutex,
@@ -368,6 +370,7 @@ pub fn run() {
     }
 }
 
+#[cfg(windows)]
 fn run_engine() -> Result<(), String> {
     let log_level = log_config::resolve_log_level();
     #[cfg(debug_assertions)]
@@ -487,6 +490,37 @@ fn run_engine() -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+fn run_engine() -> Result<(), String> {
+    let log_level = log_config::resolve_log_level();
+    let app = tauri::Builder::default()
+        .plugin(tauri_plugin_log::Builder::new().level(log_level).build())
+        .setup(|app| {
+            app.manage(ThreadRuntime::settings());
+            tray::setup_macos_packaging_spike(app)?;
+            Ok(())
+        })
+        .build(tauri::generate_context!())
+        .map_err(|error| format!("failed to build macOS Engine: {error}"))?;
+
+    app.run(|app, event| {
+        if let tauri::RunEvent::ExitRequested { api, .. } = event {
+            if let Some(runtime) = app.try_state::<ThreadRuntime>() {
+                if !runtime.should_allow_exit() {
+                    api.prevent_exit();
+                }
+            }
+        }
+    });
+    Ok(())
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn run_engine() -> Result<(), String> {
+    Err("Engine mode is supported only on Windows and macOS".to_string())
+}
+
+#[cfg(windows)]
 fn engine_config_dir(default: PathBuf) -> PathBuf {
     #[cfg(debug_assertions)]
     if let Some(path) = std::env::var_os("ZG_P03_TEST_CONFIG_DIR") {
@@ -495,6 +529,7 @@ fn engine_config_dir(default: PathBuf) -> PathBuf {
     default
 }
 
+#[cfg(windows)]
 fn prepare_engine_server(
     config_dir: &Path,
 ) -> Result<Option<ipc::EngineServer>, ipc::ControlError> {

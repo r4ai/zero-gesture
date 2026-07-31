@@ -158,3 +158,27 @@ test("accepts runnable crate-root unit-test evidence", () => {
     1,
   )
 })
+
+test("accepts macOS-only Cargo evidence absent from a Windows Cargo list", () => {
+  const repo = mkdtempSync(path.join(tmpdir(), "contracts-macos-list-"))
+  const evidence = path.join(
+    repo,
+    "src-tauri",
+    "tests",
+    "p04a_macos_packaging.rs",
+  )
+  mkdirSync(path.dirname(evidence), { recursive: true })
+  writeFileSync(evidence, "#[test]\nfn packaged_engine_has_no_webview() {}\n")
+
+  const manifest = JSON.stringify({
+    cases: [
+      {
+        ...validCase,
+        runner: "macos-cargo-test",
+        evidence_file: "src-tauri/tests/p04a_macos_packaging.rs",
+        evidence_name: "packaged_engine_has_no_webview",
+      },
+    ],
+  })
+  assert.equal(validateManifestText(manifest, repo, ""), 1)
+})
