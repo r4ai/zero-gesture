@@ -1,4 +1,4 @@
-use super::core::{ControlError, ACCEPT_POLL_INTERVAL, IO_TIMEOUT, RETRY_INTERVAL};
+use super::core::{ControlError, ACCEPT_POLL_INTERVAL, RETRY_INTERVAL};
 use super::protocol::AUTH_SECRET_BYTES;
 use log::warn;
 use std::fs::{self, DirBuilder, File, Metadata, OpenOptions};
@@ -650,7 +650,9 @@ fn endpoint_io(operation: &str, error: io::Error) -> ControlError {
 
 #[cfg(test)]
 mod tests {
-    use super::super::core::{EngineControl, EngineServer, ServerExit, CONNECT_TIMEOUT};
+    use super::super::core::{
+        EngineControl, EngineServer, ServerExit, CONNECT_TIMEOUT, IO_TIMEOUT,
+    };
     use super::*;
     use crate::config::{self, ConfigDocument, ConfigOwner};
     use std::process::{Child, Command, Stdio};
