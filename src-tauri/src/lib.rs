@@ -15,7 +15,7 @@ pub mod window_info;
 use std::ffi::OsString;
 use std::fmt;
 use std::io;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{
@@ -424,55 +424,7 @@ fn run_engine() -> Result<(), String> {
             app.manage(commands::CaptureState(std::sync::Mutex::new(None)));
             tray::setup(app, enabled)?;
 
-            let stop = Arc::new(AtomicBool::new(false));
-            let server_stop = Arc::clone(&stop);
-            let app_handle = app.handle().clone();
-            let handle = thread::Builder::new()
-                .name("engine-ipc".to_string())
-                .spawn(move || {
-                    let result = server.run(server_stop, config_owner, |active, _generation| {
-                        let runtime = app_handle.try_state::<ThreadRuntime>().ok_or_else(|| {
-                            ipc::ControlError::projection("thread runtime state is unavailable")
-                        })?;
-                        runtime
-                            .observe_applied(active)
-                            .map_err(ipc::ControlError::projection)?;
-                        if let Err(error) =
-                            tray::schedule_toggle_menu_label(&app_handle, active.enabled())
-                        {
-                            warn!("failed to schedule tray label reconciliation: {error}");
-                        }
-                        Ok(())
-                    });
-                    match result {
-                        Ok(ipc::ServerExit::Shutdown) => {
-                            info!("Engine shutdown requested over IPC");
-                            if let Some(runtime) = app_handle.try_state::<ThreadRuntime>() {
-                                if let Err(error) = runtime.shutdown() {
-                                    error!("failed to stop Engine workers: {error}");
-                                }
-                            }
-                            app_handle.exit(0);
-                        }
-                        Ok(ipc::ServerExit::Stopped) => {}
-                        Err(error) => {
-                            error!("Engine IPC owner stopped: {error}");
-                            if let Some(runtime) = app_handle.try_state::<ThreadRuntime>() {
-                                if let Err(error) = runtime.shutdown() {
-                                    error!("failed to stop Engine workers after fatal IPC error: {error}");
-                                }
-                            }
-                            app_handle.exit(1);
-                        }
-                    }
-                })
-                .map_err(|error| {
-                    tauri::Error::Setup((Box::new(error) as Box<dyn std::error::Error>).into())
-                })?;
-            app.manage(EngineIpcRuntime {
-                stop,
-                handle: Mutex::new(Some(handle)),
-            });
+            start_engine_ipc(app, server, config_owner)?;
             #[cfg(debug_assertions)]
             if let Some(path) = std::env::var_os("ZG_P03_TEST_READY_MARKER") {
                 std::fs::write(path, b"engine-ready")?;
@@ -497,15 +449,48 @@ fn run_engine() -> Result<(), String> {
 #[cfg(target_os = "macos")]
 fn run_engine() -> Result<(), String> {
     let log_level = log_config::resolve_log_level();
+    #[cfg(debug_assertions)]
+    let log_builder =
+        if let Some(config_dir) = std::env::var_os("ZG_P03_TEST_CONFIG_DIR") {
+            tauri_plugin_log::Builder::new().level(log_level).targets([
+                tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Folder {
+                    path: PathBuf::from(config_dir).join("logs"),
+                    file_name: Some("engine-test".to_string()),
+                }),
+            ])
+        } else {
+            tauri_plugin_log::Builder::new().level(log_level)
+        };
+    #[cfg(not(debug_assertions))]
+    let log_builder = tauri_plugin_log::Builder::new().level(log_level);
+
     let app = tauri::Builder::default()
-        .plugin(tauri_plugin_log::Builder::new().level(log_level).build())
-        .setup(|app| {
+        .plugin(log_builder.build())
+        .setup(move |app| {
+            let config_dir_path = engine_config_dir(app.path().app_config_dir()?);
+            let Some(server) = prepare_engine_server(&config_dir_path).map_err(|error| {
+                tauri::Error::Setup((Box::new(error) as Box<dyn std::error::Error>).into())
+            })?
+            else {
+                info!("Engine already running for this user");
+                app.handle().exit(0);
+                return Ok(());
+            };
+            let engine_control = ipc::EngineControl::for_prepared_server(&server);
+            let (config_owner, _) = config::ConfigOwner::startup(&config_dir_path);
+            app.manage(engine_control);
+            app.manage(ConfigDir(config_dir_path));
             app.manage(ThreadRuntime::settings());
             tray::setup_macos_packaging_spike(app)?;
             if !app.webview_windows().is_empty() {
                 return Err(
                     io::Error::other("macOS Engine must not own a managed WebView window").into(),
                 );
+            }
+            start_engine_ipc(app, server, config_owner)?;
+            #[cfg(debug_assertions)]
+            if let Some(path) = std::env::var_os("ZG_P03_TEST_READY_MARKER") {
+                std::fs::write(path, b"engine-ready")?;
             }
             Ok(())
         })
@@ -533,7 +518,7 @@ fn run_engine() -> Result<(), String> {
     Err("Engine mode is supported only on Windows and macOS".to_string())
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 fn engine_config_dir(default: PathBuf) -> PathBuf {
     #[cfg(debug_assertions)]
     if let Some(path) = std::env::var_os("ZG_P03_TEST_CONFIG_DIR") {
@@ -542,11 +527,11 @@ fn engine_config_dir(default: PathBuf) -> PathBuf {
     default
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 fn prepare_engine_server(
     config_dir: &Path,
 ) -> Result<Option<ipc::EngineServer>, ipc::ControlError> {
-    #[cfg(all(debug_assertions, windows))]
+    #[cfg(debug_assertions)]
     if let Some(namespace) = std::env::var_os("ZG_P03_TEST_NAMESPACE") {
         let namespace = namespace.to_str().ok_or_else(|| {
             ipc::ControlError::Security("P03 test namespace must be valid Unicode".to_string())
@@ -554,6 +539,64 @@ fn prepare_engine_server(
         return ipc::EngineServer::for_debug_namespace(config_dir, namespace);
     }
     ipc::EngineServer::new(config_dir)
+}
+
+#[cfg(any(windows, target_os = "macos"))]
+fn start_engine_ipc(
+    app: &mut tauri::App,
+    server: ipc::EngineServer,
+    config_owner: config::ConfigOwner,
+) -> tauri::Result<()> {
+    let stop = Arc::new(AtomicBool::new(false));
+    let server_stop = Arc::clone(&stop);
+    let app_handle = app.handle().clone();
+    let handle = thread::Builder::new()
+        .name("engine-ipc".to_string())
+        .spawn(move || {
+            let result = server.run(server_stop, config_owner, |active, _generation| {
+                let runtime = app_handle.try_state::<ThreadRuntime>().ok_or_else(|| {
+                    ipc::ControlError::projection("thread runtime state is unavailable")
+                })?;
+                runtime
+                    .observe_applied(active)
+                    .map_err(ipc::ControlError::projection)?;
+                #[cfg(windows)]
+                if let Err(error) = tray::schedule_toggle_menu_label(&app_handle, active.enabled())
+                {
+                    warn!("failed to schedule tray label reconciliation: {error}");
+                }
+                Ok(())
+            });
+            match result {
+                Ok(ipc::ServerExit::Shutdown) => {
+                    info!("Engine shutdown requested over IPC");
+                    if let Some(runtime) = app_handle.try_state::<ThreadRuntime>() {
+                        if let Err(error) = runtime.shutdown() {
+                            error!("failed to stop Engine workers: {error}");
+                        }
+                    }
+                    app_handle.exit(0);
+                }
+                Ok(ipc::ServerExit::Stopped) => {}
+                Err(error) => {
+                    error!("Engine IPC owner stopped: {error}");
+                    if let Some(runtime) = app_handle.try_state::<ThreadRuntime>() {
+                        if let Err(error) = runtime.shutdown() {
+                            error!("failed to stop Engine workers after fatal IPC error: {error}");
+                        }
+                    }
+                    app_handle.exit(1);
+                }
+            }
+        })
+        .map_err(|error| {
+            tauri::Error::Setup((Box::new(error) as Box<dyn std::error::Error>).into())
+        })?;
+    app.manage(EngineIpcRuntime {
+        stop,
+        handle: Mutex::new(Some(handle)),
+    });
+    Ok(())
 }
 
 fn run_settings() -> Result<(), String> {
@@ -571,7 +614,14 @@ fn run_settings() -> Result<(), String> {
                         .map_err(|error| error.to_string())
                 });
             let engine = match engine_result {
-                Ok(control) => SettingsEngineState::Connected(control),
+                Ok(control) => {
+                    #[cfg(debug_assertions)]
+                    if let Some(path) = std::env::var_os("ZG_P04B1_TEST_SETTINGS_CONNECTED_MARKER")
+                    {
+                        std::fs::write(path, b"settings-connected")?;
+                    }
+                    SettingsEngineState::Connected(control)
+                }
                 Err(message) => {
                     warn!("Engine unavailable to Settings: {message}");
                     SettingsEngineState::Unavailable(message)
@@ -614,6 +664,18 @@ fn run_settings() -> Result<(), String> {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_engine_keeps_the_tauri_application_config_directory() {
+        assert!(std::env::var_os("ZG_P03_TEST_CONFIG_DIR").is_none());
+        let tauri_config_dir = PathBuf::from("/tauri/stable/application-config");
+        assert_eq!(
+            engine_config_dir(tauri_config_dir.clone()),
+            tauri_config_dir
+        );
+    }
+
+    #[cfg(windows)]
     #[test]
     fn thread_runtime_observes_applied_config_without_restarting_native_owner() {
         let directory = tempfile::tempdir().unwrap();

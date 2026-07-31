@@ -1,0 +1,270 @@
+{
+  "cases": [
+    {
+      "id": "P04B1-ENDPOINT-001",
+      "obligation": "The macOS IPC runtime directory is owned by the effective UID and has exact mode 0700.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "runtime_directory_has_exact_mode_and_effective_uid_owner"
+    },
+    {
+      "id": "P04B1-ENDPOINT-002",
+      "obligation": "An existing macOS IPC runtime directory with a non-0700 mode is rejected.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "unsafe_runtime_directory_mode_is_rejected"
+    },
+    {
+      "id": "P04B1-ENDPOINT-003",
+      "obligation": "A symlink at the macOS IPC runtime-directory path is rejected.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "symlink_runtime_directory_is_rejected"
+    },
+    {
+      "id": "P04B1-ENDPOINT-004",
+      "obligation": "A symlink at the macOS control-socket path is rejected without removing its target.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "symlink_socket_object_is_rejected_without_removal"
+    },
+    {
+      "id": "P04B1-ENDPOINT-005",
+      "obligation": "A non-socket object at the macOS control-socket path is rejected.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "non_socket_endpoint_object_is_rejected"
+    },
+    {
+      "id": "P04B1-ENDPOINT-006",
+      "obligation": "A symlink at the macOS authentication-secret path is rejected without changing its target.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "symlink_secret_object_is_rejected_without_touching_its_target"
+    },
+    {
+      "id": "P04B1-ENDPOINT-007",
+      "obligation": "A hard-linked macOS authentication-secret object is rejected without truncating its target.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "hard_linked_secret_object_is_rejected_without_truncation"
+    },
+    {
+      "id": "P04B1-ENDPOINT-008",
+      "obligation": "An internal IPC file whose owner differs from the effective UID is rejected at the metadata boundary.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "wrong_owner_is_rejected_at_the_metadata_boundary"
+    },
+    {
+      "id": "P04B1-ENDPOINT-009",
+      "obligation": "The singleton owner replaces a safe stale socket before binding the new Engine endpoint.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "safe_stale_socket_is_replaced_before_bind"
+    },
+    {
+      "id": "P04B1-ENDPOINT-010",
+      "obligation": "The macOS singleton lock admits only one Engine endpoint owner.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "singleton_lock_allows_only_one_engine_endpoint_owner"
+    },
+    {
+      "id": "P04B1-ENDPOINT-011",
+      "obligation": "Dropping the macOS Engine server removes its owned bound socket.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "server_drop_removes_its_owned_socket"
+    },
+    {
+      "id": "P04B1-ENDPOINT-013",
+      "obligation": "The macOS authentication-secret file has observable literal mode 0600.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "authentication_secret_has_literal_exact_mode_0600"
+    },
+    {
+      "id": "P04B1-ENDPOINT-014",
+      "obligation": "The macOS singleton-lock file has observable literal mode 0600.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "singleton_lock_has_literal_exact_mode_0600"
+    },
+    {
+      "id": "P04B1-ENDPOINT-015",
+      "obligation": "The macOS launch-lock file has observable literal mode 0600.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "launch_lock_has_literal_exact_mode_0600"
+    },
+    {
+      "id": "P04B1-ENDPOINT-016",
+      "obligation": "A path replacement after socket bind is rejected without changing the replacement object's permissions.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "socket_creation_does_not_chmod_a_replacement_path"
+    },
+    {
+      "id": "P04B1-ENDPOINT-017",
+      "obligation": "A replacement racing stale-socket cleanup is preserved under a bounded quarantine name.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "stale_cleanup_preserves_a_racing_replacement_in_quarantine"
+    },
+    {
+      "id": "P04B1-ENDPOINT-018",
+      "obligation": "Server-owned socket cleanup preserves a replacement at the live endpoint path.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "owned_drop_preserves_a_replacement_at_the_socket_path"
+    },
+    {
+      "id": "P04B1-ENDPOINT-019",
+      "obligation": "Final quarantined cleanup rejects and preserves an object that replaced the quarantined inode.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "quarantined_cleanup_preserves_a_replacement_object"
+    },
+    {
+      "id": "P04B1-PEER-001",
+      "obligation": "The macOS BSD peer-credential API reports the effective UID for an actual same-user Unix connection.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "actual_bsd_peer_credentials_match_the_effective_uid"
+    },
+    {
+      "id": "P04B1-PEER-002",
+      "obligation": "The actual accepted-connection path rejects a getpeereid UID mismatch before protocol handling.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "accepted_connection_rejects_actual_peer_uid_before_protocol"
+    },
+    {
+      "id": "P04B1-IPC-001",
+      "obligation": "A macOS UDS client can query Engine status including the Engine-owned configuration state.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "uds_status_reports_engine_and_config_owner_state"
+    },
+    {
+      "id": "P04B1-CONFIG-001",
+      "obligation": "A macOS UDS apply request commits and persists through the Engine configuration owner.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "uds_apply_uses_the_engine_config_owner_and_persists"
+    },
+    {
+      "id": "P04B1-CONFIG-002",
+      "obligation": "A macOS UDS import uses the same validation and Engine-owner transaction as apply.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "uds_import_bytes_uses_the_same_validation_and_owner_transaction"
+    },
+    {
+      "id": "P04B1-CONFIG-003",
+      "obligation": "A macOS UDS export source is the exact snapshot returned by the Engine.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "uds_export_reads_the_exact_engine_snapshot"
+    },
+    {
+      "id": "P04B1-CONFIG-004",
+      "obligation": "A macOS UDS set-enabled request commits through the Engine configuration owner.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "uds_set_enabled_commits_through_the_config_owner"
+    },
+    {
+      "id": "P04B1-IPC-002",
+      "obligation": "A malformed macOS UDS client closes only its connection and the Engine remains available.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "malformed_uds_client_does_not_stop_the_engine"
+    },
+    {
+      "id": "P04B1-IPC-003",
+      "obligation": "Disconnecting a macOS UDS client releases only that session's prepared configuration.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "disconnected_uds_client_releases_only_its_candidate"
+    },
+    {
+      "id": "P04B1-PROCESS-001",
+      "obligation": "A separate macOS process uses UDS to persist configuration as the Engine owner.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "macos_process_uds_persists_engine_owned_config"
+    },
+    {
+      "id": "P04B1-IPC-004",
+      "obligation": "The macOS UDS shutdown request is idempotent within its accepted session.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "uds_shutdown_is_idempotent_for_the_accepted_session"
+    },
+    {
+      "id": "P04B1-IPC-005",
+      "obligation": "A slowloris frame cannot extend the server's one absolute per-frame connection deadline.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "slowloris_frame_cannot_extend_the_absolute_connection_deadline"
+    },
+    {
+      "id": "P04B1-IPC-006",
+      "obligation": "A saturated macOS Unix backlog cannot extend Settings beyond its absolute bounded-connect deadline.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "saturated_unix_backlog_respects_the_bounded_connect_deadline"
+    },
+    {
+      "id": "P04B1-IPC-007",
+      "obligation": "An already-expired macOS connection deadline is reported instead of being silently installed.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "expired_deadline_setup_is_rejected"
+    },
+    {
+      "id": "P04B1-IPC-008",
+      "obligation": "Actual Windows ServerTransport field destruction completes pipe and secret cleanup before singleton release.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "server_transport_drops_pipe_and_secret_before_singleton"
+    },
+    {
+      "id": "P04B1-IPC-009",
+      "obligation": "An EINTR result from macOS nonblocking connect remains pending under the original absolute deadline.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "interrupted_nonblocking_connect_is_classified_as_pending"
+    },
+    {
+      "id": "P04B1-IPC-010",
+      "obligation": "A macOS DeadlineStream cannot be constructed with an already-expired deadline.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "deadline_stream_constructor_rejects_an_expired_deadline"
+    },
+    {
+      "id": "P04B1-CONFIG-005",
+      "obligation": "macOS Engine keeps the Tauri-provided stable application configuration directory when no test override is present.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/lib.rs",
+      "evidence_name": "macos_engine_keeps_the_tauri_application_config_directory"
+    },
+    {
+      "id": "P04B1-PROCESS-002",
+      "obligation": "Packaged Settings and Engine modes of the same macOS executable interoperate over the internal UDS without stopping Engine.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/tests/p04b1_macos_control.rs",
+      "evidence_name": "packaged_same_executable_settings_connects_to_engine_over_uds"
+    },
+    {
+      "id": "P04B1-PROCESS-003",
+      "obligation": "Actual proc_pidinfo failure for an invalid PID preserves its captured nonzero errno as diagnostic source context.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "invalid_proc_pidinfo_pid_preserves_the_actual_errno_source"
+    }
+  ]
+}
