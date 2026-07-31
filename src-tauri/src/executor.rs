@@ -4,7 +4,9 @@
 //! shortcuts) and executes them by synthesising input via the Win32
 //! `SendInput` API.
 
-use log::{debug, warn};
+#[cfg(windows)]
+use log::debug;
+use log::warn;
 
 use crate::config::Action;
 

@@ -12,10 +12,9 @@ pub use windows::{ControlError, EngineControl, EngineServer, ServerExit};
 #[cfg(not(windows))]
 mod unsupported {
     use super::EngineStatus;
-    use crate::config::{ActiveConfig, ConfigDocument, ConfigOwner};
+    use crate::config::ConfigDocument;
     use std::fmt;
     use std::path::Path;
-    use std::sync::{atomic::AtomicBool, Arc};
 
     #[derive(Debug)]
     pub struct ControlError;
@@ -35,7 +34,7 @@ mod unsupported {
     }
 
     #[derive(Clone)]
-    pub struct EngineControl;
+    pub(crate) struct EngineControl;
 
     #[derive(Clone, Debug, serde::Serialize)]
     pub(crate) struct ConfigObservation {
@@ -51,22 +50,22 @@ mod unsupported {
     }
 
     impl EngineControl {
-        pub fn connect_or_start(
+        pub(crate) fn connect_or_start(
             _executable: &Path,
             _config_dir: &Path,
         ) -> Result<Self, ControlError> {
             Err(ControlError)
         }
 
-        pub fn ping(&self) -> Result<(), ControlError> {
+        pub(crate) fn ping(&self) -> Result<(), ControlError> {
             Err(ControlError)
         }
 
-        pub fn status(&self) -> Result<EngineStatus, ControlError> {
+        pub(crate) fn status(&self) -> Result<EngineStatus, ControlError> {
             Err(ControlError)
         }
 
-        pub fn shutdown(&self) -> Result<bool, ControlError> {
+        pub(crate) fn shutdown(&self) -> Result<bool, ControlError> {
             Err(ControlError)
         }
 
@@ -90,35 +89,9 @@ mod unsupported {
             Err(ControlError)
         }
     }
-
-    pub struct EngineServer;
-
-    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-    pub enum ServerExit {
-        Shutdown,
-        Stopped,
-    }
-
-    impl EngineServer {
-        pub fn new(_config_dir: &Path) -> Result<Option<Self>, ControlError> {
-            Err(ControlError)
-        }
-
-        pub fn run<F>(
-            self,
-            _stop: Arc<AtomicBool>,
-            _config_owner: ConfigOwner,
-            _on_applied: F,
-        ) -> Result<ServerExit, ControlError>
-        where
-            F: FnMut(&ActiveConfig, u64) -> Result<(), ControlError>,
-        {
-            Err(ControlError)
-        }
-    }
 }
 
 #[cfg(not(windows))]
-pub(crate) use unsupported::{ConfigApplyResult, ConfigObservation};
+pub(crate) use unsupported::EngineControl;
 #[cfg(not(windows))]
-pub use unsupported::{ControlError, EngineControl, EngineServer, ServerExit};
+pub(crate) use unsupported::{ConfigApplyResult, ConfigObservation};

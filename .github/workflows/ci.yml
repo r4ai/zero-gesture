@@ -184,6 +184,73 @@ jobs:
       - name: Tauri build (no bundle)
         run: pnpm tauri build --debug --no-bundle --ci
 
+  macos-packaging:
+    name: macOS 26 arm64 Packaging
+    runs-on: macos-26
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Confirm Apple Silicon runner
+        shell: bash
+        run: test "$(uname -m)" = "arm64"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061 # v4.2.0
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable ref, reviewed 2026-08-01
+        with:
+          components: clippy
+          targets: aarch64-apple-darwin
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint macOS target
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin --all-targets -- -D warnings -A dead-code
+
+      - name: Build ad-hoc signed application bundle
+        env:
+          APPLE_SIGNING_IDENTITY: "-"
+        run: pnpm tauri build --debug --bundles app --target aarch64-apple-darwin --ci
+
+      - name: Validate bundle and process modes
+        env:
+          ZG_P04A_APP_BUNDLE: ${{ github.workspace }}/src-tauri/target/aarch64-apple-darwin/debug/bundle/macos/Zero Gesture.app
+        run: cargo test --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin --test p04a_macos_packaging -- --test-threads=1
+
+      - name: Archive validated application bundle
+        shell: bash
+        run: ditto -c -k --sequesterRsrc --keepParent "src-tauri/target/aarch64-apple-darwin/debug/bundle/macos/Zero Gesture.app" "$RUNNER_TEMP/zero-gesture-macos-26-arm64.zip"
+
+      - name: Upload validated application archive
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: zero-gesture-macos-26-arm64-${{ github.run_id }}
+          path: ${{ runner.temp }}/zero-gesture-macos-26-arm64.zip
+          if-no-files-found: error
+          retention-days: 14
+
   rust-lint:
     name: Rust Lint
     runs-on: windows-latest
