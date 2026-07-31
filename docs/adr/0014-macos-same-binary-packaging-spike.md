@@ -76,8 +76,8 @@ nonzero-area layer-zero content window, including hidden or off-screen windows,
 and descendant-process inspection fails on any WebKit process, including a
 startup-only process.
 Zero-area AppKit bookkeeping windows and the AppKit backing rectangle that
-exactly matches the primary screen's menu-bar exclusion derived from
-`NSScreen.frame` and `visibleFrame` are not classified as content windows.
+is anchored at the main-display origin, spans its full width, and is no taller
+than twice `NSStatusBar.system.thickness` are not classified as content windows.
 The release executable contains no marker-file or arbitrary-path test hook.
 This evidence validates bundle and process topology only.
 Ad-hoc signing is not evidence of Developer ID trust, Gatekeeper acceptance, or
