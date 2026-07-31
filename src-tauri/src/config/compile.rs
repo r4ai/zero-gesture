@@ -29,13 +29,21 @@ struct CompiledMatcher {
     logic: CompiledMatchLogic,
 }
 
+#[derive(Clone, Copy)]
+struct MatchInput<'a> {
+    process_name: Option<&'a str>,
+    window_class: Option<&'a str>,
+    title: Option<&'a str>,
+    bundle_identifier: Option<&'a str>,
+}
+
 impl CompiledMatcher {
-    fn matches(&self, info: &ForegroundWindowInfo) -> bool {
+    fn matches(&self, input: MatchInput<'_>) -> bool {
         let value = match self.target {
-            MatchTarget::ProcessName => info.process_name.as_deref(),
-            MatchTarget::WindowClass => info.window_class.as_deref(),
-            MatchTarget::Title => info.title.as_deref(),
-            MatchTarget::BundleIdentifier => info.bundle_identifier.as_deref(),
+            MatchTarget::ProcessName => input.process_name,
+            MatchTarget::WindowClass => input.window_class,
+            MatchTarget::Title => input.title,
+            MatchTarget::BundleIdentifier => input.bundle_identifier,
         };
         let Some(value) = value else {
             return false;
@@ -84,22 +92,37 @@ pub(crate) struct RuntimeConfig {
 
 impl RuntimeConfig {
     pub(crate) fn match_windows_app(&self, info: &ForegroundWindowInfo) -> Option<BindingSetId> {
-        self.match_app(info)
+        self.match_app(MatchInput {
+            process_name: info.process_name.as_deref(),
+            window_class: info.window_class.as_deref(),
+            title: info.title.as_deref(),
+            bundle_identifier: None,
+        })
     }
 
     #[cfg(target_os = "macos")]
-    pub(crate) fn match_macos_app(&self, info: &ForegroundWindowInfo) -> Option<BindingSetId> {
-        self.match_app(info)
+    pub(crate) fn match_macos_app(
+        &self,
+        process_name: &str,
+        bundle_identifier: Option<&str>,
+        title: &str,
+    ) -> Option<BindingSetId> {
+        self.match_app(MatchInput {
+            process_name: Some(process_name),
+            window_class: None,
+            title: Some(title),
+            bundle_identifier,
+        })
     }
 
-    fn match_app(&self, info: &ForegroundWindowInfo) -> Option<BindingSetId> {
+    fn match_app(&self, input: MatchInput<'_>) -> Option<BindingSetId> {
         self.applications
             .iter()
             .find(|application| {
                 application
                     .matchers
                     .iter()
-                    .any(|matcher| matcher.matches(info))
+                    .any(|matcher| matcher.matches(input))
             })
             .map(|application| application.binding_set)
     }
@@ -360,7 +383,6 @@ mod tests {
                 process_name: None,
                 window_class: None,
                 title: Some("shared".to_string()),
-                bundle_identifier: None,
             }),
             Some(BindingSetId::from_index(1).unwrap())
         );
@@ -369,7 +391,6 @@ mod tests {
                 process_name: None,
                 window_class: Some("windows".to_string()),
                 title: None,
-                bundle_identifier: None,
             }),
             Some(BindingSetId::from_index(2).unwrap())
         );
@@ -429,12 +450,7 @@ mod tests {
         let compiled = compile(&document).unwrap();
 
         assert_eq!(
-            compiled.match_macos_app(&ForegroundWindowInfo {
-                process_name: None,
-                window_class: None,
-                title: None,
-                bundle_identifier: Some("DEV.EXAMPLE.EDITOR".to_string()),
-            }),
+            compiled.match_macos_app("", Some("DEV.EXAMPLE.EDITOR"), ""),
             Some(BindingSetId::from_index(2).unwrap())
         );
         assert_eq!(compiled.gesture.binding_sets.len(), 3);

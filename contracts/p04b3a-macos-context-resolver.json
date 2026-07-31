@@ -9,10 +9,17 @@
     },
     {
       "id": "P04B3A-ISOLATION-001",
-      "obligation": "The Event Tap callback stops at the normalized queue and context observation begins only after owner-side drain.",
+      "obligation": "The Event Tap callback stops at the normalized queue and only the run-loop owner drains captured input.",
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/hook/macos.rs",
       "evidence_name": "callback_capture_stops_at_the_queue_before_context_resolution"
+    },
+    {
+      "id": "P04B3A-ISOLATION-002",
+      "obligation": "Before the P04b3b consumer exists, the resident macOS owner does not spawn or submit work to the context resolver.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos.rs",
+      "evidence_name": "resident_owner_keeps_context_queries_disconnected_until_consumer_phase"
     },
     {
       "id": "P04B3A-REQUEST-001",
@@ -23,10 +30,17 @@
     },
     {
       "id": "P04B3A-REQUEST-002",
-      "obligation": "Mouse movement cannot submit one AX request per event and is rate-limited before worker submission.",
+      "obligation": "The dormant next-phase request seam rate-limits mouse movement before worker submission.",
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/hook/macos_context.rs",
       "evidence_name": "mouse_move_requests_are_rate_limited_before_worker_submission"
+    },
+    {
+      "id": "P04B3A-REQUEST-003",
+      "obligation": "The private AX query seam applies the 50 ms timeout before exact AXFocusedWindow and AXTitle reads in focused-title-refocused order.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_name": "consistent_window_query_applies_the_exact_timed_ax_sequence"
     },
     {
       "id": "P04B3A-FAILURE-001",
@@ -57,6 +71,13 @@
       "evidence_name": "target_exit_clears_the_latest_context"
     },
     {
+      "id": "P04B3A-FAILURE-005",
+      "obligation": "A nullable CF Create or Copy result is rejected before an owned reference can run CFRelease.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_name": "nullable_cf_create_is_rejected_before_owned_drop"
+    },
+    {
       "id": "P04B3A-STRING-001",
       "obligation": "An oversized context string is rejected before snapshot publication.",
       "runner": "macos-cargo-test",
@@ -76,6 +97,20 @@
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/hook/macos_context.rs",
       "evidence_name": "same_pid_with_a_new_process_identity_replaces_the_cached_window"
+    },
+    {
+      "id": "P04B3A-IDENTITY-002",
+      "obligation": "A focused-window change during title resolution is rejected instead of publishing a mixed window context.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_name": "focus_change_during_resolution_degrades_to_unknown"
+    },
+    {
+      "id": "P04B3A-IDENTITY-003",
+      "obligation": "The CFHash window fingerprint is not treated as a unique target identity.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_name": "window_fingerprint_is_not_used_as_unique_target_identity"
     },
     {
       "id": "P04B3A-CACHE-001",
@@ -99,11 +134,32 @@
       "evidence_name": "macos_compile_selects_bundle_application_and_command_binding"
     },
     {
+      "id": "P04B3A-MATCH-002",
+      "obligation": "macOS process matching derives the complete bounded executable basename instead of the truncated process comm name.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_name": "process_name_matches_the_current_executable_basename"
+    },
+    {
       "id": "P04B3A-LIFECYCLE-001",
       "obligation": "The resolver worker stops within its bounded wait and invalidates its latest snapshot.",
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/hook/macos_context.rs",
       "evidence_name": "resolver_worker_stops_deterministically_and_invalidates_its_snapshot"
+    },
+    {
+      "id": "P04B3A-LIFECYCLE-002",
+      "obligation": "Worker readiness is published before capability FFI so startup readiness cannot wait on a hung preflight.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_name": "worker_readiness_precedes_the_capability_ffi_boundary"
+    },
+    {
+      "id": "P04B3A-BOUNDARY-001",
+      "obligation": "The existing serialized ForegroundWindowInfo contract remains the three Windows fields and gains no macOS bundle field.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/window_info.rs",
+      "evidence_name": "serialized_windows_window_info_keeps_its_three_field_contract"
     }
   ]
 }

@@ -23,8 +23,6 @@ use super::{HookEvent, HookFailure};
 #[cfg(target_os = "macos")]
 use crate::config::ConfigSnapshotReader;
 use crate::domain::{MouseEvent, Point, TriggerButton};
-#[cfg(target_os = "macos")]
-use crate::hook::macos_context::ContextWorker;
 
 const EVENT_QUEUE_CAPACITY: usize = 64;
 #[cfg(target_os = "macos")]
@@ -336,24 +334,19 @@ enum StartupFailure {
 
 #[cfg(target_os = "macos")]
 pub(super) fn run_loop_macos(
-    reader: ConfigSnapshotReader,
+    _reader: ConfigSnapshotReader,
     stop: Arc<AtomicBool>,
     events: Sender<HookEvent>,
 ) -> Result<(), HookFailure> {
-    let context = ContextWorker::spawn(reader)?;
     let state = Box::new(TapState::new());
     let mode = unsafe { start_event_tap(state.as_ref()) };
     match mode {
-        StartupMode::Active(resources) => run_active(stop, events, state, resources, context),
+        StartupMode::Active(resources) => run_active(stop, events, state, resources),
         StartupMode::PermissionDenied => {
-            let result = dispatch_startup_failure(StartupFailure::PermissionDenied, stop, events);
-            context.shutdown();
-            result
+            dispatch_startup_failure(StartupFailure::PermissionDenied, stop, events)
         }
         StartupMode::CreationFailed => {
-            let result = dispatch_startup_failure(StartupFailure::CreationFailed, stop, events);
-            context.shutdown();
-            result
+            dispatch_startup_failure(StartupFailure::CreationFailed, stop, events)
         }
     }
 }
@@ -400,30 +393,21 @@ fn run_active(
     events: Sender<HookEvent>,
     state: Box<TapState>,
     resources: TapResources,
-    mut context: ContextWorker,
 ) -> Result<(), HookFailure> {
     publish_ready(&events)?;
     while !stop.load(Ordering::Acquire) {
         let result =
             unsafe { CFRunLoopRunInMode(kCFRunLoopDefaultMode, RUN_LOOP_SLICE_SECONDS, false) };
         if classify_run_loop_result(result) == RunLoopDisposition::Degrade {
-            state.drain(|input| {
-                context.observe(input.event, input.point, input.timestamp_ns);
-            });
+            state.drain(drop);
             run_non_timeout_owner_step(&stop, (resources, state));
-            context.shutdown();
             return Ok(());
         }
-        state.drain(|input| {
-            context.observe(input.event, input.point, input.timestamp_ns);
-        });
+        state.drain(drop);
         state.reenable_if_requested(resources.tap);
     }
-    state.drain(|input| {
-        context.observe(input.event, input.point, input.timestamp_ns);
-    });
+    state.drain(drop);
     drop(resources);
-    context.shutdown();
     Ok(())
 }
 
@@ -702,6 +686,18 @@ mod tests {
             })
         );
         assert_eq!(state.snapshot().processed, 1);
+    }
+
+    #[test]
+    fn resident_owner_keeps_context_queries_disconnected_until_consumer_phase() {
+        let source = include_str!("macos.rs")
+            .split("mod tests {")
+            .next()
+            .unwrap();
+
+        assert!(!source.contains(concat!("Context", "Worker")));
+        assert!(!source.contains(concat!("macos_", "context::")));
+        assert!(!source.contains(concat!("context.", "observe(")));
     }
 
     #[test]

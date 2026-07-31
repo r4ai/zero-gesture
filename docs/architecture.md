@@ -100,14 +100,15 @@ permission拒否、tap生成失敗、disable、queue overloadはすべてfail-op
 P04b2ではcontext、`InputKernel`、抑止/replay、action、rendererへ接続しない。
 Listen Event permissionのpromptもEngineから表示せず、後続Settings UIへ委ねる。
 
-P04b3aではcallbackが正規化queueへ入れた後だけ、run-loop ownerが25 msで
-rate-limitしたlatest requestを専用context workerへ渡す。workerは
-`AXIsProcessTrustedWithOptions(NULL)`でpromptなしpreflightし、
-`NSWorkspace`のfrontmost processと50 ms timeoutを設定したAX focused
-window/titleを解決する。capacity-one wakeは遅延時に最新requestへcoalesceし、
-PID・process start時刻・window identityを含むlatest snapshotを公開する。
-denied/error/timeout/target exit/不正文字列はsnapshotをUnknownへ無効化する。
-このsnapshotはまだ`InputKernel`へ接続せず、listen-only通過を維持する。
+P04b3aでは後続consumerがまだ存在しないため、run-loop ownerは正規化queueを
+drainするだけでcontext workerを起動せず、Accessibility preflightやAX/process
+queryを実行しない。crate-privateなworker/cache seamはproduction compileされ、
+capacity-one coalescing、25 ms rate limit、50 ms AX timeout、title取得前後の
+focused-window `CFEqual`、PID・process start時刻によるcache invalidationを
+deterministic testで固定する。nullable CF値、denied/error/timeout、
+focus/target変更、不正文字列はUnknownへ劣化し、P04b3bが実consumerと同時に
+workerを接続する。`ForegroundWindowInfo`の既存Windows payloadは変更せず、
+P04b2同様のlisten-only通過を維持する。
 
 ### 3.3. Overlay Thread (The "Visuals")
 

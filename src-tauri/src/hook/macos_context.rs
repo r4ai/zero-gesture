@@ -1,12 +1,15 @@
 //! macOS Accessibility context resolver.
 //!
-//! The Event Tap callback cannot reach this module. Its run-loop owner submits
-//! coalesced observations to one worker, which publishes one numeric snapshot.
+//! The Event Tap callback cannot reach this module. P04b3a compiles and tests
+//! the concrete worker/cache seam but leaves it disconnected until P04b3b has
+//! a snapshot consumer, so the resident Engine performs no context OS query.
 
 use std::sync::atomic::{fence, AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
+#[cfg(target_os = "macos")]
+use std::{ffi::c_void, ptr::NonNull};
 
 use crossbeam_channel::{bounded, Receiver, Sender};
 
@@ -21,10 +24,38 @@ const WORKER_POLL: Duration = Duration::from_millis(10);
 const READY_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_CONTEXT_UTF16_UNITS: usize = 512;
 const MAX_CONTEXT_UTF8_BYTES: usize = MAX_CONTEXT_UTF16_UNITS * 4;
-#[cfg(target_os = "macos")]
 const AX_MESSAGING_TIMEOUT_SECONDS: f32 = 0.05;
 #[cfg(target_os = "macos")]
 const AX_ERROR_CANNOT_COMPLETE: i32 = -25204;
+
+#[cfg(any(target_os = "macos", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AxElementKind {
+    Application,
+    Window,
+}
+
+#[cfg(any(target_os = "macos", test))]
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct AxQuerySpec {
+    element: AxElementKind,
+    attribute: &'static [u8],
+    timeout_seconds: f32,
+}
+
+#[cfg(any(target_os = "macos", test))]
+const FOCUSED_WINDOW_QUERY: AxQuerySpec = AxQuerySpec {
+    element: AxElementKind::Application,
+    attribute: b"AXFocusedWindow",
+    timeout_seconds: AX_MESSAGING_TIMEOUT_SECONDS,
+};
+
+#[cfg(any(target_os = "macos", test))]
+const WINDOW_TITLE_QUERY: AxQuerySpec = AxQuerySpec {
+    element: AxElementKind::Window,
+    attribute: b"AXTitle",
+    timeout_seconds: AX_MESSAGING_TIMEOUT_SECONDS,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ContextRequest {
@@ -42,7 +73,7 @@ struct ProcessIdentity {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ContextIdentity {
     process: ProcessIdentity,
-    window_hash: u64,
+    window_fingerprint: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -136,7 +167,7 @@ struct SnapshotMailbox {
     pid: AtomicI32,
     started_seconds: AtomicU64,
     started_microseconds: AtomicU64,
-    window_hash: AtomicU64,
+    window_fingerprint: AtomicU64,
 }
 
 impl SnapshotMailbox {
@@ -152,7 +183,7 @@ impl SnapshotMailbox {
             pid: AtomicI32::new(0),
             started_seconds: AtomicU64::new(0),
             started_microseconds: AtomicU64::new(0),
-            window_hash: AtomicU64::new(0),
+            window_fingerprint: AtomicU64::new(0),
         }
     }
 
@@ -173,8 +204,8 @@ impl SnapshotMailbox {
                 .store(identity.process.started_seconds, Ordering::Relaxed);
             self.started_microseconds
                 .store(identity.process.started_microseconds, Ordering::Relaxed);
-            self.window_hash
-                .store(identity.window_hash, Ordering::Relaxed);
+            self.window_fingerprint
+                .store(identity.window_fingerprint, Ordering::Relaxed);
             self.valid.store(true, Ordering::Relaxed);
         } else {
             self.valid.store(false, Ordering::Relaxed);
@@ -197,7 +228,7 @@ impl SnapshotMailbox {
             let pid = self.pid.load(Ordering::Relaxed);
             let started_seconds = self.started_seconds.load(Ordering::Relaxed);
             let started_microseconds = self.started_microseconds.load(Ordering::Relaxed);
-            let window_hash = self.window_hash.load(Ordering::Relaxed);
+            let window_fingerprint = self.window_fingerprint.load(Ordering::Relaxed);
             fence(Ordering::Acquire);
             if self.sequence.load(Ordering::Relaxed) != before {
                 continue;
@@ -223,7 +254,7 @@ impl SnapshotMailbox {
                         started_seconds,
                         started_microseconds,
                     },
-                    window_hash,
+                    window_fingerprint,
                 },
             });
         }
@@ -287,7 +318,7 @@ impl ContextWorker {
         if readiness.recv_timeout(READY_TIMEOUT).is_err() {
             stop.store(true, Ordering::Release);
             let _ = requests.wake.try_send(());
-            let _ = handle.join();
+            drop(handle);
             return Err(HookFailure::new("macOS context", "readiness timed out"));
         }
         Ok(Self {
@@ -307,9 +338,10 @@ impl ContextWorker {
         }
     }
 
-    #[cfg(test)]
-    fn latest(&self, point: Point, tick: u32) -> Option<ResolvedContext> {
-        self.snapshots.latest(point, tick)
+    pub(super) fn latest(&self, point: Point, tick: u32) -> Option<ContextView> {
+        self.snapshots
+            .latest(point, tick)
+            .map(|context| context.view)
     }
 
     pub(super) fn shutdown(self) {}
@@ -334,8 +366,14 @@ fn worker_loop(
     let _exit = WorkerExit {
         snapshots: Arc::clone(&resources.snapshots),
     };
-    let trusted = capability();
     let _ = ready.send(());
+    if resources.stop.load(Ordering::Acquire) {
+        return;
+    }
+    let trusted = capability();
+    if resources.stop.load(Ordering::Acquire) {
+        return;
+    }
     let mut resolved = 0_u64;
     let mut unknown = 0_u64;
     while !resources.stop.load(Ordering::Acquire) {
@@ -355,16 +393,12 @@ fn worker_loop(
         } else {
             Err(ResolveFailure::PermissionDenied)
         };
-        match resolution {
-            Ok(context) => {
-                resources.snapshots.publish(Some(context));
-                resolved += 1;
-            }
-            Err(_) => {
-                resources.snapshots.publish(None);
-                unknown += 1;
-            }
+        if resolution.is_ok() {
+            resolved += 1;
+        } else {
+            unknown += 1;
         }
+        publish_resolution(&resources.snapshots, resolution);
     }
     #[cfg(target_os = "macos")]
     log::info!("macOS context worker stopped (resolved={resolved}, unknown={unknown})");
@@ -402,7 +436,6 @@ fn target_token(identity: ContextIdentity) -> TargetToken {
     let mut value = process.pid as u32 as u64;
     value ^= process.started_seconds.rotate_left(13);
     value ^= process.started_microseconds.rotate_left(29);
-    value ^= identity.window_hash.rotate_left(47);
     value ^= value >> 30;
     value = value.wrapping_mul(0xbf58_476d_1ce4_e5b9);
     value ^= value >> 27;
@@ -423,6 +456,15 @@ fn bounded_utf8(
     std::str::from_utf8(bytes)
         .map(str::to_owned)
         .map_err(|_| ResolveFailure::InvalidData)
+}
+
+fn executable_name_from_path(path: &[u8]) -> Result<String, ResolveFailure> {
+    let name = path
+        .rsplit(|byte| *byte == b'/')
+        .next()
+        .filter(|name| !name.is_empty())
+        .ok_or(ResolveFailure::InvalidData)?;
+    bounded_utf8(name, name.len(), name.len()).map(|name| name.to_lowercase())
 }
 
 #[cfg(target_os = "macos")]
@@ -447,18 +489,16 @@ fn resolve_native(reader: &ConfigSnapshotReader, request: ContextRequest) -> Res
         return Err(ResolveFailure::Unavailable);
     }
     let observation = unsafe { native_observation()? };
-    let info = crate::window_info::ForegroundWindowInfo {
-        process_name: Some(observation.process_name),
-        window_class: None,
-        title: Some(observation.title),
-        bundle_identifier: observation.bundle_identifier,
-    };
     let binding_set = snapshot
-        .match_macos_app(&info)
+        .match_macos_app(
+            &observation.process_name,
+            observation.bundle_identifier.as_deref(),
+            &observation.title,
+        )
         .unwrap_or_else(|| snapshot.default_binding_set());
     let identity = ContextIdentity {
         process: observation.process,
-        window_hash: observation.window_hash,
+        window_fingerprint: observation.window_fingerprint,
     };
     Ok(ResolvedContext {
         view: ContextView {
@@ -475,20 +515,38 @@ fn resolve_native(reader: &ConfigSnapshotReader, request: ContextRequest) -> Res
 #[cfg(target_os = "macos")]
 struct NativeObservation {
     process: ProcessIdentity,
-    window_hash: u64,
+    window_fingerprint: u64,
     process_name: String,
     bundle_identifier: Option<String>,
     title: String,
 }
 
 #[cfg(target_os = "macos")]
-struct OwnedCf(*const std::ffi::c_void);
+struct OwnedCf(NonNull<c_void>);
+
+#[cfg(target_os = "macos")]
+impl OwnedCf {
+    unsafe fn from_create(
+        value: *const c_void,
+        failure: ResolveFailure,
+    ) -> Result<Self, ResolveFailure> {
+        NonNull::new(value.cast_mut()).map(Self).ok_or(failure)
+    }
+
+    fn as_ptr(&self) -> *const c_void {
+        self.0.as_ptr().cast_const()
+    }
+
+    fn as_mut_ptr(&self) -> *mut c_void {
+        self.0.as_ptr()
+    }
+}
 
 #[cfg(target_os = "macos")]
 impl Drop for OwnedCf {
     fn drop(&mut self) {
         unsafe {
-            CFRelease(self.0);
+            CFRelease(self.as_ptr());
         }
     }
 }
@@ -519,20 +577,44 @@ impl Drop for AutoreleasePool {
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn run_ax_query<T>(
+    spec: AxQuerySpec,
+    set_timeout: impl FnOnce(f32) -> Result<(), ResolveFailure>,
+    copy_attribute: impl FnOnce(&[u8]) -> Result<T, ResolveFailure>,
+) -> Result<T, ResolveFailure> {
+    set_timeout(spec.timeout_seconds)?;
+    copy_attribute(spec.attribute)
+}
+
+fn resolve_consistent_window<W, T>(
+    mut focused_window: impl FnMut() -> Result<W, ResolveFailure>,
+    window_title: impl FnOnce(&W) -> Result<T, ResolveFailure>,
+    equal: impl FnOnce(&W, &W) -> bool,
+) -> Result<(W, T), ResolveFailure> {
+    let window = focused_window()?;
+    let title = window_title(&window)?;
+    let current = focused_window()?;
+    if !equal(&window, &current) {
+        return Err(ResolveFailure::TargetExited);
+    }
+    Ok((window, title))
+}
+
 #[cfg(target_os = "macos")]
 unsafe fn native_observation() -> Result<NativeObservation, ResolveFailure> {
     let _pool = AutoreleasePool::new()?;
     let (pid, process, process_name, bundle_identifier) = frontmost_process()?;
-    let window = focused_window(pid)?;
-    let title_attribute = create_cf_string(b"AXTitle")?;
-    let title_value =
-        copy_ax_attribute(window.0.cast_mut(), title_attribute.0, CFStringGetTypeID())?;
-    let title = copy_cf_string(title_value.0)?;
-    let window_hash = CFHash(window.0) as u64;
+    let (window, title) = resolve_consistent_window(
+        || focused_window(pid),
+        |window| window_title(window),
+        |first, current| CFEqual(first.as_ptr(), current.as_ptr()) != 0,
+    )?;
+    let window_fingerprint = CFHash(window.as_ptr()) as u64;
     verify_frontmost_identity(pid, process)?;
     Ok(NativeObservation {
         process,
-        window_hash,
+        window_fingerprint,
         process_name,
         bundle_identifier,
         title,
@@ -560,30 +642,44 @@ unsafe fn frontmost_process(
 
 #[cfg(target_os = "macos")]
 unsafe fn focused_window(pid: i32) -> Result<OwnedCf, ResolveFailure> {
-    let ax_application = OwnedCf(AXUIElementCreateApplication(pid).cast_const());
-    if ax_application.0.is_null() {
-        return Err(ResolveFailure::TargetExited);
-    }
-    require_ax(AXUIElementSetMessagingTimeout(
-        ax_application.0.cast_mut(),
-        AX_MESSAGING_TIMEOUT_SECONDS,
-    ))?;
-    let focused_window_attribute = create_cf_string(b"AXFocusedWindow")?;
-    let window = copy_ax_attribute(
-        ax_application.0.cast_mut(),
-        focused_window_attribute.0,
+    let ax_application = OwnedCf::from_create(
+        AXUIElementCreateApplication(pid).cast_const(),
+        ResolveFailure::TargetExited,
+    )?;
+    let window = copy_timed_ax_attribute(
+        ax_application.as_mut_ptr(),
+        FOCUSED_WINDOW_QUERY,
         AXUIElementGetTypeID(),
     )?;
-    require_ax(AXUIElementSetMessagingTimeout(
-        window.0.cast_mut(),
-        AX_MESSAGING_TIMEOUT_SECONDS,
-    ))?;
     let mut window_pid = 0;
-    require_ax(AXUIElementGetPid(window.0.cast_mut(), &mut window_pid))?;
+    require_ax(AXUIElementGetPid(window.as_mut_ptr(), &mut window_pid))?;
     if window_pid != pid {
         return Err(ResolveFailure::TargetExited);
     }
     Ok(window)
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn window_title(window: &OwnedCf) -> Result<String, ResolveFailure> {
+    let title =
+        copy_timed_ax_attribute(window.as_mut_ptr(), WINDOW_TITLE_QUERY, CFStringGetTypeID())?;
+    copy_cf_string(title.as_ptr())
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn copy_timed_ax_attribute(
+    element: *mut c_void,
+    spec: AxQuerySpec,
+    expected_type: usize,
+) -> Result<OwnedCf, ResolveFailure> {
+    run_ax_query(
+        spec,
+        |timeout| require_ax(AXUIElementSetMessagingTimeout(element, timeout)),
+        |attribute| {
+            let attribute = create_cf_string(attribute)?;
+            copy_ax_attribute(element, attribute.as_ptr(), expected_type)
+        },
+    )
 }
 
 #[cfg(target_os = "macos")]
@@ -608,11 +704,7 @@ unsafe fn create_cf_string(bytes: &[u8]) -> Result<OwnedCf, ResolveFailure> {
         0x0800_0100,
         0,
     );
-    if value.is_null() {
-        Err(ResolveFailure::InvalidData)
-    } else {
-        Ok(OwnedCf(value))
-    }
+    OwnedCf::from_create(value, ResolveFailure::InvalidData)
 }
 
 #[cfg(target_os = "macos")]
@@ -654,19 +746,16 @@ unsafe fn process_identity(pid: i32) -> Result<ProcessIdentity, ResolveFailure> 
 
 #[cfg(target_os = "macos")]
 unsafe fn process_name(pid: i32) -> Result<String, ResolveFailure> {
-    let mut bytes = [0_u8; MAX_CONTEXT_UTF8_BYTES + 1];
-    let length = libc::proc_name(pid, bytes.as_mut_ptr().cast(), bytes.len() as u32);
+    let mut bytes = [0_u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+    let length = libc::proc_pidpath(pid, bytes.as_mut_ptr().cast(), bytes.len() as u32);
     if length <= 0 {
         return Err(ResolveFailure::TargetExited);
     }
-    let length = length as usize;
-    let bytes = bytes
-        .get(..length)
-        .ok_or(ResolveFailure::Oversized)?
-        .split(|byte| *byte == 0)
-        .next()
-        .ok_or(ResolveFailure::InvalidData)?;
-    bounded_utf8(bytes, bytes.len(), bytes.len()).map(|name| name.to_lowercase())
+    if length as usize >= bytes.len() {
+        return Err(ResolveFailure::Oversized);
+    }
+    let path = std::ffi::CStr::from_ptr(bytes.as_ptr().cast()).to_bytes();
+    executable_name_from_path(path)
 }
 
 #[cfg(target_os = "macos")]
@@ -679,11 +768,8 @@ unsafe fn copy_ax_attribute(
     require_ax(AXUIElementCopyAttributeValue(
         element, attribute, &mut value,
     ))?;
-    if value.is_null() {
-        return Err(ResolveFailure::InvalidData);
-    }
-    let value = OwnedCf(value);
-    if CFGetTypeID(value.0) != expected_type {
+    let value = OwnedCf::from_create(value, ResolveFailure::InvalidData)?;
+    if CFGetTypeID(value.as_ptr()) != expected_type {
         return Err(ResolveFailure::InvalidData);
     }
     Ok(value)
@@ -803,6 +889,7 @@ extern "C" {
 #[link(name = "CoreFoundation", kind = "framework")]
 extern "C" {
     fn CFRelease(value: *const std::ffi::c_void);
+    fn CFEqual(left: *const std::ffi::c_void, right: *const std::ffi::c_void) -> u8;
     fn CFGetTypeID(value: *const std::ffi::c_void) -> usize;
     fn CFHash(value: *const std::ffi::c_void) -> usize;
     fn CFStringGetTypeID() -> usize;
@@ -828,6 +915,7 @@ extern "C" {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::{Cell, RefCell};
     use std::time::{Duration, Instant};
 
     use crossbeam_channel::TryRecvError;
@@ -835,14 +923,16 @@ mod tests {
     use super::*;
     use crate::config::{self, ConfigDocument, ConfigOwner};
 
-    fn identity(pid: i32, started_seconds: u64, window_hash: u64) -> ContextIdentity {
+    static RELEASE_CAPABILITY: AtomicBool = AtomicBool::new(false);
+
+    fn identity(pid: i32, started_seconds: u64, window_fingerprint: u64) -> ContextIdentity {
         ContextIdentity {
             process: ProcessIdentity {
                 pid,
                 started_seconds,
                 started_microseconds: 7,
             },
-            window_hash,
+            window_fingerprint,
         }
     }
 
@@ -875,6 +965,13 @@ mod tests {
         true
     }
 
+    fn delayed_capability() -> bool {
+        while !RELEASE_CAPABILITY.load(Ordering::Acquire) {
+            thread::yield_now();
+        }
+        true
+    }
+
     fn fake_resolver(_: &ConfigSnapshotReader, request: ContextRequest) -> Resolution {
         Ok(resolved(identity(71, 200, 11), request.point, request.tick))
     }
@@ -893,6 +990,114 @@ mod tests {
     #[test]
     fn accessibility_preflight_uses_no_prompt_options_dictionary() {
         assert!(accessibility_preflight_options().is_null());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn nullable_cf_create_is_rejected_before_owned_drop() {
+        let result = unsafe { OwnedCf::from_create(std::ptr::null(), ResolveFailure::InvalidData) };
+
+        assert!(matches!(result, Err(ResolveFailure::InvalidData)));
+    }
+
+    #[test]
+    fn worker_readiness_precedes_the_capability_ffi_boundary() {
+        RELEASE_CAPABILITY.store(false, Ordering::Release);
+        thread::spawn(|| {
+            thread::sleep(Duration::from_millis(300));
+            RELEASE_CAPABILITY.store(true, Ordering::Release);
+        });
+        let (_directory, reader) = reader();
+
+        let started = Instant::now();
+        let worker = ContextWorker::spawn_with(reader, delayed_capability, fake_resolver).unwrap();
+
+        assert!(started.elapsed() < Duration::from_millis(150));
+        RELEASE_CAPABILITY.store(true, Ordering::Release);
+        worker.shutdown();
+    }
+
+    #[test]
+    fn consistent_window_query_applies_the_exact_timed_ax_sequence() {
+        #[derive(Debug, PartialEq)]
+        enum Call {
+            Timeout(AxElementKind, f32),
+            Attribute(AxElementKind, Vec<u8>),
+            Equal,
+        }
+
+        let calls = RefCell::new(Vec::new());
+        let result = resolve_consistent_window(
+            || {
+                run_ax_query(
+                    FOCUSED_WINDOW_QUERY,
+                    |timeout| {
+                        calls
+                            .borrow_mut()
+                            .push(Call::Timeout(AxElementKind::Application, timeout));
+                        Ok(())
+                    },
+                    |attribute| {
+                        calls.borrow_mut().push(Call::Attribute(
+                            AxElementKind::Application,
+                            attribute.to_vec(),
+                        ));
+                        Ok(7_u64)
+                    },
+                )
+            },
+            |_| {
+                run_ax_query(
+                    WINDOW_TITLE_QUERY,
+                    |timeout| {
+                        calls
+                            .borrow_mut()
+                            .push(Call::Timeout(AxElementKind::Window, timeout));
+                        Ok(())
+                    },
+                    |attribute| {
+                        calls
+                            .borrow_mut()
+                            .push(Call::Attribute(AxElementKind::Window, attribute.to_vec()));
+                        Ok("title")
+                    },
+                )
+            },
+            |left, right| {
+                calls.borrow_mut().push(Call::Equal);
+                left == right
+            },
+        );
+
+        assert_eq!(result, Ok((7, "title")));
+        assert_eq!(
+            calls.into_inner(),
+            [
+                Call::Timeout(AxElementKind::Application, 0.05),
+                Call::Attribute(AxElementKind::Application, b"AXFocusedWindow".to_vec()),
+                Call::Timeout(AxElementKind::Window, 0.05),
+                Call::Attribute(AxElementKind::Window, b"AXTitle".to_vec()),
+                Call::Timeout(AxElementKind::Application, 0.05),
+                Call::Attribute(AxElementKind::Application, b"AXFocusedWindow".to_vec()),
+                Call::Equal,
+            ]
+        );
+    }
+
+    #[test]
+    fn focus_change_during_resolution_degrades_to_unknown() {
+        let index = Cell::new(0);
+        let result = resolve_consistent_window(
+            || {
+                let window = [7_u64, 8][index.get()];
+                index.set(index.get() + 1);
+                Ok(window)
+            },
+            |_| Ok("title"),
+            |left, right| left == right,
+        );
+
+        assert_eq!(result, Err(ResolveFailure::TargetExited));
     }
 
     #[test]
@@ -979,6 +1184,33 @@ mod tests {
     }
 
     #[test]
+    fn executable_path_keeps_a_long_complete_basename() {
+        assert_eq!(
+            executable_name_from_path(
+                b"/Applications/Long App.app/Contents/MacOS/long-executable-name"
+            ),
+            Ok("long-executable-name".to_string())
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn process_name_matches_the_current_executable_basename() {
+        let expected = std::env::current_exe()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_lowercase();
+
+        assert_eq!(
+            unsafe { process_name(std::process::id() as i32) },
+            Ok(expected)
+        );
+    }
+
+    #[test]
     fn mouse_move_requests_are_rate_limited_before_worker_submission() {
         assert!(request_due(None, MouseEvent::MouseMove, 1_000));
         assert!(!request_due(Some(1_000), MouseEvent::MouseMove, 1_024));
@@ -1002,6 +1234,17 @@ mod tests {
         let current = mailbox.latest(point, 21).unwrap();
         assert_eq!(current.identity, second.identity);
         assert_ne!(current.view.target, first.view.target);
+    }
+
+    #[test]
+    fn window_fingerprint_is_not_used_as_unique_target_identity() {
+        let process = identity(51, 100, 5);
+        let other_window = ContextIdentity {
+            window_fingerprint: 6,
+            ..process
+        };
+
+        assert_eq!(target_token(process), target_token(other_window));
     }
 
     #[test]

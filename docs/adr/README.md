@@ -38,7 +38,7 @@ ADR 0013はP03cで実装した実Windows callback、generation pin、事前解�
 ADR 0014はP04a（既存計画のP05）で固定したmacOS arm64 bundle、同一署名identity、ad-hoc CI、Developer ID/notarization release gateと未検証条件を記録する。
 ADR 0015はP04b1で固定したmacOS user-only UDS endpoint、singleton/stale cleanup、peer UID検証、共有control core seamを記録する。
 ADR 0016はP04b2で固定したmacOS listen-only Event Tap、allocation-free callback、bounded normalization、degraded lifecycleを記録する。
-ADR 0017はP04b3aで固定したpromptなしAccessibility境界、worker threading、AX timeout、context identity/cache、fail-open semanticsを記録する。
+ADR 0017はP04b3aで固定したconsumer接続前のidle境界、promptなしAccessibility seam、worker threading、AX timeout、context identity/cache、fail-open semanticsを記録する。
 
 ## Status policy
 

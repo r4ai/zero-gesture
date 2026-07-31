@@ -12,8 +12,6 @@ pub struct ForegroundWindowInfo {
     pub window_class: Option<String>,
     /// Window title text. `None` if unavailable.
     pub title: Option<String>,
-    /// macOS application bundle identifier. `None` if unavailable.
-    pub bundle_identifier: Option<String>,
 }
 
 /// Retrieves information about the current foreground window.
@@ -114,7 +112,6 @@ pub(crate) fn get_window_info_by_hwnd(
             process_name,
             window_class,
             title,
-            bundle_identifier: None,
         }
     }
 }
@@ -123,4 +120,20 @@ pub(crate) fn get_window_info_by_hwnd(
 #[cfg(not(windows))]
 pub fn get_foreground_window_info() -> ForegroundWindowInfo {
     ForegroundWindowInfo::default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ForegroundWindowInfo;
+
+    #[test]
+    fn serialized_windows_window_info_keeps_its_three_field_contract() {
+        let value = serde_json::to_value(ForegroundWindowInfo::default()).unwrap();
+        let fields = value.as_object().unwrap();
+
+        assert_eq!(fields.len(), 3);
+        assert!(fields.contains_key("process_name"));
+        assert!(fields.contains_key("window_class"));
+        assert!(fields.contains_key("title"));
+    }
 }
