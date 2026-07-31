@@ -227,7 +227,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Lint macOS target
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin --all-targets -- -D warnings
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin --all-targets -- -D warnings -A dead-code
 
       - name: Build ad-hoc signed application bundle
         env:

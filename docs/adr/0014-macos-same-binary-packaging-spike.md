@@ -129,6 +129,11 @@ The existing Windows Cargo-test listing intentionally does not treat a
 macOS-only test as absent evidence.
 The macOS packaging job runs all eight tests against the just-built `.app`.
 No source test is duplicated at another layer.
+That job also runs macOS-target Clippy with all warnings denied except
+`dead_code`: P04a intentionally compiles but does not connect the existing
+Windows input pipeline or the deferred macOS native adapters.
+Other warnings remain failures; removing the exception belongs to the slice
+that connects those adapters.
 
 ## Packaging spike status and release blockers
 
