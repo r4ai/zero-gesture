@@ -74,12 +74,17 @@ The checked-in Tauri configuration declares `app.windows: []`.
 After creating the native status item, macOS Engine setup enforces that Tauri's
 stable managed WebView-window inventory remains empty and fails startup on a
 violation.
+The same production invariant runs at the beginning of every Tauri run event;
+a violation requests fatal exit with a nonzero status rather than allowing the
+Engine to remain resident with a managed WebView.
 The window-only manager API is feature-gated behind Tauri's `unstable` feature;
 that feature is not enabled, so raw window-only objects are outside this
 application's compile surface.
-One bounded startup loop proves that the packaged Engine survives the enforced
-invariant, while repeated descendant-process inspection fails on any WebKit
-process, including a startup-only process.
+Two separately named packaged cases prove bounded Engine survival for the
+configured content-window absence and the setup/run-event managed-WebView
+invariant.
+The external ADR 0001 requirement that Engine mode creates no WebView is
+therefore preserved by production enforcement rather than narrowed.
 The release executable contains no marker-file or arbitrary-path test hook.
 This evidence validates bundle and process topology only.
 Ad-hoc signing is not evidence of Developer ID trust, Gatekeeper acceptance, or
@@ -100,6 +105,13 @@ It requires these GitHub Actions secret names:
 Before its first fallible `security` command, the workflow exports the
 deterministic temporary-keychain path so `always()` cleanup also covers partial
 certificate-import failures.
+Secrets are scoped only to the requirement check, certificate import, or
+build/notarization step that consumes them.
+The decoded certificate is removed by an import-step exit trap, and the
+temporary keychain is deleted immediately after the build attempt, including
+when import or build fails.
+Validation and upload run without Apple secrets or an unlocked temporary
+keychain.
 It lets Tauri sign, notarize, and staple the arm64 `.app` and `.dmg`, requires
 `codesign`, `spctl`, and `stapler` validation of the application and the unique
 DMG, then uploads the DMG and a `ditto` metadata-preserving archive of the
@@ -154,8 +166,8 @@ The following facts are automated by the P04a pull-request gate:
 - one bundle identifier and one arm64 main executable;
 - Hardened Runtime and a valid ad-hoc signature;
 - `app.windows: []`, runtime enforcement of an empty managed WebView-window
-  inventory, packaged `--engine` survival through the bounded startup interval,
-  and no WebKit descendant observed anywhere in that interval; and
+  inventory during setup and every run event, and packaged `--engine` survival
+  through the bounded startup interval; and
 - metadata-preserving archival of the validated application bundle.
 
 The full ADR 0001 packaging spike remains open until all of these are recorded

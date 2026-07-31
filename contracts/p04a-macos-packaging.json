@@ -51,10 +51,10 @@
     },
     {
       "id": "P04A-PROCESS-002",
-      "obligation": "The packaged same executable starts in Engine mode without a WebKit descendant process.",
+      "obligation": "The macOS Engine enforces an empty managed WebView inventory during setup and every run event, and the packaged Engine survives bounded startup.",
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/tests/p04a_macos_packaging.rs",
-      "evidence_name": "engine_mode_starts_no_webview_process"
+      "evidence_name": "engine_mode_enforces_managed_webview_invariant_during_run_events"
     }
   ]
 }

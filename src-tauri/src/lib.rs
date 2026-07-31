@@ -513,6 +513,10 @@ fn run_engine() -> Result<(), String> {
         .map_err(|error| format!("failed to build macOS Engine: {error}"))?;
 
     app.run(|app, event| {
+        if !app.webview_windows().is_empty() {
+            app.exit(1);
+            return;
+        }
         if let tauri::RunEvent::ExitRequested { api, .. } = event {
             if let Some(runtime) = app.try_state::<ThreadRuntime>() {
                 if !runtime.should_allow_exit() {

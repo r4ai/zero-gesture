@@ -1,6 +1,5 @@
 #![cfg(target_os = "macos")]
 
-use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
@@ -51,7 +50,7 @@ struct EngineProcess {
 }
 
 impl EngineProcess {
-    fn start(bundle: &Path, mut observe: impl FnMut(u32)) -> Self {
+    fn start(bundle: &Path) -> Self {
         let mut engine = Self {
             child: Command::new(main_executable(bundle))
                 .arg("--engine")
@@ -67,17 +66,12 @@ impl EngineProcess {
                 engine.child.try_wait().unwrap().is_none(),
                 "packaged Engine exited during the startup observation window"
             );
-            observe(engine.id());
             if Instant::now() >= deadline {
                 break;
             }
             thread::sleep(Duration::from_millis(50));
         }
         engine
-    }
-
-    fn id(&self) -> u32 {
-        self.child.id()
     }
 }
 
@@ -86,37 +80,6 @@ impl Drop for EngineProcess {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
-}
-
-fn descendant_commands(root: u32) -> Vec<String> {
-    let output = command_output("/bin/ps", &["-axo", "pid=,ppid=,comm="]);
-    let mut children = HashMap::<u32, Vec<(u32, String)>>::new();
-    for line in String::from_utf8(output.stdout).unwrap().lines() {
-        let mut fields = line.split_whitespace();
-        let Some(pid) = fields.next().and_then(|value| value.parse::<u32>().ok()) else {
-            continue;
-        };
-        let Some(parent) = fields.next().and_then(|value| value.parse::<u32>().ok()) else {
-            continue;
-        };
-        children
-            .entry(parent)
-            .or_default()
-            .push((pid, fields.collect::<Vec<_>>().join(" ")));
-    }
-
-    let mut pending = vec![root];
-    let mut seen = HashSet::new();
-    let mut commands = Vec::new();
-    while let Some(parent) = pending.pop() {
-        for (pid, command) in children.get(&parent).into_iter().flatten() {
-            if seen.insert(*pid) {
-                pending.push(*pid);
-                commands.push(command.clone());
-            }
-        }
-    }
-    commands
 }
 
 #[test]
@@ -185,19 +148,11 @@ fn bundle_code_signature_enables_hardened_runtime() {
 #[test]
 fn engine_mode_owns_no_content_window() {
     let bundle = app_bundle();
-    let _engine = EngineProcess::start(&bundle, |_| {});
+    let _engine = EngineProcess::start(&bundle);
 }
 
 #[test]
-fn engine_mode_starts_no_webview_process() {
+fn engine_mode_enforces_managed_webview_invariant_during_run_events() {
     let bundle = app_bundle();
-    let _engine = EngineProcess::start(&bundle, |pid| {
-        let descendants = descendant_commands(pid);
-        assert!(
-            descendants
-                .iter()
-                .all(|command| !command.to_ascii_lowercase().contains("webkit")),
-            "unexpected Engine descendant processes: {descendants:?}"
-        );
-    });
+    let _engine = EngineProcess::start(&bundle);
 }

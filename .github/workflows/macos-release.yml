@@ -10,18 +10,18 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
-    env:
-      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
 
     steps:
       - name: Require Developer ID and notarization secrets
         shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           missing=()
           for name in \
@@ -63,7 +63,7 @@ jobs:
           cache: pnpm
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable ref, reviewed 2026-08-01
         with:
           targets: aarch64-apple-darwin
 
@@ -77,10 +77,17 @@ jobs:
 
       - name: Import Developer ID certificate
         shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           certificate="$RUNNER_TEMP/developer-id.p12"
           keychain="$RUNNER_TEMP/zero-gesture.keychain-db"
           echo "ZG_RELEASE_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          : > "$certificate"
+          trap 'rm -f "$certificate"' EXIT
           printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$certificate"
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$keychain"
           security default-keychain -s "$keychain"
@@ -99,7 +106,20 @@ jobs:
             grep -F "\"$APPLE_SIGNING_IDENTITY\""
 
       - name: Build, sign, notarize, and staple
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: pnpm tauri build --bundles app,dmg --target aarch64-apple-darwin --ci
+
+      - name: Remove temporary keychain
+        if: always()
+        shell: bash
+        run: |
+          if [[ -n "${ZG_RELEASE_KEYCHAIN:-}" ]]; then
+            security delete-keychain "$ZG_RELEASE_KEYCHAIN" || true
+          fi
 
       - name: Validate packaged contract
         env:
@@ -134,11 +154,3 @@ jobs:
             src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
           if-no-files-found: error
           retention-days: 14
-
-      - name: Remove temporary keychain
-        if: always()
-        shell: bash
-        run: |
-          if [[ -n "${ZG_RELEASE_KEYCHAIN:-}" ]]; then
-            security delete-keychain "$ZG_RELEASE_KEYCHAIN" || true
-          fi
