@@ -202,10 +202,13 @@ fn engine_mode_owns_no_content_window() {
     let probe = directory.path().join("window-count");
     fs::write(
         &source,
-        r#"import CoreGraphics
+        r#"import AppKit
+import CoreGraphics
 import Foundation
 
 let pid = Int32(CommandLine.arguments[1])!
+let mainDisplay = CGDisplayBounds(CGMainDisplayID())
+let statusBarThickness = Double(NSStatusBar.system.thickness)
 let options: CGWindowListOption = [.optionAll, .excludeDesktopElements]
 let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID)
     as? [[String: Any]] ?? []
@@ -213,9 +216,16 @@ let contentWindows = windows.filter { window in
     let owner = (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value
     let layer = (window[kCGWindowLayer as String] as? NSNumber)?.intValue
     let bounds = window[kCGWindowBounds as String] as? [String: NSNumber]
+    let x = bounds?["X"]?.doubleValue ?? 0
+    let y = bounds?["Y"]?.doubleValue ?? 0
     let width = bounds?["Width"]?.doubleValue ?? 0
     let height = bounds?["Height"]?.doubleValue ?? 0
-    return owner == pid && layer == 0 && width > 0 && height > 0
+    let isStatusBarBacking =
+        x == Double(mainDisplay.minX) &&
+        y == Double(mainDisplay.minY) &&
+        width == Double(mainDisplay.width) &&
+        height == statusBarThickness
+    return owner == pid && layer == 0 && width > 0 && height > 0 && !isStatusBarBacking
 }
 let details = contentWindows.map { window in
     let name = window[kCGWindowName as String] ?? "<none>"
