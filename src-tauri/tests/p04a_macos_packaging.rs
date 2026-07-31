@@ -208,7 +208,8 @@ import Foundation
 
 let pid = Int32(CommandLine.arguments[1])!
 let mainDisplay = CGDisplayBounds(CGMainDisplayID())
-let statusBarThickness = Double(NSStatusBar.system.thickness)
+let primaryScreen = NSScreen.screens[0]
+let menuBarHeight = Double(primaryScreen.frame.maxY - primaryScreen.visibleFrame.maxY)
 let options: CGWindowListOption = [.optionAll, .excludeDesktopElements]
 let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID)
     as? [[String: Any]] ?? []
@@ -224,7 +225,7 @@ let contentWindows = windows.filter { window in
         x == Double(mainDisplay.minX) &&
         y == Double(mainDisplay.minY) &&
         width == Double(mainDisplay.width) &&
-        height == statusBarThickness
+        height == menuBarHeight
     return owner == pid && layer == 0 && width > 0 && height > 0 && !isStatusBarBacking
 }
 let details = contentWindows.map { window in
