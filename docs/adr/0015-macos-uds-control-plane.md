@@ -42,8 +42,15 @@ Existing symlinks, wrong object types, wrong owners, non-exact modes, or
 multiply linked secret/lock files are rejected. The Engine does not repair an
 unsafe object and does not expose the endpoint after an access-control
 failure. Lock and secret files are regular files with exact mode `0600`.
-The socket is restricted to mode `0600` in addition to the containing
-directory.
+
+The socket node has no exact-mode contract. macOS rejects `fchmod` on a socket
+descriptor, while a pathname `chmod` can act on a replacement. Temporarily
+changing the process-global umask would also race unrelated file creation in
+the multithreaded Tauri process and tests. The Engine therefore binds without
+either operation, then verifies the bound device/inode, socket type, and owner
+before exposing the listener. The exact `0700` owned directory and accepted
+peer UID check are the socket access-control boundary; exact `0600` remains a
+descriptor-verified invariant only for regular secret and lock files.
 
 The stable configuration remains
 `tauri::path::BaseDirectory::AppConfig` as resolved by
@@ -58,10 +65,21 @@ an Engine already owns the user endpoint, so the second Engine exits
 successfully without changing the running Engine.
 
 Only the lock owner may remove a stale socket. It first rejects a symlink,
-non-socket, wrong-owner, or wrong-mode object. A safe socket left by a dead
-Engine is removed before bind. The bound server records the socket device and
-inode and removes the path on drop only when the path still identifies that
-same owned socket. It never removes a replacement or arbitrary path.
+non-socket, or wrong-owner object. A safe socket left by a dead
+Engine is atomically renamed with `renamex_np(RENAME_EXCL)` to a random,
+fixed-length quarantine name in the same runtime directory. The quarantined
+device/inode is checked before removal. A replacement detected at either the
+live path or quarantine path is preserved and the operation fails or logs a
+bounded category-only cleanup error; it is never silently treated as the
+owned object. The bound server records its socket device/inode and applies the
+same quarantine/identity rule on drop.
+
+The same-UID process owns and can enumerate the `0700` runtime directory, so
+macOS cannot make pathname cleanup cryptographically race-proof against a
+malicious process running as that identical UID. Atomic no-replace quarantine
+removes the attacker-controlled live name from the deletion step and rejects
+observable identity replacement. Authentication still treats same-UID peers
+as untrusted until the random application secret is proven.
 
 Settings first probes the socket. Only an absent endpoint enters the existing
 bounded start path. Settings serializes concurrent starts with a separate
@@ -69,6 +87,14 @@ exclusive launch lock, probes again, starts the same executable with
 `--engine`, and waits only until the fixed connection deadline. Secret access,
 peer credential, protocol, or other security failures are terminal and do not
 spawn another Engine.
+
+macOS connect uses a nonblocking Unix socket and `poll`, followed by
+`SO_ERROR`, against the caller's single absolute `Instant`. Accepted and
+connecting streams stay nonblocking. Every `Read` and `Write` readiness wait
+recomputes the remaining duration from that same absolute deadline, so
+`read_exact`, `write_all`, slowloris fragments, interruptions, and a saturated
+listen backlog cannot restart a per-syscall timeout. Installing an expired
+deadline is an error and is propagated through the shared core.
 
 ### Peer identity and application authentication
 
@@ -100,6 +126,11 @@ transport trait, runtime polymorphism, Linux implementation, actor, RPC
 framework, or public API. Platform leaves expose only the concrete endpoint,
 listener/accepted stream, launch lock, secret generation, and process-status
 operations required by that core.
+
+Windows `ServerTransport` declares resources in concrete teardown order:
+Named Pipe, secret file, then singleton. Rust therefore releases the
+singleton only after the endpoint resources are gone, allowing immediate
+restart without observing a half-torn-down owner.
 
 The closed protocol adds the already-decided `SetEnabled` operation from ADR
 0004. It normalizes to the same `ConfigOwner` prepare/commit path as a full
@@ -135,13 +166,18 @@ Logs identify the operation category and failure class. They do not contain
 the authentication secret, frame or configuration body, user input, or a raw
 runtime/configuration path beyond a bounded diagnostic need.
 
+`proc_pidinfo` results less than or equal to zero are failures. `errno` is
+captured immediately after each FFI call and retained as the source of a
+category-scoped `io::Error`; a positive short task record remains an
+`InvalidData` failure.
+
 ## Verification
 
 `contracts/p04b1-macos-uds-control.json` maps each independently falsifiable
 P04b1 obligation to one independently named test.
 
-The manifest records `O = 23`, `O_v = 23`, `U = 0`, and `O_v / O = 100%`.
-Its logical-case inventory is `T = 23`, `T_u = 2`, `T_i = 19`, `T_e = 2`,
+The manifest records `O = 36`, `O_v = 36`, `U = 0`, and `O_v / O = 100%`.
+Its logical-case inventory is `T = 36`, `T_u = 3`, `T_i = 31`, `T_e = 2`,
 `T_r = 0`, `P = 0`, `D = 0`, and `F = 0`. The process-helper test entry is a
 fixture entry point and is not counted as a logical case when its helper
 environment is absent.
@@ -150,14 +186,17 @@ The official `macos-26` Apple Silicon job keeps all eight P04a packaged cases
 and additionally runs:
 
 - macOS library/process tests over real Unix sockets and configuration files;
-- endpoint mode, owner, symlink/object-type, stale cleanup, singleton, and
-  actual `getpeereid` checks; and
+- literal directory/regular-file modes, owner, symlink/object-type, atomic quarantine,
+  adversarial replacement, stale/owned cleanup, singleton, slowloris/backlog
+  deadlines, and actual accepted-path `getpeereid` checks; and
 - a packaged same-executable Engine/Settings connection proof.
 
 The CI runner cannot create a second login UID without privileged test
 backdoors. It therefore verifies actual peer credentials for same-UID
-connections and tests the closed mismatch decision at the credential boundary.
-It does not claim a privileged cross-user end-to-end case.
+connections and sets a mismatched expected UID directly on the private
+accepted transport in a test build. That test traverses the real
+`accept`/`getpeereid` rejection path before protocol handling, but does not
+claim a privileged cross-user process case.
 
 Windows tests remain the regression evidence for Named Pipe DACLs, remote
 rejection, Windows process behavior, and the unchanged control/config

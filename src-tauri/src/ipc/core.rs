@@ -394,7 +394,7 @@ fn serve_connection_inner(
     let mut request_count = 0;
 
     loop {
-        connection.set_deadline(Instant::now() + IO_TIMEOUT);
+        connection.set_deadline(Instant::now() + IO_TIMEOUT)?;
         let body = match protocol::read_frame(&mut *connection) {
             Ok(body) => body,
             Err(ProtocolError::Io(error))
@@ -610,7 +610,7 @@ fn send_response(
     response: Response,
 ) -> Result<(), ControlError> {
     let body = protocol::encode_response(&Envelope::current(request_id, response))?;
-    connection.set_deadline(Instant::now() + IO_TIMEOUT);
+    connection.set_deadline(Instant::now() + IO_TIMEOUT)?;
     protocol::write_frame(connection, &body)?;
     Ok(())
 }
@@ -621,7 +621,7 @@ fn send_terminal_response(
     response: Response,
 ) -> Result<(), ControlError> {
     send_response(connection, request_id, response)?;
-    connection.set_deadline(Instant::now() + TERMINAL_RESPONSE_GRACE);
+    connection.set_deadline(Instant::now() + TERMINAL_RESPONSE_GRACE)?;
     let mut ignored = [0_u8; 1];
     let _ = connection.read(&mut ignored);
     Ok(())
@@ -690,7 +690,7 @@ impl Session {
     pub(super) fn send_then_disconnect(mut self, request: Request) -> Result<(), ControlError> {
         let request_id = self.next_request_id;
         let body = protocol::encode_request(&Envelope::current(request_id, request))?;
-        self.connection.set_deadline(Instant::now() + IO_TIMEOUT);
+        self.connection.set_deadline(Instant::now() + IO_TIMEOUT)?;
         protocol::write_frame(&mut self.connection, &body)?;
         Ok(())
     }
@@ -702,9 +702,9 @@ impl Session {
         deadline: Instant,
     ) -> Result<Response, ControlError> {
         let body = protocol::encode_request(&Envelope::current(request_id, request))?;
-        self.connection.set_deadline(deadline);
+        self.connection.set_deadline(deadline)?;
         protocol::write_frame(&mut self.connection, &body)?;
-        self.connection.set_deadline(deadline);
+        self.connection.set_deadline(deadline)?;
         let response_body = protocol::read_frame(&mut self.connection)?;
         Ok(protocol::decode_response(&response_body, request_id)?.message)
     }

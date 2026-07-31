@@ -118,9 +118,9 @@ impl Endpoint {
         Ok(Some((
             secret,
             ServerTransport {
-                _singleton: singleton,
-                _secret_file: secret_file,
                 pipe,
+                _secret_file: secret_file,
+                _singleton: singleton,
             },
         )))
     }
@@ -411,8 +411,9 @@ impl Pipe {
         }
     }
 
-    pub(super) fn set_deadline(&mut self, deadline: Instant) {
+    pub(super) fn set_deadline(&mut self, deadline: Instant) -> Result<(), ControlError> {
         self.deadline = deadline;
+        Ok(())
     }
 
     fn retry_or_timeout(&self, error: u32) -> io::Result<usize> {
@@ -500,9 +501,11 @@ impl Drop for Pipe {
 pub(super) type ClientConnection = Pipe;
 
 pub(super) struct ServerTransport {
-    _singleton: Singleton,
-    _secret_file: SecretFile,
     pipe: Pipe,
+    _secret_file: SecretFile,
+    // Rust drops fields in declaration order. Release the singleton only
+    // after the pipe and secret endpoint resources are gone.
+    _singleton: Singleton,
 }
 
 impl ServerTransport {
@@ -521,8 +524,8 @@ impl ServerTransport {
 pub(super) struct AcceptedConnection<'a>(&'a mut Pipe);
 
 impl AcceptedConnection<'_> {
-    pub(super) fn set_deadline(&mut self, deadline: Instant) {
-        self.0.set_deadline(deadline);
+    pub(super) fn set_deadline(&mut self, deadline: Instant) -> Result<(), ControlError> {
+        self.0.set_deadline(deadline)
     }
 }
 
@@ -693,7 +696,7 @@ fn connect_pipe(endpoint: &Endpoint) -> Result<Pipe, ControlError> {
 #[cfg(test)]
 fn send_response(pipe: &mut Pipe, request_id: u64, response: Response) -> Result<(), ControlError> {
     let body = protocol::encode_response(&Envelope::current(request_id, response))?;
-    pipe.set_deadline(Instant::now() + IO_TIMEOUT);
+    pipe.set_deadline(Instant::now() + IO_TIMEOUT)?;
     protocol::write_frame(pipe, &body)?;
     Ok(())
 }
@@ -1239,7 +1242,7 @@ mod tests {
             let stop = AtomicBool::new(false);
             assert!(pipe.wait_for_client(&stop).unwrap());
             let mut pipe = pipe;
-            pipe.set_deadline(Instant::now() + IO_TIMEOUT);
+            pipe.set_deadline(Instant::now() + IO_TIMEOUT).unwrap();
             let body = protocol::read_frame(&mut pipe).unwrap();
             let hello = protocol::decode_request(&body).unwrap();
             send_response(&mut pipe, hello.request_id, Response::Pong).unwrap();
@@ -1410,7 +1413,7 @@ mod tests {
         let mut pipe = connect_pipe(&control.endpoint).unwrap();
         let mut body = protocol::encode_request(&Envelope::current(11, Request::Ping)).unwrap();
         body[..2].copy_from_slice(&(protocol::PROTOCOL_VERSION + 1).to_le_bytes());
-        pipe.set_deadline(Instant::now() + IO_TIMEOUT);
+        pipe.set_deadline(Instant::now() + IO_TIMEOUT).unwrap();
         protocol::write_frame(&mut pipe, &body).unwrap();
         assert_eq!(
             read_raw_response(&mut pipe, 11),
@@ -1427,7 +1430,7 @@ mod tests {
         let mut pipe = connect_pipe(&control.endpoint).unwrap();
         let mut body = protocol::encode_request(&Envelope::current(12, Request::Ping)).unwrap();
         body[2] = 99;
-        pipe.set_deadline(Instant::now() + IO_TIMEOUT);
+        pipe.set_deadline(Instant::now() + IO_TIMEOUT).unwrap();
         protocol::write_frame(&mut pipe, &body).unwrap();
         assert_eq!(
             read_raw_response(&mut pipe, 12),
@@ -1517,6 +1520,19 @@ mod tests {
         assert!(guard.child.try_wait().unwrap().is_some());
         assert!(!control.endpoint.secret_path.exists());
         assert!(matches!(control.ping(), Err(ControlError::Unavailable)));
+    }
+
+    #[test]
+    fn teardown_then_immediate_restart_reacquires_a_clean_endpoint() {
+        let (directory, suffix, control) = fixture();
+        for _ in 0..8 {
+            let server = EngineServer::for_test(directory.path(), &suffix)
+                .unwrap()
+                .expect("singleton must be available after teardown");
+            assert!(control.endpoint.secret_path.exists());
+            drop(server);
+            assert!(!control.endpoint.secret_path.exists());
+        }
     }
 
     #[test]
@@ -1611,12 +1627,12 @@ mod tests {
 
     fn send_raw_request(pipe: &mut Pipe, request: Envelope<Request>) {
         let body = protocol::encode_request(&request).unwrap();
-        pipe.set_deadline(Instant::now() + IO_TIMEOUT);
+        pipe.set_deadline(Instant::now() + IO_TIMEOUT).unwrap();
         protocol::write_frame(pipe, &body).unwrap();
     }
 
     fn read_raw_response(pipe: &mut Pipe, request_id: u64) -> Response {
-        pipe.set_deadline(Instant::now() + IO_TIMEOUT);
+        pipe.set_deadline(Instant::now() + IO_TIMEOUT).unwrap();
         let body = protocol::read_frame(pipe).unwrap();
         protocol::decode_response(&body, request_id)
             .unwrap()

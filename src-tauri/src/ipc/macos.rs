@@ -1,11 +1,12 @@
 use super::core::{ControlError, ACCEPT_POLL_INTERVAL, RETRY_INTERVAL};
 use super::protocol::AUTH_SECRET_BYTES;
 use log::warn;
+use std::ffi::CString;
 use std::fs::{self, DirBuilder, File, Metadata, OpenOptions};
 use std::io::{self, Read, Write};
 use std::marker::PhantomData;
 use std::mem::{size_of, MaybeUninit};
-use std::os::fd::{AsRawFd, RawFd};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -18,6 +19,7 @@ const DIRECTORY_MODE: u32 = 0o700;
 const FILE_MODE: u32 = 0o600;
 const MAX_SUFFIX_BYTES: usize = 32;
 const MAX_SOCKET_PATH_BYTES: usize = 103;
+const QUARANTINE_ATTEMPTS: usize = 4;
 
 #[derive(Clone)]
 pub(super) struct Endpoint {
@@ -82,13 +84,10 @@ impl Endpoint {
         remove_stale_socket(&self.socket_path, self.effective_uid)?;
         let secret = generate_secret();
         let secret_file = SecretFile::create(&self.secret_path, self.effective_uid, &secret)?;
-        let listener = UnixListener::bind(&self.socket_path)
-            .map_err(|error| endpoint_io("bind Unix control socket", error))?;
+        let listener = bind_private_socket(&self.socket_path)?;
         let bound_metadata = fs::symlink_metadata(&self.socket_path)
             .map_err(|error| endpoint_io("inspect bound Unix control socket", error))?;
         let socket = OwnedPath::new(&self.socket_path, &bound_metadata, ObjectKind::Socket);
-        fs::set_permissions(&self.socket_path, fs::Permissions::from_mode(FILE_MODE))
-            .map_err(|error| endpoint_io("restrict Unix control socket", error))?;
         let socket_metadata = validate_socket(&self.socket_path, self.effective_uid)?;
         if identity(&socket_metadata) != socket.identity {
             return Err(ControlError::Security(
@@ -105,7 +104,7 @@ impl Endpoint {
                 _secret_file: secret_file,
                 listener,
                 _socket: socket,
-                effective_uid: self.effective_uid,
+                expected_peer_uid: self.effective_uid,
             },
         )))
     }
@@ -120,21 +119,9 @@ impl Endpoint {
             Err(ControlError::Unavailable) => return Err(ControlError::Unavailable),
             Err(error) => return Err(error),
         }
-        if Instant::now() >= deadline {
-            return Err(ControlError::Timeout);
-        }
-        let stream =
-            UnixStream::connect(&self.socket_path).map_err(|error| match error.kind() {
-                io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused => {
-                    ControlError::Unavailable
-                }
-                io::ErrorKind::PermissionDenied => ControlError::Security(
-                    "connect to Unix control socket: permission denied".to_string(),
-                ),
-                _ => endpoint_io("connect to Unix control socket", error),
-            })?;
+        let stream = connect_nonblocking(&self.socket_path, deadline)?;
         verify_peer(stream.as_raw_fd(), self.effective_uid)?;
-        Ok(ClientConnection { stream })
+        Ok(DeadlineStream::new(stream, deadline)?)
     }
 
     pub(super) fn read_secret(&self) -> Result<[u8; AUTH_SECRET_BYTES], ControlError> {
@@ -260,7 +247,7 @@ pub(super) struct ServerTransport {
     _secret_file: SecretFile,
     listener: UnixListener,
     _socket: OwnedPath,
-    effective_uid: libc::uid_t,
+    expected_peer_uid: libc::uid_t,
     // Rust drops fields in declaration order. Keep the singleton lock until
     // the secret and socket owned by this server have been removed.
     _singleton: FileLock,
@@ -274,10 +261,8 @@ impl ServerTransport {
         while !stop.load(Ordering::Acquire) {
             match self.listener.accept() {
                 Ok((stream, _)) => {
-                    stream
-                        .set_nonblocking(false)
-                        .map_err(|error| endpoint_io("configure Unix control connection", error))?;
-                    if let Err(error) = verify_peer(stream.as_raw_fd(), self.effective_uid) {
+                    let stream = DeadlineStream::new(stream, Instant::now())?;
+                    if let Err(error) = verify_peer(stream.as_raw_fd(), self.expected_peer_uid) {
                         warn!("rejected macOS IPC peer: {error}");
                         continue;
                     }
@@ -299,40 +284,84 @@ impl ServerTransport {
     }
 }
 
-pub(super) struct ClientConnection {
+pub(super) struct DeadlineStream {
     stream: UnixStream,
+    deadline: Instant,
 }
 
-impl ClientConnection {
-    pub(super) fn set_deadline(&mut self, deadline: Instant) {
-        set_stream_deadline(&self.stream, deadline);
+impl DeadlineStream {
+    fn new(stream: UnixStream, deadline: Instant) -> Result<Self, ControlError> {
+        stream
+            .set_nonblocking(true)
+            .map_err(|error| endpoint_io("configure Unix control connection", error))?;
+        Ok(Self { stream, deadline })
+    }
+
+    pub(super) fn set_deadline(&mut self, deadline: Instant) -> Result<(), ControlError> {
+        if Instant::now() >= deadline {
+            return Err(ControlError::Timeout);
+        }
+        self.deadline = deadline;
+        Ok(())
+    }
+
+    fn wait(&self, events: libc::c_short) -> io::Result<()> {
+        poll_until(self.stream.as_raw_fd(), events, self.deadline)
     }
 }
 
-impl Read for ClientConnection {
+impl AsRawFd for DeadlineStream {
+    fn as_raw_fd(&self) -> RawFd {
+        self.stream.as_raw_fd()
+    }
+}
+
+impl Read for DeadlineStream {
     fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
-        self.stream.read(output)
+        loop {
+            self.wait(libc::POLLIN)?;
+            match self.stream.read(output) {
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                    ) => {}
+                result => return result,
+            }
+        }
     }
 }
 
-impl Write for ClientConnection {
+impl Write for DeadlineStream {
     fn write(&mut self, input: &[u8]) -> io::Result<usize> {
-        self.stream.write(input)
+        loop {
+            self.wait(libc::POLLOUT)?;
+            match self.stream.write(input) {
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                    ) => {}
+                result => return result,
+            }
+        }
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.stream.flush()
+        Ok(())
     }
 }
 
+pub(super) type ClientConnection = DeadlineStream;
+
 pub(super) struct AcceptedConnection<'a> {
-    stream: UnixStream,
+    stream: DeadlineStream,
     marker: PhantomData<&'a mut ServerTransport>,
 }
 
 impl AcceptedConnection<'_> {
-    pub(super) fn set_deadline(&mut self, deadline: Instant) {
-        set_stream_deadline(&self.stream, deadline);
+    pub(super) fn set_deadline(&mut self, deadline: Instant) -> Result<(), ControlError> {
+        self.stream.set_deadline(deadline)
     }
 }
 
@@ -352,12 +381,151 @@ impl Write for AcceptedConnection<'_> {
     }
 }
 
-fn set_stream_deadline(stream: &UnixStream, deadline: Instant) {
-    let timeout = deadline
-        .saturating_duration_since(Instant::now())
-        .max(Duration::from_millis(1));
-    let _ = stream.set_read_timeout(Some(timeout));
-    let _ = stream.set_write_timeout(Some(timeout));
+fn deadline_elapsed() -> io::Error {
+    io::Error::new(io::ErrorKind::TimedOut, "Unix control deadline elapsed")
+}
+
+fn poll_until(fd: RawFd, events: libc::c_short, deadline: Instant) -> io::Result<()> {
+    loop {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .ok_or_else(deadline_elapsed)?;
+        let millis = remaining
+            .as_millis()
+            .saturating_add((remaining.subsec_nanos() % 1_000_000 != 0) as u128)
+            .clamp(1, i32::MAX as u128) as libc::c_int;
+        let mut pollfd = libc::pollfd {
+            fd,
+            events,
+            revents: 0,
+        };
+        match unsafe { libc::poll(&mut pollfd, 1, millis) } {
+            result if result > 0 => return Ok(()),
+            0 => return Err(deadline_elapsed()),
+            _ => {
+                let error = io::Error::last_os_error();
+                if error.kind() != io::ErrorKind::Interrupted {
+                    return Err(error);
+                }
+            }
+        }
+    }
+}
+
+fn connect_nonblocking(path: &Path, deadline: Instant) -> Result<UnixStream, ControlError> {
+    use std::os::unix::ffi::OsStrExt;
+
+    if Instant::now() >= deadline {
+        return Err(ControlError::Timeout);
+    }
+    let path_bytes = path.as_os_str().as_bytes();
+    if path_bytes.len() > MAX_SOCKET_PATH_BYTES || path_bytes.contains(&0) {
+        return Err(ControlError::Security(
+            "invalid internal socket path".to_string(),
+        ));
+    }
+
+    let raw_fd = unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0) };
+    if raw_fd < 0 {
+        return Err(endpoint_io(
+            "create Unix control connection",
+            io::Error::last_os_error(),
+        ));
+    }
+    let owned_fd = unsafe { OwnedFd::from_raw_fd(raw_fd) };
+    configure_nonblocking(owned_fd.as_raw_fd())?;
+
+    let mut address = unsafe { MaybeUninit::<libc::sockaddr_un>::zeroed().assume_init() };
+    let address_length = std::mem::offset_of!(libc::sockaddr_un, sun_path)
+        .checked_add(path_bytes.len() + 1)
+        .ok_or_else(|| ControlError::Security("invalid internal socket path".to_string()))?;
+    address.sun_len = u8::try_from(address_length)
+        .map_err(|_| ControlError::Security("invalid internal socket path".to_string()))?;
+    address.sun_family = libc::AF_UNIX as libc::sa_family_t;
+    for (destination, source) in address.sun_path.iter_mut().zip(path_bytes) {
+        *destination = *source as libc::c_char;
+    }
+
+    let connected = unsafe {
+        libc::connect(
+            owned_fd.as_raw_fd(),
+            (&raw const address).cast(),
+            address_length as libc::socklen_t,
+        )
+    };
+    if connected != 0 {
+        let error = io::Error::last_os_error();
+        if !matches!(
+            error.raw_os_error(),
+            Some(libc::EINPROGRESS | libc::EALREADY | libc::EAGAIN)
+        ) {
+            return Err(connect_error(error));
+        }
+        poll_until(owned_fd.as_raw_fd(), libc::POLLOUT, deadline)
+            .map_err(|error| connect_wait_error(error))?;
+        let mut socket_error = 0;
+        let mut socket_error_bytes = size_of::<libc::c_int>() as libc::socklen_t;
+        if unsafe {
+            libc::getsockopt(
+                owned_fd.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_ERROR,
+                (&raw mut socket_error).cast(),
+                &mut socket_error_bytes,
+            )
+        } != 0
+        {
+            return Err(endpoint_io(
+                "finish Unix control connection",
+                io::Error::last_os_error(),
+            ));
+        }
+        if socket_error != 0 {
+            return Err(connect_error(io::Error::from_raw_os_error(socket_error)));
+        }
+    }
+    Ok(UnixStream::from(owned_fd))
+}
+
+fn configure_nonblocking(fd: RawFd) -> Result<(), ControlError> {
+    let status_flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if status_flags < 0
+        || unsafe { libc::fcntl(fd, libc::F_SETFL, status_flags | libc::O_NONBLOCK) } < 0
+    {
+        return Err(endpoint_io(
+            "configure Unix control connection status",
+            io::Error::last_os_error(),
+        ));
+    }
+    let descriptor_flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+    if descriptor_flags < 0
+        || unsafe { libc::fcntl(fd, libc::F_SETFD, descriptor_flags | libc::FD_CLOEXEC) } < 0
+    {
+        return Err(endpoint_io(
+            "configure Unix control connection descriptor",
+            io::Error::last_os_error(),
+        ));
+    }
+    Ok(())
+}
+
+fn connect_wait_error(error: io::Error) -> ControlError {
+    if error.kind() == io::ErrorKind::TimedOut {
+        ControlError::Timeout
+    } else {
+        endpoint_io("wait for Unix control connection", error)
+    }
+}
+
+fn connect_error(error: io::Error) -> ControlError {
+    match error.kind() {
+        io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused => ControlError::Unavailable,
+        io::ErrorKind::TimedOut => ControlError::Timeout,
+        io::ErrorKind::PermissionDenied => {
+            ControlError::Security("connect to Unix control socket: permission denied".to_string())
+        }
+        _ => endpoint_io("connect to Unix control socket", error),
+    }
 }
 
 fn ensure_runtime_directory(
@@ -402,12 +570,19 @@ fn ensure_runtime_directory(
     }
 }
 
+fn bind_private_socket(path: &Path) -> Result<UnixListener, ControlError> {
+    UnixListener::bind(path).map_err(|error| endpoint_io("bind Unix control socket", error))
+}
+
 fn remove_stale_socket(path: &Path, effective_uid: libc::uid_t) -> Result<(), ControlError> {
     match fs::symlink_metadata(path) {
         Ok(metadata) => {
-            validate_metadata(&metadata, effective_uid, ObjectKind::Socket, FILE_MODE)?;
-            fs::remove_file(path)
-                .map_err(|error| endpoint_io("remove stale Unix control socket", error))
+            if !metadata.file_type().is_socket() || metadata.uid() != effective_uid {
+                return Err(ControlError::Security(
+                    "unsafe existing internal IPC socket".to_string(),
+                ));
+            }
+            quarantine_owned_path(path, identity(&metadata))?.remove()
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(endpoint_io("inspect Unix control socket", error)),
@@ -422,7 +597,11 @@ fn validate_socket(path: &Path, effective_uid: libc::uid_t) -> Result<Metadata, 
             endpoint_io("inspect Unix control socket", error)
         }
     })?;
-    validate_metadata(&metadata, effective_uid, ObjectKind::Socket, FILE_MODE)?;
+    if !metadata.file_type().is_socket() || metadata.uid() != effective_uid {
+        return Err(ControlError::Security(
+            "unsafe existing internal IPC socket".to_string(),
+        ));
+    }
     Ok(metadata)
 }
 
@@ -572,7 +751,14 @@ impl OwnedPath {
             ObjectKind::Directory => false,
         };
         if correct_kind && identity(&metadata) == self.identity {
-            let _ = fs::remove_file(&self.path);
+            match quarantine_owned_path(&self.path, self.identity) {
+                Ok(quarantine) => {
+                    if let Err(error) = quarantine.remove() {
+                        warn!("preserved replaced internal IPC quarantine: {error}");
+                    }
+                }
+                Err(error) => warn!("preserved replaced internal IPC object: {error}"),
+            }
         }
     }
 }
@@ -580,6 +766,83 @@ impl OwnedPath {
 impl Drop for OwnedPath {
     fn drop(&mut self) {
         self.remove_if_same();
+    }
+}
+
+struct QuarantinedPath {
+    path: PathBuf,
+    identity: PathIdentity,
+}
+
+impl QuarantinedPath {
+    fn remove(self) -> Result<(), ControlError> {
+        let metadata = fs::symlink_metadata(&self.path)
+            .map_err(|error| endpoint_io("inspect quarantined IPC object", error))?;
+        if identity(&metadata) != self.identity {
+            return Err(ControlError::Security(
+                "quarantined IPC object was replaced and was preserved".to_string(),
+            ));
+        }
+        fs::remove_file(&self.path)
+            .map_err(|error| endpoint_io("remove quarantined IPC object", error))
+    }
+}
+
+fn quarantine_owned_path(
+    path: &Path,
+    expected: PathIdentity,
+) -> Result<QuarantinedPath, ControlError> {
+    for _ in 0..QUARANTINE_ATTEMPTS {
+        let quarantine = quarantine_path(path)?;
+        match rename_exclusive(path, &quarantine) {
+            Ok(()) => {
+                let metadata = fs::symlink_metadata(&quarantine)
+                    .map_err(|error| endpoint_io("inspect quarantined IPC object", error))?;
+                if identity(&metadata) != expected {
+                    return Err(ControlError::Security(
+                        "internal IPC object changed during quarantine and was preserved"
+                            .to_string(),
+                    ));
+                }
+                return Ok(QuarantinedPath {
+                    path: quarantine,
+                    identity: expected,
+                });
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(endpoint_io("quarantine internal IPC object", error)),
+        }
+    }
+    Err(ControlError::Security(
+        "cannot allocate bounded IPC quarantine".to_string(),
+    ))
+}
+
+fn quarantine_path(path: &Path) -> Result<PathBuf, ControlError> {
+    let parent = path.parent().ok_or_else(|| {
+        ControlError::Security("internal IPC object has no parent directory".to_string())
+    })?;
+    let mut random = [0_u8; 8];
+    unsafe {
+        libc::arc4random_buf(random.as_mut_ptr().cast(), random.len());
+    }
+    Ok(parent.join(format!(
+        ".ipc-quarantine-{:016x}",
+        u64::from_ne_bytes(random)
+    )))
+}
+
+fn rename_exclusive(from: &Path, to: &Path) -> io::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+
+    let from = CString::new(from.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid IPC source path"))?;
+    let to = CString::new(to.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid IPC quarantine path"))?;
+    if unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) } == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
     }
 }
 
@@ -626,21 +889,27 @@ pub(super) fn process_resources() -> Result<(u32, u32, u64), ControlError> {
             size_of::<libc::proc_taskinfo>() as libc::c_int,
         )
     };
+    let task_error = io::Error::last_os_error();
+    require_positive_proc_result(
+        task_bytes,
+        "read macOS process task information",
+        task_error,
+    )?;
     if task_bytes != size_of::<libc::proc_taskinfo>() as libc::c_int {
-        return Err(endpoint_io(
-            "read macOS process task information",
-            io::Error::last_os_error(),
-        ));
+        return Err(ControlError::Io(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "macOS process task information was incomplete",
+        )));
     }
     let task = unsafe { task.assume_init() };
     let descriptor_bytes =
         unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDLISTFDS, 0, std::ptr::null_mut(), 0) };
-    if descriptor_bytes < 0 {
-        return Err(endpoint_io(
-            "count macOS process descriptors",
-            io::Error::last_os_error(),
-        ));
-    }
+    let descriptor_error = io::Error::last_os_error();
+    require_positive_proc_result(
+        descriptor_bytes,
+        "count macOS process descriptors",
+        descriptor_error,
+    )?;
     Ok((
         u32::try_from(task.pti_threadnum).unwrap_or(0),
         u32::try_from(descriptor_bytes / libc::PROC_PIDLISTFD_SIZE).unwrap_or(u32::MAX),
@@ -648,11 +917,51 @@ pub(super) fn process_resources() -> Result<(u32, u32, u64), ControlError> {
     ))
 }
 
-fn endpoint_io(operation: &str, error: io::Error) -> ControlError {
+fn require_positive_proc_result(
+    result: libc::c_int,
+    operation: &'static str,
+    error: io::Error,
+) -> Result<libc::c_int, ControlError> {
+    if result <= 0 {
+        Err(context_io(operation, error))
+    } else {
+        Ok(result)
+    }
+}
+
+#[derive(Debug)]
+struct OperationIoError {
+    operation: &'static str,
+    source: io::Error,
+}
+
+impl std::fmt::Display for OperationIoError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}: {}", self.operation, self.source)
+    }
+}
+
+impl std::error::Error for OperationIoError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+fn context_io(operation: &'static str, error: io::Error) -> ControlError {
+    ControlError::Io(io::Error::new(
+        error.kind(),
+        OperationIoError {
+            operation,
+            source: error,
+        },
+    ))
+}
+
+fn endpoint_io(operation: &'static str, error: io::Error) -> ControlError {
     if error.kind() == io::ErrorKind::PermissionDenied {
         ControlError::Security(format!("{operation}: permission denied"))
     } else {
-        ControlError::Io(io::Error::new(error.kind(), operation.to_string()))
+        context_io(operation, error)
     }
 }
 
@@ -812,6 +1121,44 @@ mod tests {
     }
 
     #[test]
+    fn authentication_secret_has_literal_exact_mode_0600() {
+        let directory = tempfile::tempdir().unwrap();
+        let endpoint = endpoint_in(directory.path());
+        let (_, _server) = endpoint.prepare_server().unwrap().unwrap();
+        assert_eq!(
+            fs::symlink_metadata(&endpoint.secret_path).unwrap().mode() & 0o7777,
+            0o600
+        );
+    }
+
+    #[test]
+    fn singleton_lock_has_literal_exact_mode_0600() {
+        let directory = tempfile::tempdir().unwrap();
+        let endpoint = endpoint_in(directory.path());
+        let (_, _server) = endpoint.prepare_server().unwrap().unwrap();
+        assert_eq!(
+            fs::symlink_metadata(&endpoint.singleton_path)
+                .unwrap()
+                .mode()
+                & 0o7777,
+            0o600
+        );
+    }
+
+    #[test]
+    fn launch_lock_has_literal_exact_mode_0600() {
+        let directory = tempfile::tempdir().unwrap();
+        let endpoint = endpoint_in(directory.path());
+        let _launch = endpoint
+            .acquire_launch_lock(Instant::now() + IO_TIMEOUT)
+            .unwrap();
+        assert_eq!(
+            fs::symlink_metadata(&endpoint.launch_path).unwrap().mode() & 0o7777,
+            0o600
+        );
+    }
+
+    #[test]
     fn unsafe_runtime_directory_mode_is_rejected() {
         let directory = tempfile::tempdir().unwrap();
         let endpoint = endpoint_in(directory.path());
@@ -926,18 +1273,122 @@ mod tests {
     }
 
     #[test]
-    fn stale_owned_socket_is_replaced_and_server_cleans_its_socket() {
+    fn safe_stale_socket_is_replaced_before_bind() {
         let directory = tempfile::tempdir().unwrap();
         let endpoint = endpoint_in(directory.path());
         ensure_runtime_directory(&endpoint.runtime_dir, endpoint.effective_uid, true).unwrap();
         let stale = UnixListener::bind(&endpoint.socket_path).unwrap();
         fs::set_permissions(&endpoint.socket_path, fs::Permissions::from_mode(FILE_MODE)).unwrap();
+        let stale_identity = identity(&fs::symlink_metadata(&endpoint.socket_path).unwrap());
         drop(stale);
 
+        let (_, server) = endpoint.prepare_server().unwrap().unwrap();
+        assert_ne!(
+            identity(&fs::symlink_metadata(&endpoint.socket_path).unwrap()),
+            stale_identity
+        );
+        drop(server);
+    }
+
+    #[test]
+    fn server_drop_removes_its_owned_socket() {
+        let directory = tempfile::tempdir().unwrap();
+        let endpoint = endpoint_in(directory.path());
         let (_, server) = endpoint.prepare_server().unwrap().unwrap();
         assert!(endpoint.socket_path.exists());
         drop(server);
         assert!(!endpoint.socket_path.exists());
+    }
+
+    #[test]
+    fn socket_creation_does_not_chmod_a_replacement_path() {
+        let directory = tempfile::tempdir().unwrap();
+        let endpoint = endpoint_in(directory.path());
+        ensure_runtime_directory(&endpoint.runtime_dir, endpoint.effective_uid, true).unwrap();
+        let _listener = bind_private_socket(&endpoint.socket_path).unwrap();
+        let displaced = endpoint.runtime_dir.join("displaced.sock");
+        fs::rename(&endpoint.socket_path, &displaced).unwrap();
+        fs::write(&endpoint.socket_path, b"replacement").unwrap();
+        fs::set_permissions(&endpoint.socket_path, fs::Permissions::from_mode(0o644)).unwrap();
+
+        assert!(matches!(
+            validate_socket(&endpoint.socket_path, endpoint.effective_uid),
+            Err(ControlError::Security(_))
+        ));
+        assert_eq!(
+            fs::symlink_metadata(&endpoint.socket_path).unwrap().mode() & 0o7777,
+            0o644
+        );
+    }
+
+    #[test]
+    fn stale_cleanup_preserves_a_racing_replacement_in_quarantine() {
+        let directory = tempfile::tempdir().unwrap();
+        let endpoint = endpoint_in(directory.path());
+        ensure_runtime_directory(&endpoint.runtime_dir, endpoint.effective_uid, true).unwrap();
+        let _stale = bind_private_socket(&endpoint.socket_path).unwrap();
+        let stale_identity = identity(&fs::symlink_metadata(&endpoint.socket_path).unwrap());
+        fs::rename(
+            &endpoint.socket_path,
+            endpoint.runtime_dir.join("displaced.sock"),
+        )
+        .unwrap();
+        let _replacement = bind_private_socket(&endpoint.socket_path).unwrap();
+        let replacement_identity = identity(&fs::symlink_metadata(&endpoint.socket_path).unwrap());
+
+        assert!(matches!(
+            quarantine_owned_path(&endpoint.socket_path, stale_identity),
+            Err(ControlError::Security(_))
+        ));
+        assert!(fs::read_dir(&endpoint.runtime_dir).unwrap().any(|entry| {
+            entry
+                .ok()
+                .and_then(|entry| entry.metadata().ok())
+                .is_some_and(|metadata| identity(&metadata) == replacement_identity)
+        }));
+    }
+
+    #[test]
+    fn owned_drop_preserves_a_replacement_at_the_socket_path() {
+        let directory = tempfile::tempdir().unwrap();
+        let endpoint = endpoint_in(directory.path());
+        ensure_runtime_directory(&endpoint.runtime_dir, endpoint.effective_uid, true).unwrap();
+        let _owned_listener = bind_private_socket(&endpoint.socket_path).unwrap();
+        let owned_metadata = fs::symlink_metadata(&endpoint.socket_path).unwrap();
+        let owned = OwnedPath::new(&endpoint.socket_path, &owned_metadata, ObjectKind::Socket);
+        fs::rename(
+            &endpoint.socket_path,
+            endpoint.runtime_dir.join("displaced.sock"),
+        )
+        .unwrap();
+        let _replacement = bind_private_socket(&endpoint.socket_path).unwrap();
+        let replacement_identity = identity(&fs::symlink_metadata(&endpoint.socket_path).unwrap());
+
+        drop(owned);
+        assert_eq!(
+            identity(&fs::symlink_metadata(&endpoint.socket_path).unwrap()),
+            replacement_identity
+        );
+    }
+
+    #[test]
+    fn quarantined_cleanup_preserves_a_replacement_object() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("quarantine");
+        fs::write(&path, b"owned").unwrap();
+        let owned_identity = identity(&fs::symlink_metadata(&path).unwrap());
+        let quarantined = QuarantinedPath {
+            path: path.clone(),
+            identity: owned_identity,
+        };
+        fs::rename(&path, directory.path().join("displaced")).unwrap();
+        fs::write(&path, b"replacement").unwrap();
+
+        assert!(matches!(
+            quarantined.remove(),
+            Err(ControlError::Security(_))
+        ));
+        assert_eq!(fs::read(path).unwrap(), b"replacement");
     }
 
     #[test]
@@ -957,12 +1408,26 @@ mod tests {
     }
 
     #[test]
-    fn peer_uid_mismatch_is_rejected_at_the_credential_boundary() {
-        let effective_uid = unsafe { libc::geteuid() };
-        assert!(matches!(
-            require_peer_uid(effective_uid.wrapping_add(1), effective_uid),
-            Err(ControlError::Security(_))
-        ));
+    fn accepted_connection_rejects_actual_peer_uid_before_protocol() {
+        let directory = tempfile::tempdir().unwrap();
+        let endpoint = endpoint_in(directory.path());
+        let (_, mut server) = endpoint.prepare_server().unwrap().unwrap();
+        server.expected_peer_uid = endpoint.effective_uid.wrapping_add(1);
+        let path = endpoint.socket_path.clone();
+        let client = thread::spawn(move || {
+            let mut stream = UnixStream::connect(path).unwrap();
+            let _ = stream.write_all(&[0xff]);
+        });
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_later = Arc::clone(&stop);
+        let stopper = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(100));
+            stop_later.store(true, Ordering::Release);
+        });
+
+        assert!(server.accept(&stop).unwrap().is_none());
+        client.join().unwrap();
+        stopper.join().unwrap();
     }
 
     #[test]
@@ -1050,6 +1515,68 @@ mod tests {
     }
 
     #[test]
+    fn slowloris_frame_cannot_extend_the_absolute_connection_deadline() {
+        let server = RunningServer::start();
+        let path = server.control.endpoint.socket_path.clone();
+        let slow_client = thread::spawn(move || {
+            let mut stream = UnixStream::connect(path).unwrap();
+            for byte in [4_u8, 0] {
+                let _ = stream.write_all(&[byte]);
+                thread::sleep(Duration::from_millis(600));
+            }
+        });
+        thread::sleep(Duration::from_millis(50));
+        let started = Instant::now();
+
+        server.control.ping().unwrap();
+        assert!(
+            started.elapsed() < Duration::from_millis(1_100),
+            "slow client extended the absolute frame deadline"
+        );
+        slow_client.join().unwrap();
+    }
+
+    #[test]
+    fn saturated_unix_backlog_respects_the_bounded_connect_deadline() {
+        let directory = tempfile::tempdir().unwrap();
+        let endpoint = endpoint_in(directory.path());
+        ensure_runtime_directory(&endpoint.runtime_dir, endpoint.effective_uid, true).unwrap();
+        let _listener = bind_private_socket(&endpoint.socket_path).unwrap();
+        let mut clients = Vec::new();
+        let mut saturated = false;
+        for _ in 0..1_024 {
+            match connect_nonblocking(
+                &endpoint.socket_path,
+                Instant::now() + Duration::from_millis(25),
+            ) {
+                Ok(stream) => clients.push(stream),
+                Err(ControlError::Timeout) => {
+                    saturated = true;
+                    break;
+                }
+                Err(error) => panic!("unexpected backlog fill error: {error}"),
+            }
+        }
+        assert!(saturated, "Unix socket backlog did not saturate");
+        let started = Instant::now();
+        assert!(matches!(
+            endpoint.connect_before(Instant::now() + Duration::from_millis(100)),
+            Err(ControlError::Timeout)
+        ));
+        assert!(started.elapsed() < Duration::from_millis(300));
+    }
+
+    #[test]
+    fn expired_deadline_setup_is_rejected() {
+        let (stream, _peer) = UnixStream::pair().unwrap();
+        let mut connection = DeadlineStream::new(stream, Instant::now() + IO_TIMEOUT).unwrap();
+        assert!(matches!(
+            connection.set_deadline(Instant::now()),
+            Err(ControlError::Timeout)
+        ));
+    }
+
+    #[test]
     fn disconnected_uds_client_releases_only_its_candidate() {
         let server = RunningServer::start();
         let mut session = super::super::core::Session::connect(&server.control.endpoint).unwrap();
@@ -1106,6 +1633,32 @@ mod tests {
             super::super::protocol::Response::Shutdown {
                 already_requested: true
             }
+        );
+    }
+
+    #[test]
+    fn proc_pidinfo_zero_failure_preserves_errno_as_the_error_source() {
+        use std::error::Error;
+
+        let error = require_positive_proc_result(
+            0,
+            "test proc_pidinfo",
+            io::Error::from_raw_os_error(libc::ESRCH),
+        )
+        .unwrap_err();
+        let ControlError::Io(error) = error else {
+            panic!("expected contextual I/O failure");
+        };
+        let context = error
+            .get_ref()
+            .and_then(|source| source.downcast_ref::<OperationIoError>())
+            .unwrap();
+        assert_eq!(context.operation, "test proc_pidinfo");
+        assert_eq!(
+            Error::source(context)
+                .and_then(|source| source.downcast_ref::<io::Error>())
+                .and_then(io::Error::raw_os_error),
+            Some(libc::ESRCH)
         );
     }
 }

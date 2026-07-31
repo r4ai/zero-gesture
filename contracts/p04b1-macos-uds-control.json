@@ -58,10 +58,10 @@
     },
     {
       "id": "P04B1-ENDPOINT-009",
-      "obligation": "The singleton owner replaces only a safe stale socket and removes its own bound socket on shutdown.",
+      "obligation": "The singleton owner replaces a safe stale socket before binding the new Engine endpoint.",
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/ipc/macos.rs",
-      "evidence_name": "stale_owned_socket_is_replaced_and_server_cleans_its_socket"
+      "evidence_name": "safe_stale_socket_is_replaced_before_bind"
     },
     {
       "id": "P04B1-ENDPOINT-010",
@@ -69,6 +69,62 @@
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/ipc/macos.rs",
       "evidence_name": "singleton_lock_allows_only_one_engine_endpoint_owner"
+    },
+    {
+      "id": "P04B1-ENDPOINT-011",
+      "obligation": "Dropping the macOS Engine server removes its owned bound socket.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "server_drop_removes_its_owned_socket"
+    },
+    {
+      "id": "P04B1-ENDPOINT-013",
+      "obligation": "The macOS authentication-secret file has observable literal mode 0600.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "authentication_secret_has_literal_exact_mode_0600"
+    },
+    {
+      "id": "P04B1-ENDPOINT-014",
+      "obligation": "The macOS singleton-lock file has observable literal mode 0600.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "singleton_lock_has_literal_exact_mode_0600"
+    },
+    {
+      "id": "P04B1-ENDPOINT-015",
+      "obligation": "The macOS launch-lock file has observable literal mode 0600.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "launch_lock_has_literal_exact_mode_0600"
+    },
+    {
+      "id": "P04B1-ENDPOINT-016",
+      "obligation": "A path replacement after socket bind is rejected without changing the replacement object's permissions.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "socket_creation_does_not_chmod_a_replacement_path"
+    },
+    {
+      "id": "P04B1-ENDPOINT-017",
+      "obligation": "A replacement racing stale-socket cleanup is preserved under a bounded quarantine name.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "stale_cleanup_preserves_a_racing_replacement_in_quarantine"
+    },
+    {
+      "id": "P04B1-ENDPOINT-018",
+      "obligation": "Server-owned socket cleanup preserves a replacement at the live endpoint path.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "owned_drop_preserves_a_replacement_at_the_socket_path"
+    },
+    {
+      "id": "P04B1-ENDPOINT-019",
+      "obligation": "Final quarantined cleanup rejects and preserves an object that replaced the quarantined inode.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "quarantined_cleanup_preserves_a_replacement_object"
     },
     {
       "id": "P04B1-PEER-001",
@@ -79,10 +135,10 @@
     },
     {
       "id": "P04B1-PEER-002",
-      "obligation": "A peer UID different from the effective UID is rejected at the credential decision boundary.",
+      "obligation": "The actual accepted-connection path rejects a getpeereid UID mismatch before protocol handling.",
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/ipc/macos.rs",
-      "evidence_name": "peer_uid_mismatch_is_rejected_at_the_credential_boundary"
+      "evidence_name": "accepted_connection_rejects_actual_peer_uid_before_protocol"
     },
     {
       "id": "P04B1-IPC-001",
@@ -148,6 +204,34 @@
       "evidence_name": "uds_shutdown_is_idempotent_for_the_accepted_session"
     },
     {
+      "id": "P04B1-IPC-005",
+      "obligation": "A slowloris frame cannot extend the server's one absolute per-frame connection deadline.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "slowloris_frame_cannot_extend_the_absolute_connection_deadline"
+    },
+    {
+      "id": "P04B1-IPC-006",
+      "obligation": "A saturated macOS Unix backlog cannot extend Settings beyond its absolute bounded-connect deadline.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "saturated_unix_backlog_respects_the_bounded_connect_deadline"
+    },
+    {
+      "id": "P04B1-IPC-007",
+      "obligation": "An already-expired macOS connection deadline is reported instead of being silently installed.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "expired_deadline_setup_is_rejected"
+    },
+    {
+      "id": "P04B1-IPC-008",
+      "obligation": "Windows transport teardown releases pipe and secret resources before an immediate singleton restart.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "teardown_then_immediate_restart_reacquires_a_clean_endpoint"
+    },
+    {
       "id": "P04B1-CONFIG-005",
       "obligation": "macOS Engine keeps the Tauri-provided stable application configuration directory when no test override is present.",
       "runner": "macos-cargo-test",
@@ -160,6 +244,13 @@
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/tests/p04b1_macos_control.rs",
       "evidence_name": "packaged_same_executable_settings_connects_to_engine_over_uds"
+    },
+    {
+      "id": "P04B1-PROCESS-003",
+      "obligation": "A zero proc_pidinfo result is a failure whose captured errno remains available as diagnostic source context.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "proc_pidinfo_zero_failure_preserves_errno_as_the_error_source"
     }
   ]
 }
