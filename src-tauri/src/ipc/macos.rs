@@ -257,11 +257,13 @@ impl SecretFile {
 }
 
 pub(super) struct ServerTransport {
-    _singleton: FileLock,
     _secret_file: SecretFile,
     listener: UnixListener,
     _socket: OwnedPath,
     effective_uid: libc::uid_t,
+    // Rust drops fields in declaration order. Keep the singleton lock until
+    // the secret and socket owned by this server have been removed.
+    _singleton: FileLock,
 }
 
 impl ServerTransport {
@@ -437,7 +439,6 @@ fn open_or_create_secure_file(
         .read(true)
         .write(true)
         .create(true)
-        .truncate(truncate)
         .mode(FILE_MODE)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
         .open(path)
@@ -447,6 +448,10 @@ fn open_or_create_secure_file(
         .map_err(|error| endpoint_io("inspect opened IPC file", error))?;
     validate_metadata(&metadata, effective_uid, ObjectKind::RegularFile, FILE_MODE)?;
     validate_path_identity(path, &metadata)?;
+    if truncate {
+        file.set_len(0)
+            .map_err(|error| endpoint_io("truncate internal IPC file", error))?;
+    }
     Ok(file)
 }
 
@@ -876,6 +881,22 @@ mod tests {
         let target = directory.path().join("target-secret");
         fs::write(&target, b"do-not-change").unwrap();
         symlink(&target, &endpoint.secret_path).unwrap();
+        assert!(matches!(
+            endpoint.prepare_server(),
+            Err(ControlError::Security(_))
+        ));
+        assert_eq!(fs::read(target).unwrap(), b"do-not-change");
+    }
+
+    #[test]
+    fn hard_linked_secret_object_is_rejected_without_truncation() {
+        let directory = tempfile::tempdir().unwrap();
+        let endpoint = endpoint_in(directory.path());
+        ensure_runtime_directory(&endpoint.runtime_dir, endpoint.effective_uid, true).unwrap();
+        let target = directory.path().join("target-secret");
+        fs::write(&target, b"do-not-change").unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(FILE_MODE)).unwrap();
+        fs::hard_link(&target, &endpoint.secret_path).unwrap();
         assert!(matches!(
             endpoint.prepare_server(),
             Err(ControlError::Security(_))

@@ -140,8 +140,8 @@ runtime/configuration path beyond a bounded diagnostic need.
 `contracts/p04b1-macos-uds-control.json` maps each independently falsifiable
 P04b1 obligation to one independently named test.
 
-The manifest records `O = 22`, `O_v = 22`, `U = 0`, and `O_v / O = 100%`.
-Its logical-case inventory is `T = 22`, `T_u = 2`, `T_i = 18`, `T_e = 2`,
+The manifest records `O = 23`, `O_v = 23`, `U = 0`, and `O_v / O = 100%`.
+Its logical-case inventory is `T = 23`, `T_u = 2`, `T_i = 19`, `T_e = 2`,
 `T_r = 0`, `P = 0`, `D = 0`, and `F = 0`. The process-helper test entry is a
 fixture entry point and is not counted as a logical case when its helper
 environment is absent.

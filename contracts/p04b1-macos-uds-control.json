@@ -44,20 +44,27 @@
     },
     {
       "id": "P04B1-ENDPOINT-007",
+      "obligation": "A hard-linked macOS authentication-secret object is rejected without truncating its target.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "hard_linked_secret_object_is_rejected_without_truncation"
+    },
+    {
+      "id": "P04B1-ENDPOINT-008",
       "obligation": "An internal IPC file whose owner differs from the effective UID is rejected at the metadata boundary.",
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/ipc/macos.rs",
       "evidence_name": "wrong_owner_is_rejected_at_the_metadata_boundary"
     },
     {
-      "id": "P04B1-ENDPOINT-008",
+      "id": "P04B1-ENDPOINT-009",
       "obligation": "The singleton owner replaces only a safe stale socket and removes its own bound socket on shutdown.",
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/ipc/macos.rs",
       "evidence_name": "stale_owned_socket_is_replaced_and_server_cleans_its_socket"
     },
     {
-      "id": "P04B1-ENDPOINT-009",
+      "id": "P04B1-ENDPOINT-010",
       "obligation": "The macOS singleton lock admits only one Engine endpoint owner.",
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/ipc/macos.rs",
