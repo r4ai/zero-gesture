@@ -1,0 +1,151 @@
+{
+  "cases": [
+    {
+      "id": "P03C-HOT-001",
+      "obligation": "The actual callback-facing native owner path performs no heap allocation while selecting a snapshot, entering InputKernel, and reserving bounded lanes.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/hook/owner.rs",
+      "evidence_name": "actual_callback_owner_path_performs_no_heap_allocation"
+    },
+    {
+      "id": "P03C-CONTEXT-001",
+      "obligation": "Pre-resolved Windows context crosses one latest-value mailbox and an invalid newer observation replaces the prior value without mixing fields.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/hook/win32.rs",
+      "evidence_name": "context_mailbox_keeps_only_the_latest_complete_value"
+    },
+    {
+      "id": "P03C-CONTEXT-002",
+      "obligation": "The mailbox writer marks its version odd with AcqRel before relaxed payload stores and closes with Release; the reader uses an acquire fence before final validation. Concurrent stress guards complete-value behavior but is not claimed as weak-memory proof.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/hook/win32.rs",
+      "evidence_name": "concurrent_context_mailbox_reads_never_observe_torn_fields"
+    },
+    {
+      "id": "P03C-CONTEXT-003",
+      "obligation": "Context age starts beside cursor sampling and resolution that exceeds the freshness bound is rejected before publication.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/hook/win32.rs",
+      "evidence_name": "delayed_context_resolution_is_rejected_as_stale"
+    },
+    {
+      "id": "P03C-GENERATION-001",
+      "obligation": "An active gesture and accepted action retain the generation read through ConfigSnapshotReader until action completion, and only the next gesture adopts the replacement.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/hook/owner.rs",
+      "evidence_name": "native_owner_pins_generation_until_action_completion_then_replaces_it"
+    },
+    {
+      "id": "P03C-INPUT-001",
+      "obligation": "After one accepted action completes, repeated physical input can start and complete a distinct next gesture.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/hook/owner.rs",
+      "evidence_name": "repeated_input_accepts_a_second_gesture_after_completion"
+    },
+    {
+      "id": "P03C-ACTION-001",
+      "obligation": "The distinct bounded action lane delivers target activation before the same session's accepted action.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/hook/owner.rs",
+      "evidence_name": "activation_and_action_lane_preserve_fifo"
+    },
+    {
+      "id": "P03C-OVERLOAD-001",
+      "obligation": "Action-lane capacity exhaustion passes the physical trigger before suppression and leaves no active session.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/hook/owner.rs",
+      "evidence_name": "native_owner_overload_fails_open_before_suppressing_a_trigger"
+    },
+    {
+      "id": "P03C-REPLAY-001",
+      "obligation": "A before-injection failure replays exactly once with the original suppressed down coordinate and the exact suppressed physical-up coordinate.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/hook/owner.rs",
+      "evidence_name": "native_owner_replays_the_exact_suppressed_physical_up_point"
+    },
+    {
+      "id": "P03C-ACTION-002",
+      "obligation": "A delayed activation failure after injection begins enters fail-open bypass and never replays the physical trigger.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/hook/owner.rs",
+      "evidence_name": "delayed_activation_failure_after_injection_never_replays"
+    },
+    {
+      "id": "P03C-RENDER-001",
+      "obligation": "Renderer point overload is dropped in its bounded lane without preventing the independent action lane from delivering the accepted action.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/hook/owner.rs",
+      "evidence_name": "renderer_point_overload_drops_without_delaying_action_delivery"
+    },
+    {
+      "id": "P03C-RENDER-002",
+      "obligation": "Renderer generation replacement occurs only after the prior pinned gesture finishes and the next gesture starts.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/hook/owner.rs",
+      "evidence_name": "renderer_generation_changes_only_after_the_pinned_gesture_finishes"
+    },
+    {
+      "id": "P03C-RENDER-003",
+      "obligation": "Renderer replacement and shutdown backpressure cannot wait on the installed hook message pump.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/hook/win32.rs",
+      "evidence_name": "renderer_lifecycle_backpressure_never_blocks_the_hook_thread"
+    },
+    {
+      "id": "P03C-RENDER-004",
+      "obligation": "A terminal command accepted by the overlay remains in the one bounded queue when its coalesced Win32 wakeup fails.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/overlay/mod.rs",
+      "evidence_name": "failed_wakeup_keeps_an_accepted_terminal_in_the_bounded_queue"
+    },
+    {
+      "id": "P03C-RENDER-005",
+      "obligation": "The Hook-pump to renderer-owner queue reserves one terminal slot from accepted Start through End, and lossy point saturation cannot consume that slot.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/hook/win32.rs",
+      "evidence_name": "renderer_owner_queue_reserves_terminal_during_lossy_saturation"
+    },
+    {
+      "id": "P03C-RENDER-006",
+      "obligation": "The renderer-owner to overlay queue reserves one terminal slot from accepted Start through End, and lossy point or label saturation cannot consume that slot.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/overlay/mod.rs",
+      "evidence_name": "overlay_queue_reserves_terminal_during_lossy_saturation"
+    },
+    {
+      "id": "P03C-LIFECYCLE-002",
+      "obligation": "Engine readiness follows successful native hook and timer installation; an install failure exits nonzero without readiness and a fresh Engine can restart.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/tests/p03_engine_process.rs",
+      "evidence_name": "hook_install_failure_prevents_readiness_and_a_fresh_engine_restarts"
+    },
+    {
+      "id": "P03C-LIFECYCLE-001",
+      "obligation": "Native owner shutdown is idempotent, clears bounded work and pinned state, and suppresses no later physical input.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/hook/owner.rs",
+      "evidence_name": "shutdown_clears_all_suppression_and_is_idempotent"
+    },
+    {
+      "id": "P03C-LIFECYCLE-003",
+      "obligation": "Unexpected context-worker termination after Engine readiness is continuously surfaced as a fatal nonzero Engine exit, and a fresh Engine can restart from committed configuration.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/tests/p03_engine_process.rs",
+      "evidence_name": "context_worker_termination_exits_engine_and_a_fresh_engine_restarts"
+    },
+    {
+      "id": "P03C-LIFECYCLE-004",
+      "obligation": "Unexpected renderer-owner termination after Engine readiness is continuously surfaced as a fatal nonzero Engine exit.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/tests/p03_engine_process.rs",
+      "evidence_name": "renderer_worker_termination_exits_engine"
+    },
+    {
+      "id": "P03C-LIFECYCLE-005",
+      "obligation": "Asynchronous renderer-owner death terminalizes an active suppressed-down session through InputKernel, discards stale activation/action work, queues exactly one bounded replay, and enters pass-through before fatal shutdown.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/hook/owner.rs",
+      "evidence_name": "async_renderer_termination_replays_active_suppression_before_shutdown"
+    }
+  ]
+}

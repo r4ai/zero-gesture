@@ -22,7 +22,6 @@ pub(crate) struct TargetToken(pub(crate) u64);
 pub(crate) enum Reservation {
     Reserved,
     CapacityExhausted,
-    OwnerUnavailable,
 }
 
 /// Closed callback facts supplied by the future native adapter.
@@ -74,7 +73,6 @@ pub(crate) enum InputEvent {
     ActionCompleted(SessionId),
     ActionFailedBeforeInjection(SessionId),
     ActionFailedAfterInjection(SessionId),
-    ContextFault,
     ExecutorFault,
     RendererFault,
     Shutdown,
@@ -173,7 +171,6 @@ enum ActionPhase {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EssentialOwner {
-    Context,
     Executor,
     Renderer,
 }
@@ -215,6 +212,7 @@ struct ActiveSession {
 
 struct ReplayPending {
     id: SessionId,
+    generation: ConfigGeneration,
     trigger: TriggerButton,
     down_at: Point,
     last_point: Point,
@@ -264,14 +262,10 @@ impl InputKernel {
         }
 
         match input {
-            InputEvent::Shutdown => {
-                self.machine.cancel();
-                self.state = KernelState::Bypass;
-                InputDecision::pass(InputMode::Bypass)
+            InputEvent::Shutdown => self.handle_shutdown(),
+            event @ (InputEvent::ExecutorFault | InputEvent::RendererFault) => {
+                self.handle_owner_fault(owner_fault(event))
             }
-            event @ (InputEvent::ContextFault
-            | InputEvent::ExecutorFault
-            | InputEvent::RendererFault) => self.handle_owner_fault(owner_fault(event)),
             event @ (InputEvent::ActivationReady(session)
             | InputEvent::ActivationFailed(session)) => {
                 self.handle_activation(session, matches!(event, InputEvent::ActivationReady(_)))
@@ -289,6 +283,15 @@ impl InputKernel {
                 tick,
                 facts,
             } => self.handle_pointer(event, point, tick, facts),
+        }
+    }
+
+    /// Generation retained by an active gesture or its pending replay record.
+    pub(crate) fn pinned_generation(&self) -> Option<ConfigGeneration> {
+        match &self.state {
+            KernelState::Active(session) => Some(session.generation),
+            KernelState::ReplayPending(pending) => Some(pending.generation),
+            KernelState::Idle | KernelState::Bypass => None,
         }
     }
 
@@ -542,6 +545,7 @@ impl InputKernel {
         } else {
             self.state = KernelState::ReplayPending(ReplayPending {
                 id: session.id,
+                generation: session.generation,
                 trigger: session.trigger,
                 down_at: session.down_at,
                 last_point: point,
@@ -686,6 +690,26 @@ impl InputKernel {
         }
     }
 
+    fn handle_shutdown(&mut self) -> InputDecision {
+        self.machine.cancel();
+        let state = std::mem::replace(&mut self.state, KernelState::Bypass);
+        let KernelState::ReplayPending(pending) = state else {
+            return InputDecision::pass(InputMode::Bypass);
+        };
+        let mut effects = InputEffects::default();
+        effects.push(InputEffect::ReplayTrigger {
+            session: pending.id,
+            trigger: pending.trigger,
+            down_at: pending.down_at,
+            up_at: pending.last_point,
+        });
+        InputDecision {
+            disposition: Disposition::Pass,
+            effects,
+            mode: InputMode::Bypass,
+        }
+    }
+
     fn handle_safety_timer(&mut self, tick: u32) -> InputDecision {
         let state = std::mem::replace(&mut self.state, KernelState::Bypass);
         let KernelState::Active(session) = state else {
@@ -756,7 +780,6 @@ fn mode_of(state: &KernelState) -> InputMode {
 
 fn owner_fault(event: InputEvent) -> EssentialOwner {
     match event {
-        InputEvent::ContextFault => EssentialOwner::Context,
         InputEvent::ExecutorFault => EssentialOwner::Executor,
         InputEvent::RendererFault => EssentialOwner::Renderer,
         _ => unreachable!("owner_fault is called only for owner fault inputs"),
@@ -774,7 +797,7 @@ fn action_phase(event: InputEvent) -> ActionPhase {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::alloc::{GlobalAlloc, Layout, System};
     use std::cell::Cell;
 
@@ -817,7 +840,7 @@ mod tests {
     #[global_allocator]
     static TEST_ALLOCATOR: ThreadCountingAllocator = ThreadCountingAllocator;
 
-    fn count_allocations<T>(run: impl FnOnce() -> T) -> (T, usize) {
+    pub(crate) fn count_allocations<T>(run: impl FnOnce() -> T) -> (T, usize) {
         ALLOCATIONS.with(|count| count.set(0));
         COUNTING.with(|counting| counting.set(true));
         let result = run();

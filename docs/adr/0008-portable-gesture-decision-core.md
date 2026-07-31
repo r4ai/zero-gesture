@@ -55,6 +55,12 @@ It activates and resolves the target before handing a configured trigger to
 `GestureMachine`, then applies render effects and queues the selected
 action/replay after the decision, preserving the existing causal order.
 
+> P03c update: ADR 0013 supersedes the Windows adapter ownership described
+> above. Config compilation now belongs to `config`, application/window
+> resolution runs in the context worker, and the real callback uses
+> `InputKernel`; `hook/app_match.rs` and the callback-side OS queries were
+> removed.
+
 The legacy `src-tauri/src/gesture.rs`, `src-tauri/src/hook/state.rs`, and
 `src-tauri/src/hook/trigger.rs` implementations are deleted in this change.
 Their non-platform tests move to the portable module interface; Windows code

@@ -244,3 +244,10 @@ The publication implementation pays for one bounded reader counter operation
 instead of allocation or reference-count traffic in the eventual callback.
 The temporary 512 KiB edit bound is a known narrower capability until the
 lossless transfer phase is implemented.
+
+## P03c implementation note
+
+ADR 0013 wires the actual Windows owner to this reader protocol and replaces
+the temporary Hook/Overlay compatibility recreation. The publication,
+Prepare/Commit/Applied ordering, post-commit no-rollback rule, and fatal owner
+observation remain unchanged; config replacement no longer restarts the hook.

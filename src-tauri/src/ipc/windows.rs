@@ -1406,16 +1406,17 @@ mod tests {
         let Some(server) = EngineServer::for_test(&directory, &suffix).unwrap() else {
             return;
         };
-        let (owner, initial) = ConfigOwner::startup(&directory);
+        let (owner, _) = ConfigOwner::startup(&directory);
+        let reader = owner.reader();
         let runtime = std::env::var_os(HELPER_RUNTIME_ENV)
-            .map(|_| crate::ThreadRuntime::start(initial).unwrap());
+            .map(|_| crate::ThreadRuntime::start(reader).unwrap());
         if std::env::var_os(HELPER_POISON_RUNTIME_ENV).is_some() {
             runtime.as_ref().unwrap().poison_for_test();
         }
         let result = server.run(Arc::new(AtomicBool::new(false)), owner, |active, _| {
             if let Some(runtime) = &runtime {
                 runtime
-                    .apply_config(active.clone())
+                    .observe_applied(active)
                     .map_err(ControlError::projection)?;
             }
             Ok(())

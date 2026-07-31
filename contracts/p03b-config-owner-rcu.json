@@ -261,10 +261,10 @@
     },
     {
       "id": "P03B-IPC-003",
-      "obligation": "The compatibility projection starts real Hook and Overlay workers with exact enabled, binding, and appearance truth, then stops them when disabled.",
+      "obligation": "Applied config observation keeps the real native input owner alive without restarting it across enabled, changed, and disabled snapshots.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/lib.rs",
-      "evidence_name": "thread_runtime_applies_committed_config_to_real_worker_lifecycle"
+      "evidence_name": "thread_runtime_observes_applied_config_without_restarting_native_owner"
     },
     {
       "id": "P03B-IPC-004",

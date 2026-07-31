@@ -125,14 +125,14 @@ pub fn generate_label(action: &Action) -> String {
 ///
 /// Calls `SendInput` which requires no special privileges but will inject
 /// real keyboard events into the focused window.
-pub fn execute(action: &Action) {
+pub fn execute(action: &Action) -> bool {
     match action {
         Action::Keyboard { keys } => execute_keyboard(keys),
     }
 }
 
 #[cfg(windows)]
-fn execute_keyboard(keys: &[String]) {
+fn execute_keyboard(keys: &[String]) -> bool {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, KEYEVENTF_KEYUP};
 
     let vks: Vec<u16> = keys
@@ -147,7 +147,7 @@ fn execute_keyboard(keys: &[String]) {
         .collect();
 
     if vks.is_empty() {
-        return;
+        return false;
     }
 
     // Build input array: key-downs in order, then key-ups in reverse.
@@ -186,12 +186,14 @@ fn execute_keyboard(keys: &[String]) {
             sent_events, expected_events
         );
     }
+    sent_events == expected_events
 }
 
 #[cfg(not(windows))]
-fn execute_keyboard(keys: &[String]) {
+fn execute_keyboard(keys: &[String]) -> bool {
     let _ = keys;
     warn!("Keyboard action execution is only supported on Windows");
+    false
 }
 
 /// Returns `true` if the given virtual-key code is an extended key that

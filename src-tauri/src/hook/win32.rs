@@ -1,182 +1,533 @@
 use std::cell::RefCell;
-use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{fence, AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::thread;
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
-use crossbeam_channel::{Receiver, Sender};
+use crossbeam_channel::{bounded, Receiver, RecvTimeoutError, Sender, TryRecvError, TrySendError};
 use log::{debug, error, info, warn};
 use windows_sys::Win32::System::Threading::GetCurrentThreadId;
 use windows_sys::Win32::{
-    Foundation::{LPARAM, LRESULT, WPARAM},
+    Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM},
     UI::{
         Input::KeyboardAndMouse::{
             SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_VIRTUALDESK,
             MOUSEINPUT,
         },
         WindowsAndMessaging::{
-            CallNextHookEx, DispatchMessageW, GetMessageW, KillTimer, PostThreadMessageW, SetTimer,
-            SetWindowsHookExW, UnhookWindowsHookEx, LLMHF_INJECTED, MSG, MSLLHOOKSTRUCT,
+            CallNextHookEx, DispatchMessageW, GetAncestor, GetCursorPos, GetMessageW, KillTimer,
+            PostThreadMessageW, SetForegroundWindow, SetTimer, SetWindowsHookExW,
+            UnhookWindowsHookEx, WindowFromPoint, GA_ROOT, LLMHF_INJECTED, MSG, MSLLHOOKSTRUCT,
             WH_MOUSE_LL, WM_APP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
             WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_TIMER,
         },
     },
 };
 
-use crate::domain::{
-    ActionId, Decision, Disposition, GestureInput, GestureMachine, GestureTransition, MouseEvent,
-    Point, RenderEffect, ReplayRequest, TriggerButton,
-};
+use crate::config::{ConfigSnapshotReader, RuntimeConfig};
+use crate::domain::input::{ConfigGeneration, TargetToken};
+use crate::domain::{BindingSetId, Disposition, MouseEvent, Point, TriggerButton};
 use crate::executor;
-use crate::overlay::OverlayCommand;
+use crate::overlay::{self, OverlayClient, OverlayCommand, OverlayDelivery};
 
-use super::HookControl;
+use super::owner::{ActionWork, ContextView, NativeInputOwner, RenderWork, CONTEXT_MAX_AGE_MS};
+use super::{HookEvent, HookFailure};
 
-/// Custom message used to replay trigger-button operation outside hook callback.
-///
-/// Defined as `WM_APP + 1` so we can call `SendInput` from the message loop
-/// and avoid callback re-entrancy.
-const WM_REPLAY_OPERATION: u32 = WM_APP + 1;
-
-/// Custom message used to execute a gesture-bound action outside the hook callback.
-///
-/// Defined as `WM_APP + 2`. Posted when a gesture has a matching binding so
-/// [`executor::execute`] runs in the message loop rather than in the low-level
-/// hook callback (avoids re-entrancy hazards).
-const WM_EXECUTE_ACTION: u32 = WM_APP + 2;
-
-/// Timer ID for the safety timeout.
+const WM_ACTION_READY: u32 = WM_APP + 1;
+const WM_RENDER_READY: u32 = WM_APP + 2;
+const WM_CONTEXT_READY: u32 = WM_APP + 3;
 const SAFETY_TIMER_ID: usize = 1;
+const SAFETY_TIMER_PERIOD_MS: u32 = 100;
+const CONTEXT_SAMPLE_PERIOD_MS: u64 = 4;
+const CONTEXT_PUBLISH_PERIOD_MS: u32 = 25;
+const RENDERER_SHUTDOWN_TIMEOUT_MS: u64 = 500;
+const RENDERER_QUEUE_CAPACITY: usize = 64;
 
-/// All mutable state for the hook thread, stored in [`HOOK_STATE`].
 struct HookThreadState {
-    /// Portable gesture recognition and session decisions.
-    machine: GestureMachine,
-    /// Windows application matchers used before a gesture starts.
-    runtime: Arc<crate::config::RuntimeConfig>,
-    /// Channel to the overlay thread.
-    overlay_tx: Sender<OverlayCommand>,
-    /// Deferred trigger-button replay request from hook callback.
-    pending_replay: Option<ReplayRequest>,
-    /// Deferred action to execute from the message loop.
-    pending_actions: VecDeque<(ActionId, u16)>,
+    owner: NativeInputOwner,
+    owner_tid: u32,
+    context: Arc<ContextMailbox>,
+    context_stop: Arc<AtomicBool>,
+    context_handle: Option<JoinHandle<Result<(), HookFailure>>>,
+    renderer: RendererClient,
 }
 
-// Thread-local storage is required because `WH_MOUSE_LL` callback signature
-// does not provide user-data.
 thread_local! {
     static HOOK_STATE: RefCell<Option<HookThreadState>> = const { RefCell::new(None) };
 }
 
-/// Main loop of the hook thread (Windows implementation).
-///
-/// Performs:
-/// 1. Publish thread ID.
-/// 2. Spawn watchdog listening for [`HookControl::Shutdown`].
-/// 3. Install `WH_MOUSE_LL` hook.
-/// 4. Start safety timer.
-/// 5. Process Win32 messages until `WM_QUIT`.
-/// 6. Cleanup (timer, hook, TLS, watchdog).
-///
-/// # Safety
-///
-/// Uses Win32 FFI (`unsafe`) and must keep callback/message-loop thread
-/// affinity intact.
-pub(super) fn run_loop_win32(
-    runtime: Arc<crate::config::RuntimeConfig>,
-    overlay_tx: Sender<OverlayCommand>,
-    tid_arc: Arc<AtomicU32>,
-    control_rx: Receiver<HookControl>,
-) {
-    unsafe {
-        let safety_timeout_ms = runtime.gesture.safety_timeout_ms;
-        let gesture = runtime.gesture.clone();
+struct ContextMailbox {
+    sequence: AtomicU64,
+    valid: AtomicBool,
+    generation: AtomicU64,
+    binding_set: AtomicU64,
+    target: AtomicU64,
+    point: AtomicU64,
+    tick: AtomicU32,
+}
 
-        let tid = GetCurrentThreadId();
-        tid_arc.store(tid, Ordering::Release);
-        info!("hook thread started (tid={tid})");
+impl ContextMailbox {
+    fn new() -> Self {
+        Self {
+            sequence: AtomicU64::new(0),
+            valid: AtomicBool::new(false),
+            generation: AtomicU64::new(0),
+            binding_set: AtomicU64::new(0),
+            target: AtomicU64::new(0),
+            point: AtomicU64::new(0),
+            tick: AtomicU32::new(0),
+        }
+    }
 
-        let watchdog = thread::Builder::new()
-            .name("hook-watchdog".to_string())
-            .spawn(move || {
-                let _ = control_rx.recv();
-                PostThreadMessageW(
-                    tid,
-                    windows_sys::Win32::UI::WindowsAndMessaging::WM_QUIT,
-                    0,
-                    0,
-                );
+    fn publish(&self, context: Option<ContextView>) {
+        let writing = self.sequence.fetch_add(1, Ordering::AcqRel) + 1;
+        debug_assert_eq!(writing & 1, 1);
+        if let Some(context) = context {
+            self.generation.store(context.generation, Ordering::Relaxed);
+            self.binding_set
+                .store(context.binding_set.index() as u64, Ordering::Relaxed);
+            self.target.store(context.target.0, Ordering::Relaxed);
+            self.point
+                .store(pack_point(context.point), Ordering::Relaxed);
+            self.tick.store(context.updated_tick, Ordering::Relaxed);
+            self.valid.store(true, Ordering::Relaxed);
+        } else {
+            self.valid.store(false, Ordering::Relaxed);
+        }
+        self.sequence.store(writing + 1, Ordering::Release);
+    }
+
+    fn read(&self) -> Option<ContextView> {
+        for _ in 0..4 {
+            let before = self.sequence.load(Ordering::Acquire);
+            if before & 1 != 0 {
+                continue;
+            }
+            let valid = self.valid.load(Ordering::Relaxed);
+            let generation = self.generation.load(Ordering::Relaxed);
+            let binding_set = self.binding_set.load(Ordering::Relaxed);
+            let target = self.target.load(Ordering::Relaxed);
+            let point = self.point.load(Ordering::Relaxed);
+            let updated_tick = self.tick.load(Ordering::Relaxed);
+            fence(Ordering::Acquire);
+            if self.sequence.load(Ordering::Relaxed) != before {
+                continue;
+            }
+            if !valid {
+                return None;
+            }
+            return BindingSetId::from_index(binding_set as usize).map(|binding_set| ContextView {
+                generation,
+                binding_set,
+                target: TargetToken(target),
+                point: unpack_point(point),
+                updated_tick,
+            });
+        }
+        None
+    }
+}
+
+struct RendererWorker {
+    generation: Option<ConfigGeneration>,
+    runtime: Option<Arc<RuntimeConfig>>,
+    sender: Option<OverlayClient>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl RendererWorker {
+    fn new() -> Self {
+        Self {
+            generation: None,
+            runtime: None,
+            sender: None,
+            handle: None,
+        }
+    }
+
+    fn ensure(&mut self, generation: ConfigGeneration, runtime: Arc<RuntimeConfig>) -> bool {
+        if self.generation == Some(generation) {
+            return self.sender.is_some();
+        }
+        if !self.shutdown() {
+            return false;
+        }
+        match overlay::spawn(Arc::clone(&runtime)) {
+            Ok((sender, handle)) => {
+                self.generation = Some(generation);
+                self.runtime = Some(runtime);
+                self.sender = Some(sender);
+                self.handle = Some(handle);
+                true
+            }
+            Err(error) => {
+                error!("failed to start renderer worker: {error}");
+                false
+            }
+        }
+    }
+
+    fn send(&mut self, command: OverlayCommand) -> bool {
+        self.sender
+            .as_mut()
+            .is_some_and(|sender| matches!(sender.try_send(command), OverlayDelivery::Accepted))
+    }
+
+    fn send_lossy(&mut self, command: OverlayCommand) -> bool {
+        self.sender
+            .as_mut()
+            .is_some_and(|sender| match sender.try_send(command) {
+                OverlayDelivery::Accepted | OverlayDelivery::Full => true,
+                OverlayDelivery::Fault => false,
             })
-            .expect("failed to spawn hook watchdog thread");
+    }
 
+    fn has_unexpected_exit(&self) -> bool {
+        self.handle.as_ref().is_some_and(JoinHandle::is_finished)
+    }
+
+    fn label(&self, action: Option<crate::domain::ActionId>) -> Option<String> {
+        action.map(|action| {
+            self.runtime
+                .as_ref()
+                .expect("renderer runtime must exist while rendering")
+                .action_label(action)
+                .to_string()
+        })
+    }
+
+    fn shutdown(&mut self) -> bool {
+        let mut clean = true;
+        if let Some(sender) = self.sender.take() {
+            clean = matches!(
+                sender.send_timeout(
+                    OverlayCommand::Shutdown,
+                    Duration::from_millis(RENDERER_SHUTDOWN_TIMEOUT_MS),
+                ),
+                OverlayDelivery::Accepted
+            );
+        }
+        if let Some(handle) = self.handle.take() {
+            for _ in 0..RENDERER_SHUTDOWN_TIMEOUT_MS / 10 {
+                if handle.is_finished() {
+                    clean &= handle.join().is_ok();
+                    self.generation = None;
+                    self.runtime = None;
+                    return clean;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            clean = false;
+        }
+        self.generation = None;
+        self.runtime = None;
+        clean
+    }
+}
+
+enum RendererRequest {
+    Start {
+        generation: ConfigGeneration,
+        runtime: Arc<RuntimeConfig>,
+    },
+    Command {
+        command: OverlayCommand,
+        lossy: bool,
+    },
+    Label {
+        action: Option<crate::domain::ActionId>,
+    },
+    Shutdown,
+}
+
+enum RendererStatus {
+    Fatal,
+}
+
+struct RendererClient {
+    sender: Sender<RendererRequest>,
+    status: Receiver<RendererStatus>,
+    handle: Option<JoinHandle<()>>,
+    terminal_reserved: bool,
+}
+
+impl RendererClient {
+    fn spawn() -> std::io::Result<Self> {
+        let (sender, requests) = bounded(RENDERER_QUEUE_CAPACITY);
+        let (status_tx, status) = bounded(1);
+        let handle = thread::Builder::new()
+            .name("renderer-owner".to_string())
+            .spawn(move || run_renderer_owner(requests, status_tx))?;
+        Ok(Self {
+            sender,
+            status,
+            handle: Some(handle),
+            terminal_reserved: false,
+        })
+    }
+
+    fn try_send(&mut self, request: RendererRequest, lossy: bool) -> bool {
+        let start = matches!(&request, RendererRequest::Start { .. });
+        let end = matches!(
+            &request,
+            RendererRequest::Command {
+                command: OverlayCommand::EndGesture,
+                ..
+            }
+        );
+        if start
+            && (self.terminal_reserved
+                || self.sender.len().saturating_add(2) > RENDERER_QUEUE_CAPACITY)
+        {
+            return false;
+        }
+        if lossy
+            && self
+                .sender
+                .len()
+                .saturating_add(usize::from(self.terminal_reserved))
+                >= RENDERER_QUEUE_CAPACITY
+        {
+            return true;
+        }
+        if end && !self.terminal_reserved {
+            return false;
+        }
+        match self.sender.try_send(request) {
+            Ok(()) => {
+                if start {
+                    self.terminal_reserved = true;
+                } else if end {
+                    self.terminal_reserved = false;
+                }
+                true
+            }
+            Err(TrySendError::Full(_)) if lossy => true,
+            Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => false,
+        }
+    }
+
+    fn has_failed(&self) -> bool {
+        matches!(
+            self.status.try_recv(),
+            Ok(RendererStatus::Fatal) | Err(TryRecvError::Disconnected)
+        ) || self.handle.as_ref().is_some_and(JoinHandle::is_finished)
+    }
+
+    fn shutdown(&mut self) -> bool {
+        let requested = self
+            .sender
+            .send_timeout(
+                RendererRequest::Shutdown,
+                Duration::from_millis(RENDERER_SHUTDOWN_TIMEOUT_MS),
+            )
+            .is_ok();
+        let joined = self
+            .handle
+            .take()
+            .is_none_or(|handle| handle.join().is_ok());
+        requested && joined
+    }
+}
+
+fn run_renderer_owner(requests: Receiver<RendererRequest>, status: Sender<RendererStatus>) {
+    let mut worker = RendererWorker::new();
+    let mut clean = true;
+    loop {
+        #[cfg(debug_assertions)]
+        if test_failure_marker_exists("ZG_P03C_TEST_RENDERER_FAILURE_MARKER") {
+            clean = false;
+            break;
+        }
+        match requests.recv_timeout(Duration::from_millis(25)) {
+            Ok(RendererRequest::Start {
+                generation,
+                runtime,
+            }) => {
+                if !worker.ensure(generation, runtime) || !worker.send(OverlayCommand::StartGesture)
+                {
+                    clean = false;
+                    break;
+                }
+            }
+            Ok(RendererRequest::Command { command, lossy }) => {
+                let delivered = if lossy {
+                    worker.send_lossy(command)
+                } else {
+                    worker.send(command)
+                };
+                if !delivered {
+                    clean = false;
+                    break;
+                }
+            }
+            Ok(RendererRequest::Label { action }) => {
+                let label = worker.label(action);
+                if !worker.send_lossy(OverlayCommand::UpdateLabel(label)) {
+                    clean = false;
+                    break;
+                }
+            }
+            Ok(RendererRequest::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
+            Err(RecvTimeoutError::Timeout) => {
+                if worker.has_unexpected_exit() {
+                    clean = false;
+                    break;
+                }
+            }
+        }
+    }
+    clean &= worker.shutdown();
+    if !clean {
+        let _ = status.try_send(RendererStatus::Fatal);
+    }
+}
+
+pub(super) fn run_loop_win32(
+    reader: ConfigSnapshotReader,
+    events: Sender<HookEvent>,
+) -> Result<(), HookFailure> {
+    unsafe {
+        let tid = GetCurrentThreadId();
+        let context = Arc::new(ContextMailbox::new());
+        let context_stop = Arc::new(AtomicBool::new(false));
+        let context_handle = spawn_context_worker(
+            reader.clone(),
+            tid,
+            Arc::clone(&context),
+            Arc::clone(&context_stop),
+        )
+        .map_err(|_| HookFailure::new("context", "failed to start"))?;
+        let renderer =
+            RendererClient::spawn().map_err(|_| HookFailure::new("renderer", "failed to start"))?;
         HOOK_STATE.with(|cell| {
             *cell.borrow_mut() = Some(HookThreadState {
-                machine: GestureMachine::new(gesture),
-                runtime,
-                overlay_tx,
-                pending_replay: None,
-                pending_actions: VecDeque::new(),
+                owner: NativeInputOwner::new(reader),
+                owner_tid: tid,
+                context,
+                context_stop,
+                context_handle: Some(context_handle),
+                renderer,
             });
         });
 
-        let hook = SetWindowsHookExW(
-            WH_MOUSE_LL,
-            Some(low_level_mouse_proc),
-            std::ptr::null_mut(),
-            0,
-        );
+        #[cfg(debug_assertions)]
+        let inject_install_failure =
+            std::env::var_os("ZG_P03C_TEST_HOOK_INSTALL_FAILURE").is_some();
+        #[cfg(not(debug_assertions))]
+        let inject_install_failure = false;
+        let hook = if inject_install_failure {
+            std::ptr::null_mut()
+        } else {
+            SetWindowsHookExW(
+                WH_MOUSE_LL,
+                Some(low_level_mouse_proc),
+                std::ptr::null_mut(),
+                0,
+            )
+        };
         if hook.is_null() {
-            error!("SetWindowsHookExW failed");
-            return;
+            shutdown_hook_state();
+            return Err(HookFailure::new("hook", "installation failed"));
+        }
+        if SetTimer(
+            std::ptr::null_mut(),
+            SAFETY_TIMER_ID,
+            SAFETY_TIMER_PERIOD_MS,
+            None,
+        ) == 0
+        {
+            UnhookWindowsHookEx(hook);
+            shutdown_hook_state();
+            return Err(HookFailure::new("hook", "safety timer setup failed"));
+        }
+        if events.send(HookEvent::Ready(tid)).is_err() {
+            KillTimer(std::ptr::null_mut(), SAFETY_TIMER_ID);
+            UnhookWindowsHookEx(hook);
+            shutdown_hook_state();
+            return Err(HookFailure::new("hook", "readiness receiver disappeared"));
         }
         debug!("WH_MOUSE_LL hook installed (tid={tid})");
 
-        SetTimer(
-            std::ptr::null_mut(),
-            SAFETY_TIMER_ID,
-            safety_timeout_ms,
-            None,
-        );
-
         let mut msg: MSG = std::mem::zeroed();
+        let mut failure = None;
         loop {
-            let ret = GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0);
-            if ret == 0 || ret == -1 {
+            let result = GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0);
+            if result == 0 {
                 break;
             }
-
-            if msg.message == WM_REPLAY_OPERATION {
-                handle_replay_operation();
-            } else if msg.message == WM_EXECUTE_ACTION {
-                handle_execute_action();
-            } else if msg.message == WM_TIMER {
-                handle_safety_timer();
-            } else {
-                DispatchMessageW(&msg);
+            if result == -1 {
+                failure = Some(HookFailure::new("hook", "message loop failed"));
+                break;
+            }
+            match msg.message {
+                WM_ACTION_READY => drain_actions(),
+                WM_RENDER_READY => drain_renderer(),
+                WM_CONTEXT_READY => update_context(),
+                WM_TIMER => {
+                    handle_safety_timer();
+                    if let Some(worker_failure) = poll_worker_failure() {
+                        failure = Some(worker_failure);
+                        break;
+                    }
+                }
+                _ => {
+                    DispatchMessageW(&msg);
+                }
             }
         }
 
         KillTimer(std::ptr::null_mut(), SAFETY_TIMER_ID);
         UnhookWindowsHookEx(hook);
+        failure = failure.or_else(shutdown_hook_state);
         debug!("WH_MOUSE_LL hook removed");
-
-        HOOK_STATE.with(|cell| {
-            *cell.borrow_mut() = None;
-        });
-
-        let _ = watchdog.join();
         info!("hook thread stopped (tid={tid})");
+        failure.map_or(Ok(()), Err)
     }
 }
 
-/// Win32 low-level mouse hook callback (`LowLevelMouseProc`).
-///
-/// Called by the OS for each mouse event. Returns non-zero to swallow an
-/// event, or delegates via [`CallNextHookEx`] to pass through.
-///
-/// # Safety
-///
-/// `l_param` is cast to `*const MSLLHOOKSTRUCT` per `WH_MOUSE_LL` contract.
+fn poll_worker_failure() -> Option<HookFailure> {
+    HOOK_STATE.with(|cell| {
+        let mut state = cell.borrow_mut();
+        let state = state.as_mut()?;
+        if state
+            .context_handle
+            .as_ref()
+            .is_some_and(JoinHandle::is_finished)
+        {
+            return Some(HookFailure::new("context", "terminated unexpectedly"));
+        }
+        if !state.renderer.has_failed() {
+            return None;
+        }
+        state.owner.renderer_terminated();
+        while let Some(work) = state.owner.pop_action() {
+            execute_action_work(state, work);
+        }
+        Some(HookFailure::new("renderer", "terminated unexpectedly"))
+    })
+}
+
+fn shutdown_hook_state() -> Option<HookFailure> {
+    HOOK_STATE.with(|cell| {
+        let mut state = cell.borrow_mut().take()?;
+        state.owner.shutdown();
+        state.context_stop.store(true, Ordering::Release);
+        let context_failed = state
+            .context_handle
+            .take()
+            .is_some_and(|handle| !matches!(handle.join(), Ok(Ok(()))));
+        let renderer_failed = !state.renderer.shutdown();
+        if context_failed {
+            Some(HookFailure::new("context", "terminated unexpectedly"))
+        } else if renderer_failed {
+            Some(HookFailure::new("renderer", "terminated unexpectedly"))
+        } else {
+            None
+        }
+    })
+}
+
 unsafe extern "system" fn low_level_mouse_proc(
     n_code: i32,
     w_param: WPARAM,
@@ -185,110 +536,283 @@ unsafe extern "system" fn low_level_mouse_proc(
     if n_code < 0 {
         return CallNextHookEx(std::ptr::null_mut(), n_code, w_param, l_param);
     }
-
     let info = &*(l_param as *const MSLLHOOKSTRUCT);
     if info.flags & LLMHF_INJECTED != 0 {
         return CallNextHookEx(std::ptr::null_mut(), n_code, w_param, l_param);
     }
 
-    let msg = w_param as u32;
-    let suppress = HOOK_STATE.with(|cell| {
-        let mut borrow = cell.borrow_mut();
-        let hs = match borrow.as_mut() {
-            Some(hs) => hs,
-            None => return false,
+    let disposition = HOOK_STATE.with(|cell| {
+        let mut state = cell.borrow_mut();
+        let Some(state) = state.as_mut() else {
+            return Disposition::Pass;
         };
-        process_event(hs, msg, info)
+        let disposition = state.owner.callback(
+            to_mouse_event(w_param as u32, info.mouseData),
+            Point::new(info.pt.x, info.pt.y),
+            info.time,
+        );
+        signal_work(&mut state.owner, state.owner_tid);
+        disposition
     });
-
-    if suppress {
+    if disposition == Disposition::Suppress {
         1
     } else {
         CallNextHookEx(std::ptr::null_mut(), n_code, w_param, l_param)
     }
 }
 
-/// Process one Win32 mouse message against the pure state machine.
-///
-/// Converts Win32 event data into [`MouseEvent`], resolves matched app context,
-/// applies produced side effects, and returns whether the original event should
-/// be suppressed.
-fn process_event(hs: &mut HookThreadState, msg: u32, info: &MSLLHOOKSTRUCT) -> bool {
-    let event = to_mouse_event(msg, info);
-    let tick = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount() };
-    let point = Point::new(info.pt.x, info.pt.y);
-
-    let binding_set = match event {
-        MouseEvent::ButtonDown(trigger) if hs.machine.can_start(trigger) => {
-            let activated_target = activate_window_at_point(point.x, point.y);
-            let window_info = if let Some(hwnd) = activated_target {
-                crate::window_info::get_window_info_by_hwnd(hwnd)
-            } else {
-                crate::window_info::get_foreground_window_info()
-            };
-            debug!("window info: {:?}", window_info);
-            hs.runtime.match_windows_app(&window_info)
+fn signal_work(owner: &mut NativeInputOwner, owner_tid: u32) {
+    let (actions, renderer) = owner.take_wakeups();
+    if actions {
+        unsafe {
+            PostThreadMessageW(owner_tid, WM_ACTION_READY, 0, 0);
         }
-        _ => None,
-    };
-
-    let decision = hs.machine.handle(GestureInput::Pointer {
-        event,
-        point,
-        tick,
-        binding_set,
-    });
-    apply_decision(hs, decision)
+    }
+    if renderer {
+        unsafe {
+            PostThreadMessageW(owner_tid, WM_RENDER_READY, 0, 0);
+        }
+    }
 }
 
-fn apply_decision(hs: &mut HookThreadState, decision: Decision) -> bool {
-    for effect in decision.render {
-        let command = match effect {
-            RenderEffect::StartGesture => OverlayCommand::StartGesture,
-            RenderEffect::TrackPoint(point) => OverlayCommand::TrackPoint {
-                x: point.x,
-                y: point.y,
-            },
-            RenderEffect::UpdateLabel(label) => OverlayCommand::UpdateLabel(
-                label.map(|action| hs.runtime.action_label(action).to_string()),
-            ),
-            RenderEffect::EndGesture => OverlayCommand::EndGesture,
+fn drain_actions() {
+    HOOK_STATE.with(|cell| {
+        let mut state = cell.borrow_mut();
+        let Some(state) = state.as_mut() else {
+            return;
         };
-        let _ = hs.overlay_tx.send(command);
-    }
+        while let Some(work) = state.owner.pop_action() {
+            execute_action_work(state, work);
+        }
+        signal_work(&mut state.owner, state.owner_tid);
+    });
+}
 
-    match decision.transition {
-        GestureTransition::Continue | GestureTransition::Complete | GestureTransition::Cancel => {}
-        GestureTransition::ContinueWithAction { action, repeat } => {
-            queue_action(hs, action, repeat);
+fn execute_action_work(state: &mut HookThreadState, work: ActionWork) {
+    match work {
+        ActionWork::Activate { session, target } => {
+            state
+                .owner
+                .activation_result(session, activate_target(target));
         }
-        GestureTransition::FinishWithAction { action } => {
-            queue_action(hs, action, 1);
-        }
-        GestureTransition::Replay(replay) => {
-            hs.pending_replay = Some(replay);
-            unsafe {
-                PostThreadMessageW(GetCurrentThreadId(), WM_REPLAY_OPERATION, 0, 0);
+        ActionWork::Dispatch {
+            session,
+            generation,
+            action,
+            repeat,
+        } => {
+            if repeat == 0 {
+                state.owner.action_failed_before_injection(session);
+                return;
+            }
+            let Some(runtime) = state.owner.runtime(generation) else {
+                state.owner.executor_fault();
+                return;
+            };
+            state.owner.injection_started(session);
+            let complete = (0..repeat).all(|_| executor::execute(runtime.action(action)));
+            if complete {
+                state.owner.action_completed(session);
+            } else {
+                state.owner.action_failed_after_injection(session);
             }
         }
+        ActionWork::Replay {
+            trigger,
+            down_at,
+            up_at,
+            ..
+        } => replay_trigger(trigger, down_at, up_at),
     }
-
-    decision.disposition == Disposition::Suppress
 }
 
-fn queue_action(hs: &mut HookThreadState, action: ActionId, repeat: u16) {
-    let should_post = hs.pending_actions.is_empty();
-    hs.pending_actions.push_back((action, repeat));
-    if should_post {
-        unsafe {
-            PostThreadMessageW(GetCurrentThreadId(), WM_EXECUTE_ACTION, 0, 0);
+fn drain_renderer() {
+    HOOK_STATE.with(|cell| {
+        let mut state = cell.borrow_mut();
+        let Some(state) = state.as_mut() else {
+            return;
+        };
+        while let Some(work) = state.owner.pop_render() {
+            let delivered = match work {
+                RenderWork::Start {
+                    generation,
+                    session: _,
+                } => state.owner.runtime(generation).is_some_and(|runtime| {
+                    state.renderer.try_send(
+                        RendererRequest::Start {
+                            generation,
+                            runtime,
+                        },
+                        false,
+                    )
+                }),
+                RenderWork::Point { point, .. } => state.renderer.try_send(
+                    RendererRequest::Command {
+                        command: OverlayCommand::TrackPoint {
+                            x: point.x,
+                            y: point.y,
+                        },
+                        lossy: true,
+                    },
+                    true,
+                ),
+                RenderWork::Label { action, .. } => state
+                    .renderer
+                    .try_send(RendererRequest::Label { action }, true),
+                RenderWork::End { .. } => state.renderer.try_send(
+                    RendererRequest::Command {
+                        command: OverlayCommand::EndGesture,
+                        lossy: false,
+                    },
+                    false,
+                ),
+            };
+            if !delivered {
+                state.owner.renderer_fault();
+                break;
+            }
         }
+        signal_work(&mut state.owner, state.owner_tid);
+    });
+}
+
+fn update_context() {
+    HOOK_STATE.with(|cell| {
+        let mut state = cell.borrow_mut();
+        if let Some(state) = state.as_mut() {
+            state.owner.set_context(state.context.read());
+        }
+    });
+}
+
+fn handle_safety_timer() {
+    HOOK_STATE.with(|cell| {
+        let mut state = cell.borrow_mut();
+        if let Some(state) = state.as_mut() {
+            let tick = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount() };
+            state.owner.safety_timer(tick);
+            signal_work(&mut state.owner, state.owner_tid);
+        }
+    });
+    drain_actions();
+    drain_renderer();
+}
+
+fn spawn_context_worker(
+    reader: ConfigSnapshotReader,
+    owner_tid: u32,
+    mailbox: Arc<ContextMailbox>,
+    stop: Arc<AtomicBool>,
+) -> std::io::Result<JoinHandle<Result<(), HookFailure>>> {
+    thread::Builder::new()
+        .name("input-context".to_string())
+        .spawn(move || {
+            let mut last_signature = None;
+            let mut last_publish_tick = 0_u32;
+            while !stop.load(Ordering::Acquire) {
+                #[cfg(debug_assertions)]
+                if test_failure_marker_exists("ZG_P03C_TEST_CONTEXT_FAILURE_MARKER") {
+                    return Err(HookFailure::new("context", "fault injected"));
+                }
+                let context = resolve_context(&reader);
+                let tick = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount() };
+                let signature = context.map(|context| {
+                    (
+                        context.generation,
+                        context.binding_set.index(),
+                        context.target.0,
+                        context.point,
+                    )
+                });
+                if signature != last_signature
+                    || tick.wrapping_sub(last_publish_tick) >= CONTEXT_PUBLISH_PERIOD_MS
+                {
+                    mailbox.publish(context);
+                    unsafe {
+                        PostThreadMessageW(owner_tid, WM_CONTEXT_READY, 0, 0);
+                    }
+                    last_signature = signature;
+                    last_publish_tick = tick;
+                }
+                thread::sleep(Duration::from_millis(CONTEXT_SAMPLE_PERIOD_MS));
+            }
+            Ok(())
+        })
+}
+
+fn resolve_context(reader: &ConfigSnapshotReader) -> Option<ContextView> {
+    let snapshot = reader.read()?;
+    if !snapshot.enabled {
+        return None;
+    }
+    let mut cursor = POINT { x: 0, y: 0 };
+    if unsafe { GetCursorPos(&mut cursor) } == 0 {
+        return None;
+    }
+    let sampled_tick = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount() };
+    let target = top_level_window(cursor)?;
+    let info = crate::window_info::get_window_info_by_hwnd(target);
+    let binding_set = snapshot
+        .match_windows_app(&info)
+        .unwrap_or_else(|| snapshot.default_binding_set());
+    let resolved_tick = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount() };
+    if !context_resolution_is_fresh(sampled_tick, resolved_tick) {
+        return None;
+    }
+    Some(ContextView {
+        generation: snapshot.generation(),
+        binding_set,
+        target: TargetToken(target as usize as u64),
+        point: Point::new(cursor.x, cursor.y),
+        updated_tick: sampled_tick,
+    })
+}
+
+fn context_resolution_is_fresh(sampled_tick: u32, resolved_tick: u32) -> bool {
+    resolved_tick.wrapping_sub(sampled_tick) <= CONTEXT_MAX_AGE_MS
+}
+
+#[cfg(debug_assertions)]
+fn test_failure_marker_exists(variable: &str) -> bool {
+    std::env::var_os(variable).is_some_and(|path| std::path::Path::new(&path).exists())
+}
+
+fn top_level_window(point: POINT) -> Option<HWND> {
+    let window = unsafe { WindowFromPoint(point) };
+    if window.is_null() {
+        return None;
+    }
+    let root = unsafe { GetAncestor(window, GA_ROOT) };
+    Some(if root.is_null() { window } else { root })
+}
+
+fn activate_target(target: TargetToken) -> bool {
+    let target = target.0 as usize as HWND;
+    !target.is_null() && unsafe { SetForegroundWindow(target) } != 0
+}
+
+fn replay_trigger(trigger: TriggerButton, down_at: Point, up_at: Point) {
+    let (down_x, down_y) = screen_to_absolute(down_at.x, down_at.y);
+    let (up_x, up_y) = screen_to_absolute(up_at.x, up_at.y);
+    let base = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
+    let inputs = [
+        make_mouse_input(down_x, down_y, base | trigger_down_flag(trigger)),
+        make_mouse_input(up_x, up_y, base | trigger_up_flag(trigger)),
+    ];
+    let sent = unsafe {
+        SendInput(
+            inputs.len() as u32,
+            inputs.as_ptr(),
+            std::mem::size_of::<INPUT>() as i32,
+        )
+    };
+    if sent != inputs.len() as u32 {
+        warn!("trigger replay was partial ({sent}/{})", inputs.len());
     }
 }
 
-/// Convert Win32 mouse message IDs into hook-level [`MouseEvent`].
-fn to_mouse_event(msg: u32, info: &MSLLHOOKSTRUCT) -> MouseEvent {
-    match msg {
+fn to_mouse_event(message: u32, mouse_data: u32) -> MouseEvent {
+    match message {
         WM_LBUTTONDOWN => MouseEvent::ButtonDown(TriggerButton::Left),
         WM_RBUTTONDOWN => MouseEvent::ButtonDown(TriggerButton::Right),
         WM_MBUTTONDOWN => MouseEvent::ButtonDown(TriggerButton::Middle),
@@ -297,133 +821,33 @@ fn to_mouse_event(msg: u32, info: &MSLLHOOKSTRUCT) -> MouseEvent {
         WM_MBUTTONUP => MouseEvent::ButtonUp(TriggerButton::Middle),
         WM_MOUSEMOVE => MouseEvent::MouseMove,
         WM_MOUSEWHEEL => {
-            let delta = wheel_delta(info.mouseData);
-            let steps = wheel_steps(delta);
-            if delta > 0 {
-                MouseEvent::WheelUp(steps)
-            } else if delta < 0 {
-                MouseEvent::WheelDown(steps)
-            } else {
-                MouseEvent::Other
+            let delta = wheel_delta(mouse_data);
+            match delta.cmp(&0) {
+                std::cmp::Ordering::Greater => MouseEvent::WheelUp(wheel_steps(delta)),
+                std::cmp::Ordering::Less => MouseEvent::WheelDown(wheel_steps(delta)),
+                std::cmp::Ordering::Equal => MouseEvent::Other,
             }
         }
         _ => MouseEvent::Other,
     }
 }
 
-/// Extract signed wheel delta from `MSLLHOOKSTRUCT::mouseData`.
 fn wheel_delta(mouse_data: u32) -> i16 {
     ((mouse_data >> 16) & 0xFFFF) as i16
 }
 
-/// Convert wheel delta into positive notch count (`>= 1` when delta != 0).
 fn wheel_steps(delta: i16) -> u16 {
     const WHEEL_DELTA: u16 = 120;
     if delta == 0 {
         return 0;
     }
-    let raw = delta.unsigned_abs();
-    let steps = raw / WHEEL_DELTA;
-    steps.max(1)
-}
-
-/// Safety timer handler.
-///
-/// Resets stuck gesture state back to `Idle`. If a gesture was in progress,
-/// sends [`OverlayCommand::EndGesture`] to ensure overlay cleanup.
-fn handle_safety_timer() {
-    HOOK_STATE.with(|cell| {
-        let mut borrow = cell.borrow_mut();
-        let hs = match borrow.as_mut() {
-            Some(hs) => hs,
-            None => return,
-        };
-
-        let tick = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount() };
-        let decision = hs.machine.handle(GestureInput::SafetyTimer { tick });
-        if decision.transition == GestureTransition::Cancel {
-            warn!("Safety timer: resetting stuck state to Idle");
-        }
-        apply_decision(hs, decision);
-    });
-}
-
-/// Execute pending action from `WM_EXECUTE_ACTION`.
-fn handle_execute_action() {
-    let actions = HOOK_STATE.with(|cell| {
-        let mut borrow = cell.borrow_mut();
-        let Some(hs) = borrow.as_mut() else {
-            return Vec::new();
-        };
-        hs.pending_actions.drain(..).collect::<Vec<_>>()
-    });
-
-    for (action, repeat) in actions {
-        for _ in 0..usize::from(repeat) {
-            let action = HOOK_STATE.with(|cell| {
-                let borrow = cell.borrow();
-                borrow
-                    .as_ref()
-                    .map(|state| state.runtime.action(action).clone())
-            });
-            if let Some(action) = action {
-                debug!("Executing bound action: {:?}", action);
-                executor::execute(&action);
-            }
-        }
-    }
-}
-
-/// Replay suppressed trigger-button operation via `SendInput`.
-///
-/// Replays:
-/// - trigger button down at captured press position
-/// - trigger button up at captured release position
-///
-/// Both events use absolute virtual-desktop coordinates so behavior remains
-/// correct on multi-monitor setups.
-fn handle_replay_operation() {
-    let replay = HOOK_STATE.with(|cell| {
-        let mut borrow = cell.borrow_mut();
-        borrow.as_mut().and_then(|hs| hs.pending_replay.take())
-    });
-
-    if let Some(replay) = replay {
-        let (down_x, down_y) = screen_to_absolute(replay.down_at.x, replay.down_at.y);
-        let (up_x, up_y) = screen_to_absolute(replay.up_at.x, replay.up_at.y);
-        let base = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
-        let inputs = [
-            make_mouse_input(down_x, down_y, base | trigger_down_flag(replay.trigger)),
-            make_mouse_input(up_x, up_y, base | trigger_up_flag(replay.trigger)),
-        ];
-
-        let sent = unsafe {
-            SendInput(
-                inputs.len() as u32,
-                inputs.as_ptr(),
-                std::mem::size_of::<INPUT>() as i32,
-            )
-        };
-        if sent < inputs.len() as u32 {
-            warn!(
-                "SendInput replay was partial (sent {sent}/{}) for trigger {:?}",
-                inputs.len(),
-                replay.trigger
-            );
-        } else {
-            debug!(
-                "Replayed trigger operation {:?} down_at=({}, {}), up_at=({}, {})",
-                replay.trigger, replay.down_at.x, replay.down_at.y, replay.up_at.x, replay.up_at.y
-            );
-        }
-    }
+    (delta.unsigned_abs() / WHEEL_DELTA).max(1)
 }
 
 fn trigger_down_flag(trigger: TriggerButton) -> u32 {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
         MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_RIGHTDOWN,
     };
-
     match trigger {
         TriggerButton::Left => MOUSEEVENTF_LEFTDOWN,
         TriggerButton::Right => MOUSEEVENTF_RIGHTDOWN,
@@ -435,7 +859,6 @@ fn trigger_up_flag(trigger: TriggerButton) -> u32 {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
         MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_RIGHTUP,
     };
-
     match trigger {
         TriggerButton::Left => MOUSEEVENTF_LEFTUP,
         TriggerButton::Right => MOUSEEVENTF_RIGHTUP,
@@ -443,30 +866,26 @@ fn trigger_up_flag(trigger: TriggerButton) -> u32 {
     }
 }
 
-/// Convert screen coordinates to `SendInput` absolute virtual-desktop space.
 fn screen_to_absolute(x: i32, y: i32) -> (i32, i32) {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
         SM_YVIRTUALSCREEN,
     };
-
     unsafe {
         let vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
         let vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
-        let vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-        let vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-
-        if vw == 0 || vh == 0 {
+        let width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        let height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        if width == 0 || height == 0 {
             return (0, 0);
         }
-
-        let ax = ((x - vx) as i64 * 65536 / vw as i64) as i32;
-        let ay = ((y - vy) as i64 * 65536 / vh as i64) as i32;
-        (ax, ay)
+        (
+            ((x - vx) as i64 * 65_536 / width as i64) as i32,
+            ((y - vy) as i64 * 65_536 / height as i64) as i32,
+        )
     }
 }
 
-/// Build one mouse `INPUT` event at absolute coordinates with custom flags.
 fn make_mouse_input(x: i32, y: i32, flags: u32) -> INPUT {
     INPUT {
         r#type: INPUT_MOUSE,
@@ -483,32 +902,12 @@ fn make_mouse_input(x: i32, y: i32, flags: u32) -> INPUT {
     }
 }
 
-/// Activate (bring to foreground) the top-level window at the given screen
-/// coordinates.
-///
-/// Uses [`WindowFromPoint`] to locate the window under cursor, resolves a
-/// top-level window via [`GetAncestor`] (`GA_ROOT`), and requests activation
-/// with [`SetForegroundWindow`].
-fn activate_window_at_point(x: i32, y: i32) -> Option<windows_sys::Win32::Foundation::HWND> {
-    use windows_sys::Win32::Foundation::POINT;
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetAncestor, SetForegroundWindow, WindowFromPoint, GA_ROOT,
-    };
+fn pack_point(point: Point) -> u64 {
+    u64::from(point.x as u32) << 32 | u64::from(point.y as u32)
+}
 
-    unsafe {
-        let hwnd = WindowFromPoint(POINT { x, y });
-        if hwnd.is_null() {
-            debug!("activate_window_at_point: no window at ({x}, {y})");
-            return None;
-        }
-
-        let root = GetAncestor(hwnd, GA_ROOT);
-        let target = if root.is_null() { hwnd } else { root };
-
-        debug!("activate_window_at_point: activating window {target:?} at ({x}, {y})");
-        let _ = SetForegroundWindow(target);
-        Some(target)
-    }
+fn unpack_point(point: u64) -> Point {
+    Point::new((point >> 32) as u32 as i32, point as u32 as i32)
 }
 
 #[cfg(test)]
@@ -521,7 +920,7 @@ mod tests {
 
     #[test]
     fn wheel_translation_preserves_sign_and_notch_count() {
-        assert_eq!(wheel_delta((240_u32) << 16), 240);
+        assert_eq!(wheel_delta(240_u32 << 16), 240);
         assert_eq!(wheel_steps(240), 2);
         assert_eq!(wheel_delta(((-120_i16) as u16 as u32) << 16), -120);
         assert_eq!(wheel_steps(-120), 1);
@@ -541,5 +940,139 @@ mod tests {
             MOUSEEVENTF_MIDDLEDOWN
         );
         assert_eq!(trigger_up_flag(TriggerButton::Middle), MOUSEEVENTF_MIDDLEUP);
+    }
+
+    #[test]
+    fn context_mailbox_keeps_only_the_latest_complete_value() {
+        let mailbox = ContextMailbox::new();
+        mailbox.publish(Some(ContextView {
+            generation: 7,
+            binding_set: BindingSetId::from_index(3).unwrap(),
+            target: TargetToken(41),
+            point: Point::new(-10, 20),
+            updated_tick: 99,
+        }));
+        mailbox.publish(None);
+        assert!(mailbox.read().is_none());
+    }
+
+    #[test]
+    fn delayed_context_resolution_is_rejected_as_stale() {
+        assert!(context_resolution_is_fresh(1_000, 1_100));
+        assert!(!context_resolution_is_fresh(1_000, 1_101));
+        assert!(context_resolution_is_fresh(u32::MAX - 50, 49));
+    }
+
+    #[test]
+    fn concurrent_context_mailbox_reads_never_observe_torn_fields() {
+        let mailbox = Arc::new(ContextMailbox::new());
+        let first = ContextView {
+            generation: 11,
+            binding_set: BindingSetId::from_index(1).unwrap(),
+            target: TargetToken(101),
+            point: Point::new(1_001, -1_001),
+            updated_tick: 1_011,
+        };
+        let second = ContextView {
+            generation: 22,
+            binding_set: BindingSetId::from_index(2).unwrap(),
+            target: TargetToken(202),
+            point: Point::new(2_002, -2_002),
+            updated_tick: 2_022,
+        };
+        mailbox.publish(Some(first));
+        let writer_mailbox = Arc::clone(&mailbox);
+        let writer = thread::spawn(move || {
+            for index in 0..50_000 {
+                writer_mailbox.publish(Some(if index % 2 == 0 { second } else { first }));
+            }
+        });
+        for _ in 0..50_000 {
+            if let Some(value) = mailbox.read() {
+                let complete_first = value.generation == first.generation
+                    && value.binding_set == first.binding_set
+                    && value.target == first.target
+                    && value.point == first.point
+                    && value.updated_tick == first.updated_tick;
+                let complete_second = value.generation == second.generation
+                    && value.binding_set == second.binding_set
+                    && value.target == second.target
+                    && value.point == second.point
+                    && value.updated_tick == second.updated_tick;
+                assert!(complete_first || complete_second);
+            }
+        }
+        writer.join().unwrap();
+    }
+
+    #[test]
+    fn renderer_lifecycle_backpressure_never_blocks_the_hook_thread() {
+        let (sender, requests) = bounded(1);
+        assert!(sender.try_send(RendererRequest::Shutdown).is_ok());
+        let (_status_tx, status) = bounded(1);
+        let client = RendererClient {
+            sender,
+            status,
+            handle: None,
+            terminal_reserved: false,
+        };
+        let started = std::time::Instant::now();
+
+        let mut client = client;
+        assert!(!client.try_send(RendererRequest::Shutdown, false));
+        assert!(started.elapsed() < Duration::from_millis(50));
+        drop(requests);
+    }
+
+    #[test]
+    fn renderer_owner_queue_reserves_terminal_during_lossy_saturation() {
+        let (sender, requests) = bounded(RENDERER_QUEUE_CAPACITY);
+        let (_status_tx, status) = bounded(1);
+        let mut client = RendererClient {
+            sender,
+            status,
+            handle: None,
+            terminal_reserved: false,
+        };
+        let runtime =
+            crate::config::ActiveConfig::from_document(crate::config::ConfigDocument::default())
+                .unwrap()
+                .runtime();
+
+        assert!(client.try_send(
+            RendererRequest::Start {
+                generation: ConfigGeneration(1),
+                runtime,
+            },
+            false,
+        ));
+        for index in 0..RENDERER_QUEUE_CAPACITY {
+            assert!(client.try_send(
+                RendererRequest::Command {
+                    command: OverlayCommand::TrackPoint {
+                        x: index as i32,
+                        y: 0,
+                    },
+                    lossy: true,
+                },
+                true,
+            ));
+        }
+        assert_eq!(requests.len(), RENDERER_QUEUE_CAPACITY - 1);
+        assert!(client.try_send(
+            RendererRequest::Command {
+                command: OverlayCommand::EndGesture,
+                lossy: false,
+            },
+            false,
+        ));
+        assert_eq!(requests.len(), RENDERER_QUEUE_CAPACITY);
+        assert!(matches!(
+            requests.try_iter().last(),
+            Some(RendererRequest::Command {
+                command: OverlayCommand::EndGesture,
+                ..
+            })
+        ));
     }
 }

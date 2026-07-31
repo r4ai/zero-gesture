@@ -102,6 +102,10 @@ impl RuntimeConfig {
     pub(crate) fn action_label(&self, id: ActionId) -> &str {
         &self.actions[id.index()].label
     }
+
+    pub(crate) fn default_binding_set(&self) -> BindingSetId {
+        self.gesture.default_binding_set
+    }
 }
 
 pub(crate) fn compile(document: &ConfigDocument) -> Result<RuntimeConfig, ConfigError> {
