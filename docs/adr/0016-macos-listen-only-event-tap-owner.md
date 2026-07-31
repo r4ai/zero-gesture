@@ -32,10 +32,12 @@ readiness and stays alive until the normal Engine stop signal.
 
 ### Pass-through and callback contract
 
-The tap is created with `kCGEventTapOptionListenOnly`. P04b2 therefore cannot
-suppress, replace, or inject input. The callback always returns the exact
-event reference supplied by Core Graphics, including timeout/user-input
-disable notifications and overload.
+One private event-tap specification supplies both options and the exact mouse
+mask to production creation and deterministic tests. Its options value is
+`kCGEventTapOptionListenOnly`; P04b2 therefore cannot suppress, replace, or
+inject input. The callback always returns the exact event reference supplied
+by Core Graphics, including timeout/user-input disable notifications and
+overload.
 
 The callback may only:
 
@@ -85,8 +87,10 @@ events, handle one coalesced re-enable request, and observe the Engine stop
 atomic. Only `kCFRunLoopRunTimedOut` continues that loop normally. A finished,
 stopped, handled-source, or unknown result first destroys the tap resources,
 then observes the stop atomic in the same bounded degraded wait without
-publishing readiness again. Degraded startup owners observe the same stop
-atomic at the same bound.
+publishing readiness again. Production and its live lifecycle test share this
+private owner step; the test observes resource destruction before a
+`false`-to-`true` bounded stop and join. Degraded startup owners observe the
+same stop atomic at the same bound.
 
 Shutdown sets the stop atomic before Windows-specific wakeup handling. The
 macOS owner drains accepted events, disables and invalidates the tap, removes
@@ -98,7 +102,7 @@ restarted or synchronized from the callback.
 
 `contracts/p04b2-macos-event-tap-owner.json` maps eight independently
 falsifiable obligations to eight uniquely named macOS tests:
-`O = 8`, `O_v = 8`, `U = 0`, `T = 8`, `T_u = 7`, `T_i = 1`, `T_e = 0`,
+`O = 8`, `O_v = 8`, `U = 0`, `T = 8`, `T_u = 6`, `T_i = 2`, `T_e = 0`,
 `T_r = 0`, `P = 0`, `D = 0`, and `F = 0`.
 
 The Apple Silicon macOS CI job compiles every target with Clippy, runs the
@@ -107,11 +111,11 @@ builds the ad-hoc signed application, and reruns the existing packaged
 same-executable/UDS gates. Windows format, Clippy, tests, rustdoc, contracts,
 frontend checks, and Tauri build remain regression gates.
 
-Deterministic core tests cover raw-field normalization, queue behavior,
-run-loop result classification, and both degraded-startup dispatch paths. They
-do not prove an actual permission denial, real `CGEvent` injection, or live
-Mach-port/source invalidation in non-interactive CI; those OS-boundary cases
-remain manual integration evidence.
+Deterministic core tests cover raw-field normalization, queue behavior, the
+exact production tap specification, the non-timeout owner step, and both
+degraded-startup dispatch paths. They do not prove an actual permission denial,
+real `CGEvent` injection, or live Mach-port/source invalidation in
+non-interactive CI; those OS-boundary cases remain manual integration evidence.
 
 ## Deferrals
 

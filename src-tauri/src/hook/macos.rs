@@ -130,6 +130,12 @@ struct NormalizedInput {
     timestamp_ns: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct EventTapSpec {
+    options: u32,
+    mask: u64,
+}
+
 #[derive(Clone, Copy)]
 struct RawInput {
     event_type: u32,
@@ -376,6 +382,11 @@ fn wait_for_stop(stop: &AtomicBool) {
     }
 }
 
+fn run_non_timeout_owner_step<R>(stop: &AtomicBool, resources: R) {
+    drop(resources);
+    wait_for_stop(stop);
+}
+
 #[cfg(target_os = "macos")]
 fn run_active(
     stop: Arc<AtomicBool>,
@@ -389,9 +400,7 @@ fn run_active(
             unsafe { CFRunLoopRunInMode(kCFRunLoopDefaultMode, RUN_LOOP_SLICE_SECONDS, false) };
         if classify_run_loop_result(result) == RunLoopDisposition::Degrade {
             state.drain();
-            drop(resources);
-            drop(state);
-            wait_for_stop(&stop);
+            run_non_timeout_owner_step(&stop, (resources, state));
             return Ok(());
         }
         state.drain();
@@ -421,11 +430,12 @@ unsafe fn start_event_tap(state: &TapState) -> StartupMode {
     if !CGPreflightListenEventAccess() {
         return StartupMode::PermissionDenied;
     }
+    let spec = event_tap_spec();
     let tap = CGEventTapCreate(
         SESSION_EVENT_TAP,
         HEAD_INSERT_EVENT_TAP,
-        LISTEN_ONLY_EVENT_TAP,
-        mouse_event_mask(),
+        spec.options,
+        spec.mask,
         Some(event_tap_callback),
         ptr::from_ref(state).cast_mut().cast(),
     );
@@ -521,18 +531,21 @@ fn scroll_steps(delta: i64) -> u16 {
     delta.unsigned_abs().min(u64::from(u16::MAX)) as u16
 }
 
-const fn mouse_event_mask() -> u64 {
-    event_mask(EVENT_LEFT_MOUSE_DOWN)
-        | event_mask(EVENT_LEFT_MOUSE_UP)
-        | event_mask(EVENT_RIGHT_MOUSE_DOWN)
-        | event_mask(EVENT_RIGHT_MOUSE_UP)
-        | event_mask(EVENT_MOUSE_MOVED)
-        | event_mask(EVENT_LEFT_MOUSE_DRAGGED)
-        | event_mask(EVENT_RIGHT_MOUSE_DRAGGED)
-        | event_mask(EVENT_SCROLL_WHEEL)
-        | event_mask(EVENT_OTHER_MOUSE_DOWN)
-        | event_mask(EVENT_OTHER_MOUSE_UP)
-        | event_mask(EVENT_OTHER_MOUSE_DRAGGED)
+const fn event_tap_spec() -> EventTapSpec {
+    EventTapSpec {
+        options: LISTEN_ONLY_EVENT_TAP,
+        mask: event_mask(EVENT_LEFT_MOUSE_DOWN)
+            | event_mask(EVENT_LEFT_MOUSE_UP)
+            | event_mask(EVENT_RIGHT_MOUSE_DOWN)
+            | event_mask(EVENT_RIGHT_MOUSE_UP)
+            | event_mask(EVENT_MOUSE_MOVED)
+            | event_mask(EVENT_LEFT_MOUSE_DRAGGED)
+            | event_mask(EVENT_RIGHT_MOUSE_DRAGGED)
+            | event_mask(EVENT_SCROLL_WHEEL)
+            | event_mask(EVENT_OTHER_MOUSE_DOWN)
+            | event_mask(EVENT_OTHER_MOUSE_UP)
+            | event_mask(EVENT_OTHER_MOUSE_DRAGGED),
+    }
 }
 
 const fn event_mask(event_type: u32) -> u64 {
@@ -543,6 +556,14 @@ const fn event_mask(event_type: u32) -> u64 {
 mod tests {
     use super::*;
     use crate::domain::input::tests::count_allocations;
+
+    struct DropRecorder(Sender<()>);
+
+    impl Drop for DropRecorder {
+        fn drop(&mut self) {
+            self.0.send(()).unwrap();
+        }
+    }
 
     #[test]
     fn callback_core_normalizes_mouse_input_without_allocating() {
@@ -733,23 +754,26 @@ mod tests {
     }
 
     #[test]
-    fn listen_only_mask_contains_every_supported_mouse_event() {
-        assert_eq!(LISTEN_ONLY_EVENT_TAP, 1);
-        for event_type in [
-            EVENT_LEFT_MOUSE_DOWN,
-            EVENT_LEFT_MOUSE_UP,
-            EVENT_RIGHT_MOUSE_DOWN,
-            EVENT_RIGHT_MOUSE_UP,
-            EVENT_MOUSE_MOVED,
-            EVENT_LEFT_MOUSE_DRAGGED,
-            EVENT_RIGHT_MOUSE_DRAGGED,
-            EVENT_SCROLL_WHEEL,
-            EVENT_OTHER_MOUSE_DOWN,
-            EVENT_OTHER_MOUSE_UP,
-            EVENT_OTHER_MOUSE_DRAGGED,
-        ] {
-            assert_ne!(mouse_event_mask() & event_mask(event_type), 0);
-        }
+    fn event_tap_spec_is_exactly_listen_only_mouse_observation() {
+        let expected_mask = event_mask(EVENT_LEFT_MOUSE_DOWN)
+            | event_mask(EVENT_LEFT_MOUSE_UP)
+            | event_mask(EVENT_RIGHT_MOUSE_DOWN)
+            | event_mask(EVENT_RIGHT_MOUSE_UP)
+            | event_mask(EVENT_MOUSE_MOVED)
+            | event_mask(EVENT_LEFT_MOUSE_DRAGGED)
+            | event_mask(EVENT_RIGHT_MOUSE_DRAGGED)
+            | event_mask(EVENT_SCROLL_WHEEL)
+            | event_mask(EVENT_OTHER_MOUSE_DOWN)
+            | event_mask(EVENT_OTHER_MOUSE_UP)
+            | event_mask(EVENT_OTHER_MOUSE_DRAGGED);
+
+        assert_eq!(
+            event_tap_spec(),
+            EventTapSpec {
+                options: 1,
+                mask: expected_mask,
+            }
+        );
     }
 
     #[test]
@@ -779,7 +803,7 @@ mod tests {
     }
 
     #[test]
-    fn run_loop_result_classification_degrades_finished_and_unexpected_results() {
+    fn non_timeout_owner_step_drops_resources_waits_and_does_not_republish_ready() {
         assert_eq!(
             classify_run_loop_result(RUN_LOOP_TIMED_OUT),
             RunLoopDisposition::Continue
@@ -795,5 +819,30 @@ mod tests {
                 RunLoopDisposition::Degrade
             );
         }
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let (events, receiver) = crossbeam_channel::bounded(2);
+        let (dropped, drop_observed) = crossbeam_channel::bounded(1);
+        let (completed, completion) = crossbeam_channel::bounded(1);
+        let thread_stop = Arc::clone(&stop);
+        let handle = thread::spawn(move || {
+            publish_ready(&events).unwrap();
+            run_non_timeout_owner_step(&thread_stop, DropRecorder(dropped));
+            completed.send(()).unwrap();
+        });
+
+        assert!(matches!(
+            receiver.recv_timeout(Duration::from_millis(100)),
+            Ok(HookEvent::Ready(1))
+        ));
+        drop_observed
+            .recv_timeout(Duration::from_millis(100))
+            .unwrap();
+        assert!(receiver.try_recv().is_err());
+        assert!(!handle.is_finished());
+        stop.store(true, Ordering::Release);
+        completion.recv_timeout(Duration::from_millis(100)).unwrap();
+        handle.join().unwrap();
+        assert!(receiver.try_recv().is_err());
     }
 }

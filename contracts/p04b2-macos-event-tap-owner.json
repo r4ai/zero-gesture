@@ -40,7 +40,7 @@
       "obligation": "The CGEventTap is listen-only and subscribes only to the supported mouse-event mask, so P04b2 cannot suppress physical input.",
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/hook/macos.rs",
-      "evidence_name": "listen_only_mask_contains_every_supported_mouse_event"
+      "evidence_name": "event_tap_spec_is_exactly_listen_only_mouse_observation"
     },
     {
       "id": "P04B2-LIFECYCLE-001",
@@ -51,10 +51,10 @@
     },
     {
       "id": "P04B2-LIFECYCLE-002",
-      "obligation": "Only a timed-out CFRunLoop slice continues normally; finished and unexpected results select the degraded transition.",
+      "obligation": "Only a timed-out CFRunLoop slice continues normally; non-timeout handling drops active resources and waits for bounded Engine stop without republishing readiness.",
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/hook/macos.rs",
-      "evidence_name": "run_loop_result_classification_degrades_finished_and_unexpected_results"
+      "evidence_name": "non_timeout_owner_step_drops_resources_waits_and_does_not_republish_ready"
     }
   ]
 }
