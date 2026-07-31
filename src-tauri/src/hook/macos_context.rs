@@ -524,8 +524,9 @@ unsafe fn native_observation() -> Result<NativeObservation, ResolveFailure> {
     let _pool = AutoreleasePool::new()?;
     let (pid, process, process_name, bundle_identifier) = frontmost_process()?;
     let window = focused_window(pid)?;
+    let title_attribute = create_cf_string(b"AXTitle")?;
     let title_value =
-        copy_ax_attribute(window.0.cast_mut(), kAXTitleAttribute, CFStringGetTypeID())?;
+        copy_ax_attribute(window.0.cast_mut(), title_attribute.0, CFStringGetTypeID())?;
     let title = copy_cf_string(title_value.0)?;
     let window_hash = CFHash(window.0) as u64;
     verify_frontmost_identity(pid, process)?;
@@ -567,9 +568,10 @@ unsafe fn focused_window(pid: i32) -> Result<OwnedCf, ResolveFailure> {
         ax_application.0.cast_mut(),
         AX_MESSAGING_TIMEOUT_SECONDS,
     ))?;
+    let focused_window_attribute = create_cf_string(b"AXFocusedWindow")?;
     let window = copy_ax_attribute(
         ax_application.0.cast_mut(),
-        kAXFocusedWindowAttribute,
+        focused_window_attribute.0,
         AXUIElementGetTypeID(),
     )?;
     require_ax(AXUIElementSetMessagingTimeout(
@@ -595,6 +597,22 @@ unsafe fn verify_frontmost_identity(
         return Err(ResolveFailure::TargetExited);
     }
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn create_cf_string(bytes: &[u8]) -> Result<OwnedCf, ResolveFailure> {
+    let value = CFStringCreateWithBytes(
+        std::ptr::null(),
+        bytes.as_ptr(),
+        bytes.len() as isize,
+        0x0800_0100,
+        0,
+    );
+    if value.is_null() {
+        Err(ResolveFailure::InvalidData)
+    } else {
+        Ok(OwnedCf(value))
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -769,9 +787,6 @@ extern "C" {
 #[cfg(target_os = "macos")]
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
-    static kAXFocusedWindowAttribute: *const std::ffi::c_void;
-    static kAXTitleAttribute: *const std::ffi::c_void;
-
     fn AXIsProcessTrustedWithOptions(options: *const std::ffi::c_void) -> u8;
     fn AXUIElementCreateApplication(pid: i32) -> *mut std::ffi::c_void;
     fn AXUIElementSetMessagingTimeout(element: *mut std::ffi::c_void, seconds: f32) -> i32;
@@ -802,6 +817,13 @@ extern "C" {
         max_buffer_length: isize,
         used_buffer_length: *mut isize,
     ) -> isize;
+    fn CFStringCreateWithBytes(
+        allocator: *const std::ffi::c_void,
+        bytes: *const u8,
+        length: isize,
+        encoding: u32,
+        external_representation: u8,
+    ) -> *const std::ffi::c_void;
 }
 
 #[cfg(test)]
