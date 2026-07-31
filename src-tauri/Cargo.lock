@@ -5002,6 +5002,7 @@ name = "zero-gesture"
 version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
+ "libc",
  "log",
  "regex",
  "serde",

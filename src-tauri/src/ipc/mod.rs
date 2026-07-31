@@ -2,14 +2,22 @@ mod protocol;
 
 pub use protocol::EngineStatus;
 
+#[cfg(any(windows, target_os = "macos"))]
+mod core;
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
-pub(crate) use windows::{ConfigApplyResult, ConfigObservation};
-#[cfg(windows)]
-pub use windows::{ControlError, EngineControl, EngineServer, ServerExit};
+use windows as platform;
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(any(windows, target_os = "macos"))]
+pub(crate) use core::{ConfigApplyResult, ConfigObservation};
+#[cfg(any(windows, target_os = "macos"))]
+pub use core::{ControlError, EngineControl, EngineServer, ServerExit};
+#[cfg(target_os = "macos")]
+use macos as platform;
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 mod unsupported {
     use super::EngineStatus;
     use crate::config::ConfigDocument;
@@ -91,7 +99,7 @@ mod unsupported {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub(crate) use unsupported::EngineControl;
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub(crate) use unsupported::{ConfigApplyResult, ConfigObservation};

@@ -47,6 +47,13 @@ const MANIFESTS = [
     idDescription:
       "P04A-TARGET-NNN, P04A-IDENTITY-NNN, P04A-BUNDLE-NNN, P04A-SIGNING-NNN, or P04A-PROCESS-NNN",
   },
+  {
+    label: "P04b1",
+    path: "contracts/p04b1-macos-uds-control.json",
+    idPattern: /^P04B1-(?:ENDPOINT|PEER|IPC|CONFIG|PROCESS)-\d{3}$/,
+    idDescription:
+      "P04B1-ENDPOINT-NNN, P04B1-PEER-NNN, P04B1-IPC-NNN, P04B1-CONFIG-NNN, or P04B1-PROCESS-NNN",
+  },
 ]
 const REPO_ROOT = path.resolve(fileURLToPath(new URL("../..", import.meta.url)))
 

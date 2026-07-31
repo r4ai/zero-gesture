@@ -18,11 +18,11 @@ pub use document::{
 };
 
 pub(crate) use compile::RuntimeConfig;
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "macos", test))]
 pub(crate) use owner::ConfigOwner;
 pub(crate) use owner::MAX_CONFIG_BYTES;
-#[cfg(windows)]
-pub(crate) use owner::{ConfigOwnerError, ConfigOwnerStatus, PreparedToken};
+#[cfg(any(windows, target_os = "macos"))]
+pub(crate) use owner::{AppliedConfig, ConfigOwnerError, ConfigOwnerStatus, PreparedToken};
 pub(crate) use publication::ConfigSnapshotReader;
 
 const CONFIG_FILE_NAME: &str = "zero-gesture.config.json";

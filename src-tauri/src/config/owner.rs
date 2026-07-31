@@ -239,6 +239,32 @@ impl ConfigOwner {
         )
     }
 
+    pub(crate) fn set_enabled(
+        &mut self,
+        session: u64,
+        expected_revision: u64,
+        enabled: bool,
+        now: Instant,
+    ) -> Result<AppliedConfig, ConfigOwnerError> {
+        let mut document = self
+            .active
+            .as_ref()
+            .ok_or(ConfigOwnerError::ValidationFailed)?
+            .document()
+            .clone();
+        document.shared.enabled = enabled;
+        let bytes =
+            serde_json::to_vec(&document).map_err(|_| ConfigOwnerError::ValidationFailed)?;
+        let prepared = self.prepare(session, expected_revision, &bytes, now)?;
+        self.commit(
+            session,
+            prepared.token,
+            prepared.base_revision,
+            prepared.base_generation,
+            now,
+        )
+    }
+
     fn commit_with(
         &mut self,
         session: u64,

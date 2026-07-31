@@ -168,13 +168,12 @@ fn handle_toggle<R: Runtime>(app: &AppHandle<R>) {
             return;
         }
     };
-    let Some(mut new_config) = current.config else {
+    let Some(config) = current.config else {
         warn!("configuration unavailable in toggle handler");
         return;
     };
-    new_config.shared.enabled = !new_config.shared.enabled;
 
-    match control.apply_config(new_config, current.revision) {
+    match control.set_enabled(!config.shared.enabled, current.revision) {
         Ok(applied) => {
             if let Some(config) = applied.current.config {
                 sync_toggle_menu_label(app, config.shared.enabled);

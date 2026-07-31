@@ -65,6 +65,10 @@ pub enum Request {
         base_revision: u64,
         base_generation: u64,
     },
+    SetEnabled {
+        expected_revision: u64,
+        enabled: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -264,6 +268,15 @@ pub fn encode_request(envelope: &Envelope<Request>) -> Result<Vec<u8>, ProtocolE
             payload.extend_from_slice(&base_generation.to_le_bytes());
             (7, payload)
         }
+        Request::SetEnabled {
+            expected_revision,
+            enabled,
+        } => {
+            let mut payload = Vec::with_capacity(9);
+            payload.extend_from_slice(&expected_revision.to_le_bytes());
+            payload.push(u8::from(*enabled));
+            (8, payload)
+        }
     };
     encode_envelope(
         envelope.protocol_version,
@@ -310,6 +323,15 @@ pub fn decode_request(body: &[u8]) -> Result<Envelope<Request>, ProtocolError> {
                 token: cursor.u64()?,
                 base_revision: cursor.u64()?,
                 base_generation: cursor.u64()?,
+            };
+            cursor.finish()?;
+            request
+        }
+        8 => {
+            let mut cursor = Cursor::new(payload);
+            let request = Request::SetEnabled {
+                expected_revision: cursor.u64()?,
+                enabled: cursor.boolean()?,
             };
             cursor.finish()?;
             request
@@ -863,6 +885,21 @@ mod tests {
         assert_eq!(
             decode_response(&encode_response(&applied).unwrap(), 6).unwrap(),
             applied
+        );
+    }
+
+    #[test]
+    fn codec_roundtrips_set_enabled() {
+        let request = Envelope::current(
+            7,
+            Request::SetEnabled {
+                expected_revision: 4,
+                enabled: true,
+            },
+        );
+        assert_eq!(
+            decode_request(&encode_request(&request).unwrap()).unwrap(),
+            request
         );
     }
 

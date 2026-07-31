@@ -1,20 +1,19 @@
-use super::protocol::{
-    self, EngineStatus, Envelope, ErrorCode, ProcessRole, ProtocolError, Request, Response,
-    AUTH_SECRET_BYTES, CAPABILITIES, MAX_REQUESTS_PER_CONNECTION,
-};
-use crate::config::{self, ConfigOwner, ConfigOwnerError, ConfigOwnerStatus, PreparedToken};
+use super::core::{ControlError, ACCEPT_POLL_INTERVAL, IO_TIMEOUT};
+#[cfg(test)]
+use super::core::{EngineControl, EngineServer, Session};
+use super::protocol::AUTH_SECRET_BYTES;
+#[cfg(test)]
+use super::protocol::{self, Envelope, ErrorCode, ProtocolError, Request, Response};
 use std::ffi::OsStr;
-use std::fmt;
 use std::fs;
 use std::io::{self, Read, Write};
+use std::mem::size_of;
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::ptr::{null, null_mut};
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
+use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(test)]
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 use windows_sys::Win32::Foundation::{
@@ -51,698 +50,14 @@ use windows_sys::Win32::System::Threading::{
     WaitForSingleObject,
 };
 
-const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
-const CONFIG_SCHEMA_VERSION: u16 = 2;
-const IO_TIMEOUT: Duration = Duration::from_millis(750);
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
-const RETRY_INTERVAL: Duration = Duration::from_millis(40);
-const PIPE_POLL_INTERVAL: Duration = Duration::from_millis(2);
-const TERMINAL_RESPONSE_GRACE: Duration = Duration::from_millis(100);
+const PIPE_POLL_INTERVAL: Duration = ACCEPT_POLL_INTERVAL;
 const PIPE_BUFFER_BYTES: u32 = 64 * 1024;
 const PIPE_MODE: u32 =
     PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_NOWAIT | PIPE_REJECT_REMOTE_CLIENTS;
 #[cfg(debug_assertions)]
 const TEST_FAIL_FIRST_PIPE_ENV: &str = "ZG_P03_TEST_FAIL_FIRST_PIPE";
-
-#[derive(Debug)]
-pub enum ControlError {
-    Unavailable,
-    EndpointBusy,
-    Timeout,
-    SpawnFailed(io::Error),
-    Security(String),
-    Protocol(ProtocolError),
-    Rejected(ErrorCode),
-    Io(io::Error),
-    ProjectionFailed(String),
-}
-
-impl fmt::Display for ControlError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Unavailable => formatter.write_str("Engine is unavailable"),
-            Self::EndpointBusy => formatter.write_str("Engine endpoint is busy"),
-            Self::Timeout => formatter.write_str("Engine connection timed out"),
-            Self::SpawnFailed(error) => write!(formatter, "failed to start Engine: {error}"),
-            Self::Security(error) => write!(formatter, "IPC security setup failed: {error}"),
-            Self::Protocol(error) => write!(formatter, "IPC protocol failed: {error}"),
-            Self::Rejected(code) => write!(formatter, "Engine rejected the request: {code:?}"),
-            Self::Io(error) => write!(formatter, "IPC I/O failed: {error}"),
-            Self::ProjectionFailed(error) => {
-                write!(formatter, "Engine live projection failed: {error}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for ControlError {}
-
-impl From<ProtocolError> for ControlError {
-    fn from(error: ProtocolError) -> Self {
-        match &error {
-            ProtocolError::Io(io_error) if io_error.kind() == io::ErrorKind::TimedOut => {
-                Self::Timeout
-            }
-            _ => Self::Protocol(error),
-        }
-    }
-}
-
-impl From<io::Error> for ControlError {
-    fn from(error: io::Error) -> Self {
-        Self::Io(error)
-    }
-}
-
-impl ControlError {
-    pub(crate) fn projection(error: impl fmt::Display) -> Self {
-        Self::ProjectionFailed(error.to_string())
-    }
-}
-
 #[derive(Clone)]
-pub struct EngineControl {
-    endpoint: Endpoint,
-}
-
-#[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub(crate) struct ConfigObservation {
-    pub(crate) revision: u64,
-    pub(crate) generation: u64,
-    pub(crate) config: Option<config::ConfigDocument>,
-}
-
-#[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub(crate) struct ConfigApplyResult {
-    pub(crate) current: ConfigObservation,
-    pub(crate) durability_warning: bool,
-}
-
-impl EngineControl {
-    pub fn connect_or_start(executable: &Path, config_dir: &Path) -> Result<Self, ControlError> {
-        let control = Self {
-            endpoint: Endpoint::current_user(config_dir, "")?,
-        };
-        control.connect_or_start_with(|| {
-            Command::new(executable)
-                .arg("--engine")
-                .spawn()
-                .map(|_| ())
-                .map_err(ControlError::SpawnFailed)
-        })?;
-        Ok(control)
-    }
-
-    #[cfg(test)]
-    fn ping(&self) -> Result<(), ControlError> {
-        self.ping_before(Instant::now() + IO_TIMEOUT)
-    }
-
-    fn ping_before(&self, deadline: Instant) -> Result<(), ControlError> {
-        let mut session = Session::connect_before(&self.endpoint, deadline)?;
-        match session.exchange_before(Request::Ping, deadline)? {
-            Response::Pong => Ok(()),
-            Response::Error(code) => Err(ControlError::Rejected(code)),
-            _ => Err(ControlError::Protocol(ProtocolError::InvalidMessage)),
-        }
-    }
-
-    pub fn status(&self) -> Result<EngineStatus, ControlError> {
-        let mut session = Session::connect(&self.endpoint)?;
-        match session.exchange(Request::GetStatus)? {
-            Response::Status(status) => Ok(status),
-            Response::Error(code) => Err(ControlError::Rejected(code)),
-            _ => Err(ControlError::Protocol(ProtocolError::InvalidMessage)),
-        }
-    }
-
-    pub(crate) fn current_config(&self) -> Result<ConfigObservation, ControlError> {
-        let mut session = Session::connect(&self.endpoint)?;
-        session.current_config()
-    }
-
-    pub(crate) fn apply_config(
-        &self,
-        document: config::ConfigDocument,
-        expected_revision: u64,
-    ) -> Result<ConfigApplyResult, ControlError> {
-        let bytes = serde_json::to_vec(&document)
-            .map_err(|_| ControlError::Rejected(ErrorCode::ConfigValidationFailed))?;
-        self.apply_config_bytes(bytes, expected_revision)
-    }
-
-    pub(crate) fn apply_config_bytes(
-        &self,
-        bytes: Vec<u8>,
-        expected_revision: u64,
-    ) -> Result<ConfigApplyResult, ControlError> {
-        let mut session = Session::connect(&self.endpoint)?;
-        let prepared = match session.exchange(Request::PrepareConfig {
-            expected_revision,
-            config_bytes: bytes,
-        })? {
-            Response::Prepared {
-                token,
-                base_revision,
-                base_generation,
-            } => (token, base_revision, base_generation),
-            Response::Error(code) => return Err(ControlError::Rejected(code)),
-            _ => return Err(ControlError::Protocol(ProtocolError::InvalidMessage)),
-        };
-        let durability_warning = match session.exchange(Request::CommitConfig {
-            token: prepared.0,
-            base_revision: prepared.1,
-            base_generation: prepared.2,
-        })? {
-            Response::Applied {
-                durability_warning, ..
-            } => durability_warning,
-            Response::Error(code) => return Err(ControlError::Rejected(code)),
-            _ => return Err(ControlError::Protocol(ProtocolError::InvalidMessage)),
-        };
-        Ok(ConfigApplyResult {
-            current: session.current_config()?,
-            durability_warning,
-        })
-    }
-
-    pub fn shutdown(&self) -> Result<bool, ControlError> {
-        let mut session = Session::connect(&self.endpoint)?;
-        match session.exchange(Request::Shutdown)? {
-            Response::Shutdown { already_requested } => Ok(already_requested),
-            Response::Error(code) => Err(ControlError::Rejected(code)),
-            _ => Err(ControlError::Protocol(ProtocolError::InvalidMessage)),
-        }
-    }
-
-    fn connect_or_start_with(
-        &self,
-        spawn: impl FnOnce() -> Result<(), ControlError>,
-    ) -> Result<(), ControlError> {
-        let deadline = Instant::now() + CONNECT_TIMEOUT;
-        match self.ping_before(deadline) {
-            Ok(()) => return Ok(()),
-            Err(ControlError::Unavailable) => {}
-            Err(error) => return Err(error),
-        }
-
-        let security = SecurityDescriptor::for_sid(&self.endpoint.sid)?;
-        let _launch = LaunchLock::acquire(&self.endpoint.launch_mutex_name, &security, deadline)?;
-        match self.ping_before(deadline) {
-            Ok(()) => return Ok(()),
-            Err(ControlError::Unavailable) => {}
-            Err(error) => return Err(error),
-        }
-        spawn()?;
-        loop {
-            match self.ping_before(deadline) {
-                Ok(()) => return Ok(()),
-                Err(ControlError::Unavailable) if Instant::now() < deadline => {
-                    thread::sleep(
-                        RETRY_INTERVAL.min(deadline.saturating_duration_since(Instant::now())),
-                    );
-                }
-                Err(ControlError::Unavailable) => return Err(ControlError::Timeout),
-                Err(error) => return Err(error),
-            }
-        }
-    }
-
-    #[cfg(test)]
-    fn for_test(config_dir: &Path, suffix: &str) -> Result<Self, ControlError> {
-        Ok(Self {
-            endpoint: Endpoint::current_user(config_dir, suffix)?,
-        })
-    }
-
-    pub(crate) fn for_prepared_server(server: &EngineServer) -> Self {
-        Self {
-            endpoint: server.endpoint.clone(),
-        }
-    }
-}
-
-pub struct EngineServer {
-    endpoint: Endpoint,
-    _singleton: Singleton,
-    secret: [u8; AUTH_SECRET_BYTES],
-    _secret_file: SecretFile,
-    first_pipe: Pipe,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ServerExit {
-    Shutdown,
-    Stopped,
-}
-
-impl EngineServer {
-    pub fn new(config_dir: &Path) -> Result<Option<Self>, ControlError> {
-        Self::with_suffix(config_dir, "")
-    }
-
-    #[cfg(debug_assertions)]
-    pub(crate) fn for_debug_namespace(
-        config_dir: &Path,
-        suffix: &str,
-    ) -> Result<Option<Self>, ControlError> {
-        Self::with_suffix(config_dir, suffix)
-    }
-
-    #[cfg(test)]
-    fn for_test(config_dir: &Path, suffix: &str) -> Result<Option<Self>, ControlError> {
-        Self::with_suffix(config_dir, suffix)
-    }
-
-    fn with_suffix(config_dir: &Path, suffix: &str) -> Result<Option<Self>, ControlError> {
-        let endpoint = Endpoint::current_user(config_dir, suffix)?;
-        let security = SecurityDescriptor::for_sid(&endpoint.sid)?;
-        let Some(singleton) = Singleton::acquire(&endpoint.mutex_name, &security)? else {
-            return Ok(None);
-        };
-        fs::create_dir_all(&endpoint.config_dir)?;
-        let secret = generate_secret()?;
-        let secret_file = SecretFile::create(&endpoint.secret_path, &secret, &security)?;
-        let first_pipe = Pipe::server(&endpoint.pipe_name, &security)?;
-        Ok(Some(Self {
-            endpoint,
-            _singleton: singleton,
-            secret,
-            _secret_file: secret_file,
-            first_pipe,
-        }))
-    }
-
-    pub fn run<F>(
-        self,
-        stop: Arc<AtomicBool>,
-        mut config_owner: ConfigOwner,
-        mut on_applied: F,
-    ) -> Result<ServerExit, ControlError>
-    where
-        F: FnMut(&config::ActiveConfig, u64) -> Result<(), ControlError>,
-    {
-        let Self {
-            endpoint: _,
-            _singleton,
-            secret,
-            _secret_file,
-            mut first_pipe,
-        } = self;
-        let started_at = Instant::now();
-        let mut next_session = 1_u64;
-
-        while !stop.load(Ordering::Acquire) {
-            if !first_pipe.wait_for_client(&stop)? {
-                return Ok(ServerExit::Stopped);
-            }
-            let session = next_session;
-            next_session = next_session.checked_add(1).unwrap_or(1);
-            if serve_connection(
-                &mut first_pipe,
-                &secret,
-                started_at,
-                &mut config_owner,
-                session,
-                &mut on_applied,
-            )? {
-                return Ok(ServerExit::Shutdown);
-            }
-        }
-        Ok(ServerExit::Stopped)
-    }
-}
-
-fn serve_connection(
-    pipe: &mut Pipe,
-    secret: &[u8; AUTH_SECRET_BYTES],
-    started_at: Instant,
-    config_owner: &mut ConfigOwner,
-    session: u64,
-    on_applied: &mut impl FnMut(&config::ActiveConfig, u64) -> Result<(), ControlError>,
-) -> Result<bool, ControlError> {
-    let result =
-        serve_connection_inner(pipe, secret, started_at, config_owner, session, on_applied);
-    config_owner.disconnect(session);
-    pipe.disconnect_client();
-    match result {
-        Err(error @ ControlError::ProjectionFailed(_)) => Err(error),
-        Err(_) => Ok(false),
-        Ok(shutdown_requested) => Ok(shutdown_requested),
-    }
-}
-
-fn serve_connection_inner(
-    pipe: &mut Pipe,
-    secret: &[u8; AUTH_SECRET_BYTES],
-    started_at: Instant,
-    config_owner: &mut ConfigOwner,
-    session: u64,
-    on_applied: &mut impl FnMut(&config::ActiveConfig, u64) -> Result<(), ControlError>,
-) -> Result<bool, ControlError> {
-    let mut authenticated = false;
-    let mut version_matches = false;
-    let mut shutdown_requested = false;
-    let mut request_ids = [0_u64; MAX_REQUESTS_PER_CONNECTION];
-    let mut request_count = 0;
-
-    loop {
-        pipe.set_deadline(Instant::now() + IO_TIMEOUT);
-        let body = match protocol::read_frame(&mut *pipe) {
-            Ok(body) => body,
-            Err(ProtocolError::Io(error))
-                if matches!(
-                    error.kind(),
-                    io::ErrorKind::UnexpectedEof
-                        | io::ErrorKind::BrokenPipe
-                        | io::ErrorKind::TimedOut
-                ) =>
-            {
-                return Ok(shutdown_requested);
-            }
-            Err(error) => {
-                reject_decode_error(pipe, &body_request_id_placeholder(&error), &error);
-                return Ok(shutdown_requested);
-            }
-        };
-        let request = match protocol::decode_request(&body) {
-            Ok(request) => request,
-            Err(error) => {
-                let request_id = protocol::request_id_from_body(&body).unwrap_or(1);
-                reject_decode_error(pipe, &request_id, &error);
-                return Ok(shutdown_requested);
-            }
-        };
-
-        if request_count == MAX_REQUESTS_PER_CONNECTION {
-            send_terminal_response(
-                pipe,
-                request.request_id,
-                Response::Error(ErrorCode::RequestLimit),
-            )?;
-            return Ok(shutdown_requested);
-        }
-        if request_ids[..request_count].contains(&request.request_id) {
-            send_terminal_response(
-                pipe,
-                request.request_id,
-                Response::Error(ErrorCode::DuplicateRequestId),
-            )?;
-            return Ok(shutdown_requested);
-        }
-        request_ids[request_count] = request.request_id;
-        request_count += 1;
-
-        let response = if !authenticated {
-            match request.message {
-                Request::Hello {
-                    auth_secret,
-                    executable_version,
-                } if secrets_equal(secret, &auth_secret) => {
-                    authenticated = true;
-                    version_matches = executable_version == ENGINE_VERSION;
-                    Response::Hello {
-                        engine_version: ENGINE_VERSION.to_string(),
-                        config_schema_version: CONFIG_SCHEMA_VERSION,
-                        capabilities: CAPABILITIES,
-                    }
-                }
-                Request::Hello { .. } => {
-                    send_terminal_response(
-                        pipe,
-                        request.request_id,
-                        Response::Error(ErrorCode::AuthenticationFailed),
-                    )?;
-                    return Ok(shutdown_requested);
-                }
-                _ => {
-                    send_terminal_response(
-                        pipe,
-                        request.request_id,
-                        Response::Error(ErrorCode::HelloRequired),
-                    )?;
-                    return Ok(shutdown_requested);
-                }
-            }
-        } else {
-            match request.message {
-                Request::Hello { .. } => Response::Error(ErrorCode::InvalidMessage),
-                Request::Ping => Response::Pong,
-                Request::GetStatus => {
-                    let config = config_owner.status(Instant::now());
-                    Response::Status(process_status(started_at, config)?)
-                }
-                Request::Shutdown if version_matches => {
-                    let already_requested = shutdown_requested;
-                    shutdown_requested = true;
-                    Response::Shutdown { already_requested }
-                }
-                Request::Shutdown => Response::Error(ErrorCode::ExecutableVersionMismatch),
-                Request::GetConfig => match config_owner.current_bytes(Instant::now()) {
-                    Ok((revision, generation, config_bytes)) => Response::Config {
-                        revision,
-                        generation,
-                        config_bytes,
-                    },
-                    Err(error) => Response::Error(config_error_code(error)),
-                },
-                Request::PrepareConfig { .. } | Request::CommitConfig { .. }
-                    if !version_matches =>
-                {
-                    Response::Error(ErrorCode::ExecutableVersionMismatch)
-                }
-                Request::PrepareConfig {
-                    expected_revision,
-                    config_bytes,
-                } => match config_owner.prepare(
-                    session,
-                    expected_revision,
-                    &config_bytes,
-                    Instant::now(),
-                ) {
-                    Ok(prepared) => Response::Prepared {
-                        token: prepared.token.0,
-                        base_revision: prepared.base_revision,
-                        base_generation: prepared.base_generation,
-                    },
-                    Err(error) => Response::Error(config_error_code(error)),
-                },
-                Request::CommitConfig {
-                    token,
-                    base_revision,
-                    base_generation,
-                } => match config_owner.commit(
-                    session,
-                    PreparedToken(token),
-                    base_revision,
-                    base_generation,
-                    Instant::now(),
-                ) {
-                    Ok(applied) => {
-                        on_applied(
-                            config_owner.active().ok_or_else(|| {
-                                ControlError::projection("successful commit has no active config")
-                            })?,
-                            applied.generation,
-                        )?;
-                        Response::Applied {
-                            revision: applied.revision,
-                            generation: applied.generation,
-                            durability_warning: applied.durability_warning,
-                        }
-                    }
-                    Err(error) => Response::Error(config_error_code(error)),
-                },
-            }
-        };
-        send_response(pipe, request.request_id, response)?;
-    }
-}
-
-fn config_error_code(error: ConfigOwnerError) -> ErrorCode {
-    match error {
-        ConfigOwnerError::PayloadTooLarge => ErrorCode::ConfigPayloadTooLarge,
-        ConfigOwnerError::Busy => ErrorCode::ConfigBusy,
-        ConfigOwnerError::RevisionConflict => ErrorCode::ConfigRevisionConflict,
-        ConfigOwnerError::ValidationFailed => ErrorCode::ConfigValidationFailed,
-        ConfigOwnerError::TokenMismatch => ErrorCode::ConfigTokenMismatch,
-        ConfigOwnerError::NoPreparedConfig => ErrorCode::NoPreparedConfig,
-        ConfigOwnerError::GenerationExhausted => ErrorCode::ConfigGenerationExhausted,
-        ConfigOwnerError::PersistenceFailed => ErrorCode::ConfigPersistenceFailed,
-    }
-}
-
-fn body_request_id_placeholder(_error: &ProtocolError) -> u64 {
-    1
-}
-
-fn reject_decode_error(pipe: &mut Pipe, request_id: &u64, error: &ProtocolError) {
-    let code = match error {
-        ProtocolError::WrongVersion(_) => ErrorCode::WrongVersion,
-        _ => ErrorCode::InvalidMessage,
-    };
-    let _ = send_terminal_response(pipe, *request_id, Response::Error(code));
-}
-
-fn send_response(pipe: &mut Pipe, request_id: u64, response: Response) -> Result<(), ControlError> {
-    let body = protocol::encode_response(&Envelope::current(request_id, response))?;
-    pipe.set_deadline(Instant::now() + IO_TIMEOUT);
-    protocol::write_frame(pipe, &body)?;
-    Ok(())
-}
-
-fn send_terminal_response(
-    pipe: &mut Pipe,
-    request_id: u64,
-    response: Response,
-) -> Result<(), ControlError> {
-    send_response(pipe, request_id, response)?;
-    pipe.set_deadline(Instant::now() + TERMINAL_RESPONSE_GRACE);
-    let mut ignored = [0_u8; 1];
-    let _ = pipe.read(&mut ignored);
-    Ok(())
-}
-
-struct Session {
-    pipe: Pipe,
-    next_request_id: u64,
-}
-
-impl Session {
-    fn connect(endpoint: &Endpoint) -> Result<Self, ControlError> {
-        Self::connect_before(endpoint, Instant::now() + CONNECT_TIMEOUT)
-    }
-
-    fn connect_before(endpoint: &Endpoint, deadline: Instant) -> Result<Self, ControlError> {
-        let pipe = connect_pipe_before(endpoint, deadline)?;
-        let secret_bytes = fs::read(&endpoint.secret_path).map_err(|error| {
-            if error.kind() == io::ErrorKind::PermissionDenied {
-                ControlError::Security(format!("cannot read Engine secret file: {error}"))
-            } else {
-                ControlError::Io(error)
-            }
-        })?;
-        let auth_secret: [u8; AUTH_SECRET_BYTES] = secret_bytes
-            .try_into()
-            .map_err(|_| ControlError::Security("invalid Engine secret file".to_string()))?;
-        let mut session = Self {
-            pipe,
-            next_request_id: 1,
-        };
-        match session.exchange_before(
-            Request::Hello {
-                auth_secret,
-                executable_version: ENGINE_VERSION.to_string(),
-            },
-            deadline,
-        )? {
-            Response::Hello { capabilities, .. } if capabilities == CAPABILITIES => Ok(session),
-            Response::Error(code) => Err(ControlError::Rejected(code)),
-            _ => Err(ControlError::Protocol(ProtocolError::InvalidMessage)),
-        }
-    }
-
-    fn exchange(&mut self, request: Request) -> Result<Response, ControlError> {
-        self.exchange_before(request, Instant::now() + IO_TIMEOUT)
-    }
-
-    fn exchange_before(
-        &mut self,
-        request: Request,
-        deadline: Instant,
-    ) -> Result<Response, ControlError> {
-        let request_id = self.next_request_id;
-        self.next_request_id = self
-            .next_request_id
-            .checked_add(1)
-            .ok_or(ControlError::Protocol(ProtocolError::InvalidMessage))?;
-        self.exchange_with_id_before(request_id, request, deadline)
-    }
-
-    #[cfg(test)]
-    fn exchange_with_id(
-        &mut self,
-        request_id: u64,
-        request: Request,
-    ) -> Result<Response, ControlError> {
-        self.exchange_with_id_before(request_id, request, Instant::now() + IO_TIMEOUT)
-    }
-
-    #[cfg(test)]
-    fn send_then_disconnect(mut self, request: Request) -> Result<(), ControlError> {
-        let request_id = self.next_request_id;
-        let body = protocol::encode_request(&Envelope::current(request_id, request))?;
-        self.pipe.set_deadline(Instant::now() + IO_TIMEOUT);
-        protocol::write_frame(&mut self.pipe, &body)?;
-        Ok(())
-    }
-
-    fn exchange_with_id_before(
-        &mut self,
-        request_id: u64,
-        request: Request,
-        deadline: Instant,
-    ) -> Result<Response, ControlError> {
-        let body = protocol::encode_request(&Envelope::current(request_id, request))?;
-        self.pipe.set_deadline(deadline);
-        protocol::write_frame(&mut self.pipe, &body)?;
-        self.pipe.set_deadline(deadline);
-        let response_body = protocol::read_frame(&mut self.pipe)?;
-        Ok(protocol::decode_response(&response_body, request_id)?.message)
-    }
-
-    fn current_config(&mut self) -> Result<ConfigObservation, ControlError> {
-        match self.exchange(Request::GetConfig)? {
-            Response::Config {
-                revision,
-                generation,
-                config_bytes,
-            } => {
-                let config = config_bytes
-                    .map(|bytes| {
-                        config::decode_and_compile(&bytes).map(|active| active.document().clone())
-                    })
-                    .transpose()
-                    .map_err(|_| ControlError::Rejected(ErrorCode::ConfigValidationFailed))?;
-                Ok(ConfigObservation {
-                    revision,
-                    generation,
-                    config,
-                })
-            }
-            Response::Error(code) => Err(ControlError::Rejected(code)),
-            _ => Err(ControlError::Protocol(ProtocolError::InvalidMessage)),
-        }
-    }
-}
-
-#[cfg(test)]
-fn connect_pipe(endpoint: &Endpoint) -> Result<Pipe, ControlError> {
-    connect_pipe_before(endpoint, Instant::now() + IO_TIMEOUT)
-}
-
-fn connect_pipe_before(endpoint: &Endpoint, deadline: Instant) -> Result<Pipe, ControlError> {
-    loop {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return Err(ControlError::Timeout);
-        }
-        match Pipe::client(&endpoint.pipe_name, remaining.min(IO_TIMEOUT)) {
-            Ok(pipe) => return Ok(pipe),
-            Err(ControlError::Unavailable) => return Err(ControlError::Unavailable),
-            Err(ControlError::EndpointBusy) if Instant::now() < deadline => {
-                thread::sleep(
-                    PIPE_POLL_INTERVAL.min(deadline.saturating_duration_since(Instant::now())),
-                );
-            }
-            Err(ControlError::EndpointBusy) => return Err(ControlError::Timeout),
-            Err(error) => return Err(error),
-        }
-    }
-}
-
-#[derive(Clone)]
-struct Endpoint {
+pub(super) struct Endpoint {
     pipe_name: Vec<u16>,
     mutex_name: Vec<u16>,
     launch_mutex_name: Vec<u16>,
@@ -752,7 +67,7 @@ struct Endpoint {
 }
 
 impl Endpoint {
-    fn current_user(config_dir: &Path, suffix: &str) -> Result<Self, ControlError> {
+    pub(super) fn current_user(config_dir: &Path, suffix: &str) -> Result<Self, ControlError> {
         if !suffix
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
@@ -779,6 +94,71 @@ impl Endpoint {
             config_dir: config_dir.to_path_buf(),
             sid,
         })
+    }
+
+    pub(super) fn acquire_launch_lock(
+        &self,
+        deadline: Instant,
+    ) -> Result<LaunchLock, ControlError> {
+        let security = SecurityDescriptor::for_sid(&self.sid)?;
+        LaunchLock::acquire(&self.launch_mutex_name, &security, deadline)
+    }
+
+    pub(super) fn prepare_server(
+        &self,
+    ) -> Result<Option<([u8; AUTH_SECRET_BYTES], ServerTransport)>, ControlError> {
+        let security = SecurityDescriptor::for_sid(&self.sid)?;
+        let Some(singleton) = Singleton::acquire(&self.mutex_name, &security)? else {
+            return Ok(None);
+        };
+        fs::create_dir_all(&self.config_dir)?;
+        let secret = generate_secret()?;
+        let secret_file = SecretFile::create(&self.secret_path, &secret, &security)?;
+        let pipe = Pipe::server(&self.pipe_name, &security)?;
+        Ok(Some((
+            secret,
+            ServerTransport {
+                _singleton: singleton,
+                _secret_file: secret_file,
+                pipe,
+            },
+        )))
+    }
+
+    pub(super) fn connect_before(
+        &self,
+        deadline: Instant,
+    ) -> Result<ClientConnection, ControlError> {
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(ControlError::Timeout);
+            }
+            match Pipe::client(&self.pipe_name, remaining.min(IO_TIMEOUT)) {
+                Ok(pipe) => return Ok(pipe),
+                Err(ControlError::Unavailable) => return Err(ControlError::Unavailable),
+                Err(ControlError::EndpointBusy) if Instant::now() < deadline => {
+                    thread::sleep(
+                        PIPE_POLL_INTERVAL.min(deadline.saturating_duration_since(Instant::now())),
+                    );
+                }
+                Err(ControlError::EndpointBusy) => return Err(ControlError::Timeout),
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    pub(super) fn read_secret(&self) -> Result<[u8; AUTH_SECRET_BYTES], ControlError> {
+        let bytes = fs::read(&self.secret_path).map_err(|error| {
+            if error.kind() == io::ErrorKind::PermissionDenied {
+                ControlError::Security(format!("cannot read Engine secret file: {error}"))
+            } else {
+                ControlError::Io(error)
+            }
+        })?;
+        bytes
+            .try_into()
+            .map_err(|_| ControlError::Security("invalid Engine secret file".to_string()))
     }
 }
 
@@ -844,7 +224,7 @@ impl Singleton {
     }
 }
 
-struct LaunchLock {
+pub(super) struct LaunchLock {
     handle: OwnedHandle,
 }
 
@@ -945,7 +325,7 @@ impl Drop for SecretFile {
     }
 }
 
-struct Pipe {
+pub(super) struct Pipe {
     handle: OwnedHandle,
     deadline: Instant,
     server: bool,
@@ -1017,7 +397,7 @@ impl Pipe {
             }
             match unsafe { GetLastError() } {
                 ERROR_PIPE_CONNECTED => return Ok(true),
-                ERROR_PIPE_LISTENING | ERROR_NO_DATA => thread::sleep(RETRY_INTERVAL),
+                ERROR_PIPE_LISTENING | ERROR_NO_DATA => thread::sleep(PIPE_POLL_INTERVAL),
                 _ => return Err(ControlError::Io(io::Error::last_os_error())),
             }
         }
@@ -1031,7 +411,7 @@ impl Pipe {
         }
     }
 
-    fn set_deadline(&mut self, deadline: Instant) {
+    pub(super) fn set_deadline(&mut self, deadline: Instant) {
         self.deadline = deadline;
     }
 
@@ -1114,6 +494,57 @@ impl Drop for Pipe {
         if self.server {
             self.disconnect_client();
         }
+    }
+}
+
+pub(super) type ClientConnection = Pipe;
+
+pub(super) struct ServerTransport {
+    _singleton: Singleton,
+    _secret_file: SecretFile,
+    pipe: Pipe,
+}
+
+impl ServerTransport {
+    pub(super) fn accept(
+        &mut self,
+        stop: &AtomicBool,
+    ) -> Result<Option<AcceptedConnection<'_>>, ControlError> {
+        if self.pipe.wait_for_client(stop)? {
+            Ok(Some(AcceptedConnection(&mut self.pipe)))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+pub(super) struct AcceptedConnection<'a>(&'a mut Pipe);
+
+impl AcceptedConnection<'_> {
+    pub(super) fn set_deadline(&mut self, deadline: Instant) {
+        self.0.set_deadline(deadline);
+    }
+}
+
+impl Read for AcceptedConnection<'_> {
+    fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+        self.0.read(output)
+    }
+}
+
+impl Write for AcceptedConnection<'_> {
+    fn write(&mut self, input: &[u8]) -> io::Result<usize> {
+        self.0.write(input)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.flush()
+    }
+}
+
+impl Drop for AcceptedConnection<'_> {
+    fn drop(&mut self) {
+        self.0.disconnect_client();
     }
 }
 
@@ -1205,10 +636,7 @@ fn generate_secret() -> Result<[u8; AUTH_SECRET_BYTES], ControlError> {
     }
 }
 
-fn process_status(
-    started_at: Instant,
-    config: ConfigOwnerStatus,
-) -> Result<EngineStatus, ControlError> {
+pub(super) fn process_resources() -> Result<(u32, u32, u64), ControlError> {
     let process = unsafe { GetCurrentProcess() };
     let mut handle_count = 0;
     if unsafe { GetProcessHandleCount(process, &mut handle_count) } == 0 {
@@ -1221,19 +649,11 @@ fn process_status(
     if unsafe { GetProcessMemoryInfo(process, &mut memory, memory.cb) } == 0 {
         return Err(ControlError::Io(io::Error::last_os_error()));
     }
-    Ok(EngineStatus {
-        role: ProcessRole::Engine,
-        webview_count: 0,
-        process_id: std::process::id(),
-        uptime_ms: u64::try_from(started_at.elapsed().as_millis()).unwrap_or(u64::MAX),
-        thread_count: current_process_thread_count()?,
+    Ok((
+        current_process_thread_count()?,
         handle_count,
-        working_set_bytes: u64::try_from(memory.WorkingSetSize).unwrap_or(u64::MAX),
-        config_available: config.available,
-        config_revision: config.revision,
-        config_generation: config.generation,
-        config_candidate_prepared: config.candidate_prepared,
-    })
+        u64::try_from(memory.WorkingSetSize).unwrap_or(u64::MAX),
+    ))
 }
 
 fn current_process_thread_count() -> Result<u32, ControlError> {
@@ -1257,16 +677,6 @@ fn current_process_thread_count() -> Result<u32, ControlError> {
     Ok(count)
 }
 
-fn secrets_equal(expected: &[u8; AUTH_SECRET_BYTES], actual: &[u8; AUTH_SECRET_BYTES]) -> bool {
-    expected
-        .iter()
-        .zip(actual)
-        .fold(0_u8, |difference, (left, right)| {
-            difference | (left ^ right)
-        })
-        == 0
-}
-
 fn last_security_error(operation: &str) -> ControlError {
     ControlError::Security(format!("{operation}: {}", io::Error::last_os_error()))
 }
@@ -1276,10 +686,28 @@ fn wide(value: impl AsRef<OsStr>) -> Vec<u16> {
 }
 
 #[cfg(test)]
+fn connect_pipe(endpoint: &Endpoint) -> Result<Pipe, ControlError> {
+    endpoint.connect_before(Instant::now() + IO_TIMEOUT)
+}
+
+#[cfg(test)]
+fn send_response(pipe: &mut Pipe, request_id: u64, response: Response) -> Result<(), ControlError> {
+    let body = protocol::encode_response(&Envelope::current(request_id, response))?;
+    pipe.set_deadline(Instant::now() + IO_TIMEOUT);
+    protocol::write_frame(pipe, &body)?;
+    Ok(())
+}
+
+#[cfg(test)]
 mod tests {
+    use super::super::core::{
+        ConfigObservation, ServerExit, CONNECT_TIMEOUT, RETRY_INTERVAL, TERMINAL_RESPONSE_GRACE,
+    };
+    use super::super::protocol::ProcessRole;
     use super::*;
+    use crate::config::{self, ConfigOwner};
     use std::mem::size_of;
-    use std::process::{Child, Stdio};
+    use std::process::{Child, Command, Stdio};
     use std::ptr::null_mut;
     use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
     use std::sync::{Barrier, Mutex};
@@ -2097,7 +1525,7 @@ mod tests {
         let server = EngineServer::for_test(directory.path(), &suffix)
             .unwrap()
             .unwrap();
-        let descriptor = security_for_handle(server._singleton._handle.0);
+        let descriptor = security_for_handle(server.transport._singleton._handle.0);
         assert_current_user_only(descriptor.0, &control.endpoint.sid);
     }
 
@@ -2121,7 +1549,7 @@ mod tests {
         let server = EngineServer::for_test(directory.path(), &suffix)
             .unwrap()
             .unwrap();
-        let descriptor = security_for_handle(server.first_pipe.handle.0);
+        let descriptor = security_for_handle(server.transport.pipe.handle.0);
         assert_current_user_only(descriptor.0, &control.endpoint.sid);
     }
 
@@ -2145,7 +1573,7 @@ mod tests {
         assert_ne!(
             unsafe {
                 GetNamedPipeInfo(
-                    server.first_pipe.handle.0,
+                    server.transport.pipe.handle.0,
                     &mut flags,
                     null_mut(),
                     null_mut(),
