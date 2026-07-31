@@ -71,9 +71,12 @@ They build an ad-hoc signed debug `.app` with Tauri, verify the complete
 signature, inspect the bundle and Mach-O target, and launch the packaged main
 executable as `--engine`.
 One bounded startup loop checks that the packaged Engine remains alive while
-repeated Core Graphics `.optionAll` process-window inspection and
-descendant-process inspection fail on any observed content window or WebKit
-descendant, including hidden or off-screen windows and startup-only processes.
+repeated Core Graphics `.optionAll` process-window inspection fails on any
+nonzero-area layer-zero content window, including hidden or off-screen windows,
+and descendant-process inspection fails on any WebKit process, including a
+startup-only process.
+Zero-area AppKit bookkeeping windows have no drawable content and are not
+classified as content windows.
 The release executable contains no marker-file or arbitrary-path test hook.
 This evidence validates bundle and process topology only.
 Ad-hoc signing is not evidence of Developer ID trust, Gatekeeper acceptance, or

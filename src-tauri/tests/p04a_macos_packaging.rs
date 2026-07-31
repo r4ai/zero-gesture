@@ -209,12 +209,15 @@ let pid = Int32(CommandLine.arguments[1])!
 let options: CGWindowListOption = [.optionAll, .excludeDesktopElements]
 let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID)
     as? [[String: Any]] ?? []
-let count = windows.filter { window in
+let contentWindows = windows.filter { window in
     let owner = (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value
     let layer = (window[kCGWindowLayer as String] as? NSNumber)?.intValue
-    return owner == pid && layer == 0
+    let bounds = window[kCGWindowBounds as String] as? [String: NSNumber]
+    let width = bounds?["Width"]?.doubleValue ?? 0
+    let height = bounds?["Height"]?.doubleValue ?? 0
+    return owner == pid && layer == 0 && width > 0 && height > 0
 }
-let details = count.map { window in
+let details = contentWindows.map { window in
     let name = window[kCGWindowName as String] ?? "<none>"
     let bounds = window[kCGWindowBounds as String] ?? "<none>"
     let alpha = window[kCGWindowAlpha as String] ?? "<none>"
@@ -224,7 +227,7 @@ let details = count.map { window in
     return "name=\(name) bounds=\(bounds) alpha=\(alpha) onScreen=\(onScreen) store=\(store) sharing=\(sharing)"
 }.joined(separator: "\n")
 FileHandle.standardError.write(details.data(using: .utf8)!)
-print(count.count)
+print(contentWindows.count)
 "#,
     )
     .unwrap();
