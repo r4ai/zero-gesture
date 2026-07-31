@@ -12,6 +12,8 @@ pub struct ForegroundWindowInfo {
     pub window_class: Option<String>,
     /// Window title text. `None` if unavailable.
     pub title: Option<String>,
+    /// macOS application bundle identifier. `None` if unavailable.
+    pub bundle_identifier: Option<String>,
 }
 
 /// Retrieves information about the current foreground window.
@@ -112,6 +114,7 @@ pub(crate) fn get_window_info_by_hwnd(
             process_name,
             window_class,
             title,
+            bundle_identifier: None,
         }
     }
 }

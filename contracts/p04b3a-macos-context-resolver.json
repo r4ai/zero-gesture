@@ -1,0 +1,109 @@
+{
+  "cases": [
+    {
+      "id": "P04B3A-PERMISSION-001",
+      "obligation": "The Engine Accessibility preflight supplies no options dictionary and therefore cannot request a trust prompt.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_name": "accessibility_preflight_uses_no_prompt_options_dictionary"
+    },
+    {
+      "id": "P04B3A-ISOLATION-001",
+      "obligation": "The Event Tap callback stops at the normalized queue and context observation begins only after owner-side drain.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos.rs",
+      "evidence_name": "callback_capture_stops_at_the_queue_before_context_resolution"
+    },
+    {
+      "id": "P04B3A-REQUEST-001",
+      "obligation": "The context wake capacity is one and multiple pending observations coalesce to the latest complete request.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_name": "request_mailbox_is_bounded_and_coalesces_to_the_latest_request"
+    },
+    {
+      "id": "P04B3A-REQUEST-002",
+      "obligation": "Mouse movement cannot submit one AX request per event and is rate-limited before worker submission.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_name": "mouse_move_requests_are_rate_limited_before_worker_submission"
+    },
+    {
+      "id": "P04B3A-FAILURE-001",
+      "obligation": "Accessibility permission denial invalidates prior context and publishes Unknown.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_name": "permission_denial_clears_the_latest_context"
+    },
+    {
+      "id": "P04B3A-FAILURE-002",
+      "obligation": "A non-timeout Accessibility error invalidates prior context and publishes Unknown.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_name": "accessibility_error_clears_the_latest_context"
+    },
+    {
+      "id": "P04B3A-FAILURE-003",
+      "obligation": "The AX cannot-complete timeout class invalidates prior context and publishes Unknown.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_name": "accessibility_timeout_clears_the_latest_context"
+    },
+    {
+      "id": "P04B3A-FAILURE-004",
+      "obligation": "A target exit or invalid process identity invalidates prior context and publishes Unknown.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_name": "target_exit_clears_the_latest_context"
+    },
+    {
+      "id": "P04B3A-STRING-001",
+      "obligation": "An oversized context string is rejected before snapshot publication.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_name": "oversized_context_string_is_rejected_before_publication"
+    },
+    {
+      "id": "P04B3A-STRING-002",
+      "obligation": "A malformed context string is rejected before snapshot publication.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_name": "malformed_context_string_is_rejected_before_publication"
+    },
+    {
+      "id": "P04B3A-IDENTITY-001",
+      "obligation": "A reused PID with a different process start identity replaces the prior cached window and target token.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_name": "same_pid_with_a_new_process_identity_replaces_the_cached_window"
+    },
+    {
+      "id": "P04B3A-CACHE-001",
+      "obligation": "A cached context is usable only at its exact sampled point and through the fixed freshness boundary.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_name": "cache_requires_exact_point_and_bounded_freshness"
+    },
+    {
+      "id": "P04B3A-CACHE-002",
+      "obligation": "Resolution that exceeds the cache freshness budget is discarded and invalidates prior context.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_name": "worker_delay_beyond_freshness_invalidates_the_latest_context"
+    },
+    {
+      "id": "P04B3A-MATCH-001",
+      "obligation": "macOS compilation selects ordered Shared and Macos records, matches bundle identity case-insensitively, and retains the macOS command binding.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/config/compile.rs",
+      "evidence_name": "macos_compile_selects_bundle_application_and_command_binding"
+    },
+    {
+      "id": "P04B3A-LIFECYCLE-001",
+      "obligation": "The resolver worker stops within its bounded wait and invalidates its latest snapshot.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_name": "resolver_worker_stops_deterministically_and_invalidates_its_snapshot"
+    }
+  ]
+}

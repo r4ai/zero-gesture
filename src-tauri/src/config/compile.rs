@@ -35,7 +35,7 @@ impl CompiledMatcher {
             MatchTarget::ProcessName => info.process_name.as_deref(),
             MatchTarget::WindowClass => info.window_class.as_deref(),
             MatchTarget::Title => info.title.as_deref(),
-            MatchTarget::BundleIdentifier => None,
+            MatchTarget::BundleIdentifier => info.bundle_identifier.as_deref(),
         };
         let Some(value) = value else {
             return false;
@@ -84,6 +84,15 @@ pub(crate) struct RuntimeConfig {
 
 impl RuntimeConfig {
     pub(crate) fn match_windows_app(&self, info: &ForegroundWindowInfo) -> Option<BindingSetId> {
+        self.match_app(info)
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) fn match_macos_app(&self, info: &ForegroundWindowInfo) -> Option<BindingSetId> {
+        self.match_app(info)
+    }
+
+    fn match_app(&self, info: &ForegroundWindowInfo) -> Option<BindingSetId> {
         self.applications
             .iter()
             .find(|application| {
@@ -120,11 +129,8 @@ pub(crate) fn compile(document: &ConfigDocument) -> Result<RuntimeConfig, Config
     let mut binding_set_ids = HashMap::from([(DEFAULT_APP_ID.to_string(), default_binding_set)]);
     let mut applications = Vec::new();
     for (index, record) in document.applications.iter().enumerate() {
-        let application = match record {
-            ApplicationRecord::Shared(application) | ApplicationRecord::Windows(application) => {
-                application
-            }
-            ApplicationRecord::Macos(_) => continue,
+        let Some(application) = selected_application(record) else {
+            continue;
         };
         let binding_set = BindingSetId::from_index(binding_sets.len()).ok_or_else(|| {
             ConfigError::at(
@@ -141,9 +147,10 @@ pub(crate) fn compile(document: &ConfigDocument) -> Result<RuntimeConfig, Config
         for (matcher_index, matcher) in application.matchers.iter().enumerate() {
             let path = format!("applications[{index}].application.matchers[{matcher_index}].value");
             let logic = match (matcher.target, matcher.method) {
-                (MatchTarget::ProcessName | MatchTarget::Title, MatchMethod::Exact) => {
-                    CompiledMatchLogic::ExactCaseInsensitive(matcher.value.to_lowercase())
-                }
+                (
+                    MatchTarget::ProcessName | MatchTarget::Title | MatchTarget::BundleIdentifier,
+                    MatchMethod::Exact,
+                ) => CompiledMatchLogic::ExactCaseInsensitive(matcher.value.to_lowercase()),
                 (MatchTarget::WindowClass, MatchMethod::Exact) => {
                     CompiledMatchLogic::ExactCaseSensitive(matcher.value.clone())
                 }
@@ -154,9 +161,6 @@ pub(crate) fn compile(document: &ConfigDocument) -> Result<RuntimeConfig, Config
                     CompiledMatchLogic::Regex(Regex::new(&matcher.value).map_err(|error| {
                         ConfigError::at(path, format!("invalid regex: {error}"))
                     })?)
-                }
-                (MatchTarget::BundleIdentifier, MatchMethod::Exact) => {
-                    unreachable!("macOS records are filtered before Windows matcher compilation")
                 }
             };
             matchers.push(CompiledMatcher {
@@ -172,9 +176,8 @@ pub(crate) fn compile(document: &ConfigDocument) -> Result<RuntimeConfig, Config
 
     let mut actions = Vec::new();
     for (index, record) in document.bindings.iter().enumerate() {
-        let binding = match record {
-            BindingRecord::Shared(binding) | BindingRecord::Windows(binding) => binding,
-            BindingRecord::Macos(_) => continue,
+        let Some(binding) = selected_binding(record) else {
+            continue;
         };
         let binding_set = binding
             .application_id
@@ -219,9 +222,17 @@ pub(crate) fn compile(document: &ConfigDocument) -> Result<RuntimeConfig, Config
     }
 
     let recognition = &document.shared.recognition;
+    #[cfg(not(target_os = "macos"))]
     let appearance = document
         .platforms
         .windows
+        .appearance
+        .as_ref()
+        .unwrap_or(&document.shared.appearance);
+    #[cfg(target_os = "macos")]
+    let appearance = document
+        .platforms
+        .macos
         .appearance
         .as_ref()
         .unwrap_or(&document.shared.appearance);
@@ -255,9 +266,41 @@ fn compile_action(action: &DocumentAction) -> Action {
     Action::Keyboard {
         keys: keys
             .iter()
-            .map(|key| key.windows_name().to_string())
+            .map(|key| native_key_name(*key).to_string())
             .collect(),
     }
+}
+
+fn selected_application(record: &ApplicationRecord) -> Option<&super::document::Application> {
+    match record {
+        ApplicationRecord::Shared(application) => Some(application),
+        #[cfg(not(target_os = "macos"))]
+        ApplicationRecord::Windows(application) => Some(application),
+        #[cfg(target_os = "macos")]
+        ApplicationRecord::Macos(application) => Some(application),
+        _ => None,
+    }
+}
+
+fn selected_binding(record: &BindingRecord) -> Option<&super::document::GestureBinding> {
+    match record {
+        BindingRecord::Shared(binding) => Some(binding),
+        #[cfg(not(target_os = "macos"))]
+        BindingRecord::Windows(binding) => Some(binding),
+        #[cfg(target_os = "macos")]
+        BindingRecord::Macos(binding) => Some(binding),
+        _ => None,
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn native_key_name(key: super::document::Key) -> &'static str {
+    key.windows_name()
+}
+
+#[cfg(target_os = "macos")]
+fn native_key_name(key: super::document::Key) -> &'static str {
+    key.macos_name()
 }
 
 #[cfg(test)]
@@ -295,6 +338,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn compile_filters_variants_without_reordering_selected_records() {
         let document = ConfigDocument {
@@ -316,6 +360,7 @@ mod tests {
                 process_name: None,
                 window_class: None,
                 title: Some("shared".to_string()),
+                bundle_identifier: None,
             }),
             Some(BindingSetId::from_index(1).unwrap())
         );
@@ -324,6 +369,7 @@ mod tests {
                 process_name: None,
                 window_class: Some("windows".to_string()),
                 title: None,
+                bundle_identifier: None,
             }),
             Some(BindingSetId::from_index(2).unwrap())
         );
@@ -331,6 +377,7 @@ mod tests {
         assert_eq!(compiled.actions.len(), 2);
     }
 
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn platform_appearance_override_replaces_the_whole_field() {
         let mut document = ConfigDocument::default();
@@ -356,5 +403,68 @@ mod tests {
             inherited.appearance.label_font_family,
             shared.label_font_family
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_compile_selects_bundle_application_and_command_binding() {
+        let document = ConfigDocument {
+            applications: vec![
+                ApplicationRecord::Shared(app("shared", MatchTarget::Title)),
+                ApplicationRecord::Macos(app("dev.example.editor", MatchTarget::BundleIdentifier)),
+                ApplicationRecord::Windows(app("windows", MatchTarget::WindowClass)),
+            ],
+            bindings: vec![
+                BindingRecord::Shared(binding("shared-binding", Some("shared"), Key::Primary)),
+                BindingRecord::Macos(binding(
+                    "mac-binding",
+                    Some("dev.example.editor"),
+                    Key::Command,
+                )),
+                BindingRecord::Windows(binding("windows-binding", Some("windows"), Key::Ctrl)),
+            ],
+            ..ConfigDocument::default()
+        };
+
+        let compiled = compile(&document).unwrap();
+
+        assert_eq!(
+            compiled.match_macos_app(&ForegroundWindowInfo {
+                process_name: None,
+                window_class: None,
+                title: None,
+                bundle_identifier: Some("DEV.EXAMPLE.EDITOR".to_string()),
+            }),
+            Some(BindingSetId::from_index(2).unwrap())
+        );
+        assert_eq!(compiled.gesture.binding_sets.len(), 3);
+        assert_eq!(compiled.actions.len(), 2);
+        assert_eq!(
+            compiled.actions[1].action,
+            Action::Keyboard {
+                keys: vec!["command".to_string()]
+            }
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_appearance_override_replaces_the_whole_field() {
+        let mut document = ConfigDocument::default();
+        document.platforms.macos = PlatformOverride {
+            appearance: Some(AppearanceSettings {
+                trail_color: "#fff".to_string(),
+                trail_thickness: 9.0,
+                label_font_family: "Override".to_string(),
+                label_font_size: 11.0,
+                label_font_weight: 500,
+                label_padding: 7.0,
+            }),
+        };
+
+        let compiled = compile(&document).unwrap();
+
+        assert_eq!(compiled.appearance.trail_thickness, 9.0);
+        assert_eq!(compiled.appearance.label_font_family, "Override");
     }
 }

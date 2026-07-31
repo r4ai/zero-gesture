@@ -20,7 +20,11 @@ use crossbeam_channel::Sender;
 use log::warn;
 
 use super::{HookEvent, HookFailure};
+#[cfg(target_os = "macos")]
+use crate::config::ConfigSnapshotReader;
 use crate::domain::{MouseEvent, Point, TriggerButton};
+#[cfg(target_os = "macos")]
+use crate::hook::macos_context::ContextWorker;
 
 const EVENT_QUEUE_CAPACITY: usize = 64;
 #[cfg(target_os = "macos")]
@@ -254,12 +258,9 @@ impl TapState {
         self.reenable_requested.swap(false, Ordering::AcqRel)
     }
 
-    #[cfg(target_os = "macos")]
-    fn drain(&self) {
-        while self.queue.pop().is_some() {
-            // P04b2 deliberately stops at the normalized Engine boundary.
-            // Context, InputKernel, suppression, actions, and rendering are
-            // connected only in later phases.
+    fn drain(&self, mut observe: impl FnMut(NormalizedInput)) {
+        while let Some(input) = self.queue.pop() {
+            observe(input);
             self.processed.fetch_add(1, Ordering::Relaxed);
         }
     }
@@ -335,18 +336,24 @@ enum StartupFailure {
 
 #[cfg(target_os = "macos")]
 pub(super) fn run_loop_macos(
+    reader: ConfigSnapshotReader,
     stop: Arc<AtomicBool>,
     events: Sender<HookEvent>,
 ) -> Result<(), HookFailure> {
+    let context = ContextWorker::spawn(reader)?;
     let state = Box::new(TapState::new());
     let mode = unsafe { start_event_tap(state.as_ref()) };
     match mode {
-        StartupMode::Active(resources) => run_active(stop, events, state, resources),
+        StartupMode::Active(resources) => run_active(stop, events, state, resources, context),
         StartupMode::PermissionDenied => {
-            dispatch_startup_failure(StartupFailure::PermissionDenied, stop, events)
+            let result = dispatch_startup_failure(StartupFailure::PermissionDenied, stop, events);
+            context.shutdown();
+            result
         }
         StartupMode::CreationFailed => {
-            dispatch_startup_failure(StartupFailure::CreationFailed, stop, events)
+            let result = dispatch_startup_failure(StartupFailure::CreationFailed, stop, events);
+            context.shutdown();
+            result
         }
     }
 }
@@ -393,21 +400,30 @@ fn run_active(
     events: Sender<HookEvent>,
     state: Box<TapState>,
     resources: TapResources,
+    mut context: ContextWorker,
 ) -> Result<(), HookFailure> {
     publish_ready(&events)?;
     while !stop.load(Ordering::Acquire) {
         let result =
             unsafe { CFRunLoopRunInMode(kCFRunLoopDefaultMode, RUN_LOOP_SLICE_SECONDS, false) };
         if classify_run_loop_result(result) == RunLoopDisposition::Degrade {
-            state.drain();
+            state.drain(|input| {
+                context.observe(input.event, input.point, input.timestamp_ns);
+            });
             run_non_timeout_owner_step(&stop, (resources, state));
+            context.shutdown();
             return Ok(());
         }
-        state.drain();
+        state.drain(|input| {
+            context.observe(input.event, input.point, input.timestamp_ns);
+        });
         state.reenable_if_requested(resources.tap);
     }
-    state.drain();
+    state.drain(|input| {
+        context.observe(input.event, input.point, input.timestamp_ns);
+    });
     drop(resources);
+    context.shutdown();
     Ok(())
 }
 
@@ -660,6 +676,32 @@ mod tests {
                 disabled: 0,
             }
         );
+    }
+
+    #[test]
+    fn callback_capture_stops_at_the_queue_before_context_resolution() {
+        let state = TapState::new();
+        state.capture_raw(RawInput {
+            event_type: EVENT_RIGHT_MOUSE_DOWN,
+            button: 0,
+            scroll: 0,
+            x: 10.0,
+            y: 20.0,
+            timestamp_ns: 30_000_000,
+        });
+
+        assert_eq!(state.snapshot().processed, 0);
+        let mut observed = None;
+        state.drain(|input| observed = Some(input));
+        assert_eq!(
+            observed,
+            Some(NormalizedInput {
+                event: MouseEvent::ButtonDown(TriggerButton::Right),
+                point: Point::new(10, 20),
+                timestamp_ns: 30_000_000,
+            })
+        );
+        assert_eq!(state.snapshot().processed, 1);
     }
 
     #[test]
