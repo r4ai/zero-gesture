@@ -94,7 +94,12 @@ connecting streams stay nonblocking. Every `Read` and `Write` readiness wait
 recomputes the remaining duration from that same absolute deadline, so
 `read_exact`, `write_all`, slowloris fragments, interruptions, and a saturated
 listen backlog cannot restart a per-syscall timeout. Installing an expired
-deadline is an error and is propagated through the shared core.
+deadline is an error and is propagated through the shared core. An interrupted
+nonblocking `connect` remains pending alongside `EINPROGRESS`, `EALREADY`, and
+`EAGAIN`, then uses the unchanged deadline through `poll` and `SO_ERROR`.
+`DeadlineStream` rejects an expired deadline before configuring the stream or
+allowing client secret access. Accepted streams start with the same bounded
+I/O timeout before the session installs its next absolute deadline.
 
 ### Peer identity and application authentication
 
@@ -130,7 +135,10 @@ operations required by that core.
 Windows `ServerTransport` declares resources in concrete teardown order:
 Named Pipe, secret file, then singleton. Rust therefore releases the
 singleton only after the endpoint resources are gone, allowing immediate
-restart without observing a half-torn-down owner.
+restart without observing a half-torn-down owner. A test-only drop recorder is
+declared after each concrete handle/path, so it records only after that
+resource is released and deterministically fails if the transport field order
+regresses. It adds no production synchronization or hook.
 
 The closed protocol adds the already-decided `SetEnabled` operation from ADR
 0004. It normalizes to the same `ConfigOwner` prepare/commit path as a full
@@ -169,15 +177,17 @@ runtime/configuration path beyond a bounded diagnostic need.
 `proc_pidinfo` results less than or equal to zero are failures. `errno` is
 captured immediately after each FFI call and retained as the source of a
 category-scoped `io::Error`; a positive short task record remains an
-`InvalidData` failure.
+`InvalidData` failure. Verification invokes the same private FFI path with an
+invalid PID and observes the actual nonzero captured errno rather than
+fabricating a helper result.
 
 ## Verification
 
 `contracts/p04b1-macos-uds-control.json` maps each independently falsifiable
 P04b1 obligation to one independently named test.
 
-The manifest records `O = 36`, `O_v = 36`, `U = 0`, and `O_v / O = 100%`.
-Its logical-case inventory is `T = 36`, `T_u = 3`, `T_i = 31`, `T_e = 2`,
+The manifest records `O = 38`, `O_v = 38`, `U = 0`, and `O_v / O = 100%`.
+Its logical-case inventory is `T = 38`, `T_u = 5`, `T_i = 31`, `T_e = 2`,
 `T_r = 0`, `P = 0`, `D = 0`, and `F = 0`. The process-helper test entry is a
 fixture entry point and is not counted as a logical case when its helper
 environment is absent.
@@ -186,9 +196,10 @@ The official `macos-26` Apple Silicon job keeps all eight P04a packaged cases
 and additionally runs:
 
 - macOS library/process tests over real Unix sockets and configuration files;
-- literal directory/regular-file modes, owner, symlink/object-type, atomic quarantine,
-  adversarial replacement, stale/owned cleanup, singleton, slowloris/backlog
-  deadlines, and actual accepted-path `getpeereid` checks; and
+- literal directory/regular-file modes, owner, symlink/object-type, atomic
+  quarantine, adversarial replacement, stale/owned cleanup, singleton,
+  slowloris/backlog/EINTR/constructor deadlines, actual `proc_pidinfo` failure,
+  and actual accepted-path `getpeereid` checks; and
 - a packaged same-executable Engine/Settings connection proof.
 
 The CI runner cannot create a second login UID without privileged test

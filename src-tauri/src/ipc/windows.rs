@@ -203,8 +203,44 @@ impl Drop for SecurityDescriptor {
     }
 }
 
+#[cfg(test)]
+std::thread_local! {
+    static TRANSPORT_DROP_EVENTS: std::cell::RefCell<Option<Vec<&'static str>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+struct DropMarker(&'static str);
+
+#[cfg(test)]
+impl Drop for DropMarker {
+    fn drop(&mut self) {
+        TRANSPORT_DROP_EVENTS.with(|events| {
+            if let Some(events) = events.borrow_mut().as_mut() {
+                events.push(self.0);
+            }
+        });
+    }
+}
+
+#[cfg(test)]
+fn begin_transport_drop_recording() {
+    TRANSPORT_DROP_EVENTS.with(|events| {
+        let mut events = events.borrow_mut();
+        assert!(events.is_none());
+        *events = Some(Vec::new());
+    });
+}
+
+#[cfg(test)]
+fn finish_transport_drop_recording() -> Vec<&'static str> {
+    TRANSPORT_DROP_EVENTS.with(|events| events.borrow_mut().take().unwrap())
+}
+
 struct Singleton {
     _handle: OwnedHandle,
+    #[cfg(test)]
+    _drop_marker: DropMarker,
 }
 
 impl Singleton {
@@ -219,7 +255,11 @@ impl Singleton {
         if already_exists {
             Ok(None)
         } else {
-            Ok(Some(Self { _handle: handle }))
+            Ok(Some(Self {
+                _handle: handle,
+                #[cfg(test)]
+                _drop_marker: DropMarker("singleton"),
+            }))
         }
     }
 }
@@ -270,6 +310,8 @@ impl Drop for LaunchLock {
 
 struct SecretFile {
     path: PathBuf,
+    #[cfg(test)]
+    _drop_marker: DropMarker,
 }
 
 impl SecretFile {
@@ -315,6 +357,8 @@ impl SecretFile {
         }
         Ok(Self {
             path: path.to_path_buf(),
+            #[cfg(test)]
+            _drop_marker: DropMarker("secret"),
         })
     }
 }
@@ -329,6 +373,8 @@ pub(super) struct Pipe {
     handle: OwnedHandle,
     deadline: Instant,
     server: bool,
+    #[cfg(test)]
+    _drop_marker: DropMarker,
 }
 
 impl Pipe {
@@ -356,6 +402,8 @@ impl Pipe {
             handle: OwnedHandle::from_file(handle, "create Engine named pipe")?,
             deadline: Instant::now() + IO_TIMEOUT,
             server: true,
+            #[cfg(test)]
+            _drop_marker: DropMarker("pipe"),
         })
     }
 
@@ -387,6 +435,8 @@ impl Pipe {
             handle,
             deadline: Instant::now() + timeout,
             server: false,
+            #[cfg(test)]
+            _drop_marker: DropMarker("pipe"),
         })
     }
 
@@ -1523,16 +1573,21 @@ mod tests {
     }
 
     #[test]
-    fn teardown_then_immediate_restart_reacquires_a_clean_endpoint() {
-        let (directory, suffix, control) = fixture();
-        for _ in 0..8 {
-            let server = EngineServer::for_test(directory.path(), &suffix)
-                .unwrap()
-                .expect("singleton must be available after teardown");
-            assert!(control.endpoint.secret_path.exists());
-            drop(server);
-            assert!(!control.endpoint.secret_path.exists());
-        }
+    fn server_transport_drops_pipe_and_secret_before_singleton() {
+        let (directory, suffix, _control) = fixture();
+        let server = EngineServer::for_test(directory.path(), &suffix)
+            .unwrap()
+            .unwrap();
+
+        begin_transport_drop_recording();
+        drop(server);
+
+        // Each marker is declared after the concrete handle/path it observes,
+        // so this sequence is recorded only after that resource is released.
+        assert_eq!(
+            finish_transport_drop_recording(),
+            ["pipe", "secret", "singleton"]
+        );
     }
 
     #[test]

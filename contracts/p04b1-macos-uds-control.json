@@ -226,10 +226,24 @@
     },
     {
       "id": "P04B1-IPC-008",
-      "obligation": "Windows transport teardown releases pipe and secret resources before an immediate singleton restart.",
+      "obligation": "Actual Windows ServerTransport field destruction completes pipe and secret cleanup before singleton release.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/ipc/windows.rs",
-      "evidence_name": "teardown_then_immediate_restart_reacquires_a_clean_endpoint"
+      "evidence_name": "server_transport_drops_pipe_and_secret_before_singleton"
+    },
+    {
+      "id": "P04B1-IPC-009",
+      "obligation": "An EINTR result from macOS nonblocking connect remains pending under the original absolute deadline.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "interrupted_nonblocking_connect_is_classified_as_pending"
+    },
+    {
+      "id": "P04B1-IPC-010",
+      "obligation": "A macOS DeadlineStream cannot be constructed with an already-expired deadline.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "deadline_stream_constructor_rejects_an_expired_deadline"
     },
     {
       "id": "P04B1-CONFIG-005",
@@ -247,10 +261,10 @@
     },
     {
       "id": "P04B1-PROCESS-003",
-      "obligation": "A zero proc_pidinfo result is a failure whose captured errno remains available as diagnostic source context.",
+      "obligation": "Actual proc_pidinfo failure for an invalid PID preserves its captured nonzero errno as diagnostic source context.",
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/ipc/macos.rs",
-      "evidence_name": "proc_pidinfo_zero_failure_preserves_errno_as_the_error_source"
+      "evidence_name": "invalid_proc_pidinfo_pid_preserves_the_actual_errno_source"
     }
   ]
 }

@@ -1,4 +1,4 @@
-use super::core::{ControlError, ACCEPT_POLL_INTERVAL, RETRY_INTERVAL};
+use super::core::{ControlError, ACCEPT_POLL_INTERVAL, IO_TIMEOUT, RETRY_INTERVAL};
 use super::protocol::AUTH_SECRET_BYTES;
 use log::warn;
 use std::ffi::CString;
@@ -261,7 +261,7 @@ impl ServerTransport {
         while !stop.load(Ordering::Acquire) {
             match self.listener.accept() {
                 Ok((stream, _)) => {
-                    let stream = DeadlineStream::new(stream, Instant::now())?;
+                    let stream = DeadlineStream::new(stream, Instant::now() + IO_TIMEOUT)?;
                     if let Err(error) = verify_peer(stream.as_raw_fd(), self.expected_peer_uid) {
                         warn!("rejected macOS IPC peer: {error}");
                         continue;
@@ -291,6 +291,9 @@ pub(super) struct DeadlineStream {
 
 impl DeadlineStream {
     fn new(stream: UnixStream, deadline: Instant) -> Result<Self, ControlError> {
+        if Instant::now() >= deadline {
+            return Err(ControlError::Timeout);
+        }
         stream
             .set_nonblocking(true)
             .map_err(|error| endpoint_io("configure Unix control connection", error))?;
@@ -455,10 +458,7 @@ fn connect_nonblocking(path: &Path, deadline: Instant) -> Result<UnixStream, Con
     };
     if connected != 0 {
         let error = io::Error::last_os_error();
-        if !matches!(
-            error.raw_os_error(),
-            Some(libc::EINPROGRESS | libc::EALREADY | libc::EAGAIN)
-        ) {
+        if !connect_is_pending(&error) {
             return Err(connect_error(error));
         }
         poll_until(owned_fd.as_raw_fd(), libc::POLLOUT, deadline).map_err(connect_wait_error)?;
@@ -484,6 +484,13 @@ fn connect_nonblocking(path: &Path, deadline: Instant) -> Result<UnixStream, Con
         }
     }
     Ok(UnixStream::from(owned_fd))
+}
+
+fn connect_is_pending(error: &io::Error) -> bool {
+    matches!(
+        error.raw_os_error(),
+        Some(libc::EINPROGRESS | libc::EALREADY | libc::EAGAIN | libc::EINTR)
+    )
 }
 
 fn configure_nonblocking(fd: RawFd) -> Result<(), ControlError> {
@@ -878,6 +885,10 @@ fn generate_secret() -> [u8; AUTH_SECRET_BYTES] {
 pub(super) fn process_resources() -> Result<(u32, u32, u64), ControlError> {
     let pid = i32::try_from(std::process::id())
         .map_err(|_| ControlError::Io(io::Error::other("process id exceeds macOS range")))?;
+    process_resources_for_pid(pid)
+}
+
+fn process_resources_for_pid(pid: libc::c_int) -> Result<(u32, u32, u64), ControlError> {
     let mut task = MaybeUninit::<libc::proc_taskinfo>::uninit();
     let task_bytes = unsafe {
         libc::proc_pidinfo(
@@ -1578,6 +1589,22 @@ mod tests {
     }
 
     #[test]
+    fn deadline_stream_constructor_rejects_an_expired_deadline() {
+        let (stream, _peer) = UnixStream::pair().unwrap();
+        assert!(matches!(
+            DeadlineStream::new(stream, Instant::now()),
+            Err(ControlError::Timeout)
+        ));
+    }
+
+    #[test]
+    fn interrupted_nonblocking_connect_is_classified_as_pending() {
+        assert!(connect_is_pending(&io::Error::from_raw_os_error(
+            libc::EINTR
+        )));
+    }
+
+    #[test]
     fn disconnected_uds_client_releases_only_its_candidate() {
         let server = RunningServer::start();
         let mut session = super::super::core::Session::connect(&server.control.endpoint).unwrap();
@@ -1638,15 +1665,10 @@ mod tests {
     }
 
     #[test]
-    fn proc_pidinfo_zero_failure_preserves_errno_as_the_error_source() {
+    fn invalid_proc_pidinfo_pid_preserves_the_actual_errno_source() {
         use std::error::Error;
 
-        let error = require_positive_proc_result(
-            0,
-            "test proc_pidinfo",
-            io::Error::from_raw_os_error(libc::ESRCH),
-        )
-        .unwrap_err();
+        let error = process_resources_for_pid(libc::c_int::MAX).unwrap_err();
         let ControlError::Io(error) = error else {
             panic!("expected contextual I/O failure");
         };
@@ -1654,12 +1676,11 @@ mod tests {
             .get_ref()
             .and_then(|source| source.downcast_ref::<OperationIoError>())
             .unwrap();
-        assert_eq!(context.operation, "test proc_pidinfo");
-        assert_eq!(
-            Error::source(context)
-                .and_then(|source| source.downcast_ref::<io::Error>())
-                .and_then(io::Error::raw_os_error),
-            Some(libc::ESRCH)
-        );
+        assert_eq!(context.operation, "read macOS process task information");
+        let raw_errno = Error::source(context)
+            .and_then(|source| source.downcast_ref::<io::Error>())
+            .and_then(io::Error::raw_os_error)
+            .unwrap();
+        assert_ne!(raw_errno, 0);
     }
 }
