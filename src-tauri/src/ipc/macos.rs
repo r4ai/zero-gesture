@@ -7,12 +7,12 @@ use std::io::{self, Read, Write};
 use std::marker::PhantomData;
 use std::mem::{size_of, MaybeUninit};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
-use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 const RUNTIME_DIRECTORY: &str = "dev.r4ai.zero-gesture";
 const DIRECTORY_MODE: u32 = 0o700;
@@ -121,7 +121,7 @@ impl Endpoint {
         }
         let stream = connect_nonblocking(&self.socket_path, deadline)?;
         verify_peer(stream.as_raw_fd(), self.effective_uid)?;
-        Ok(DeadlineStream::new(stream, deadline)?)
+        DeadlineStream::new(stream, deadline)
     }
 
     pub(super) fn read_secret(&self) -> Result<[u8; AUTH_SECRET_BYTES], ControlError> {
@@ -461,8 +461,7 @@ fn connect_nonblocking(path: &Path, deadline: Instant) -> Result<UnixStream, Con
         ) {
             return Err(connect_error(error));
         }
-        poll_until(owned_fd.as_raw_fd(), libc::POLLOUT, deadline)
-            .map_err(|error| connect_wait_error(error))?;
+        poll_until(owned_fd.as_raw_fd(), libc::POLLOUT, deadline).map_err(connect_wait_error)?;
         let mut socket_error = 0;
         let mut socket_error_bytes = size_of::<libc::c_int>() as libc::socklen_t;
         if unsafe {
@@ -713,7 +712,7 @@ fn validate_metadata(
     Ok(())
 }
 
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct PathIdentity {
     device: u64,
     inode: u64,
@@ -972,9 +971,11 @@ mod tests {
     };
     use super::*;
     use crate::config::{self, ConfigDocument, ConfigOwner};
+    use std::os::unix::fs::PermissionsExt;
     use std::process::{Child, Command, Stdio};
     use std::sync::atomic::AtomicU64;
     use std::sync::Arc;
+    use std::time::Duration;
     use tempfile::TempDir;
 
     static NEXT_SUFFIX: AtomicU64 = AtomicU64::new(1);
