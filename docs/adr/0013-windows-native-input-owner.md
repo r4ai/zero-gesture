@@ -98,10 +98,13 @@ or unavailable context passes the physical event without starting. These
 constants are conservative correctness bounds, not a final P06 latency
 acceptance claim.
 
-The mailbox writer publishes fields before a release version store. Readers
-load the opening version with acquire semantics, load fields relaxed, execute
-an acquire fence, and only then validate the closing version. This is the
-canonical seqlock ordering on ARM64 as well as x86-64.
+The mailbox writer marks the version odd with an acquire-release read-modify-
+write before relaxed payload stores, then closes publication with a release
+version store. Readers load the opening version with acquire semantics, load
+fields relaxed, execute an acquire fence, and only then validate the closing
+version. Those orderings provide the weak-memory guarantee; the concurrent
+stress test guards complete-value behavior but is not treated as proof of
+ARM64 ordering.
 
 The context contains a dense `BindingSetId` and opaque HWND-derived
 `TargetToken`. Target activation occurs later in the action lane. The callback
@@ -131,10 +134,11 @@ Each non-empty transition posts a `WM_APP` wakeup. The existing 100 ms safety
 timer also drains both lanes, so a transient native message-post failure cannot
 strand bounded work indefinitely.
 
-The renderer lane reserves one terminal slot from start through end. Points and
-labels are lossy when only that terminal slot remains. The Hook pump only uses
-nonblocking sends to a renderer owner; overlay start, generation replacement,
-shutdown, and join occur on that owner thread.
+The renderer lane, Hook-pump-to-renderer-owner queue, and renderer-owner-to-
+overlay queue each reserve one terminal slot from accepted start through end.
+Points and labels are lossy when only that terminal slot remains. The Hook pump
+only uses nonblocking sends to a renderer owner; overlay start, generation
+replacement, shutdown, and join occur on that owner thread.
 
 The overlay has one 64-entry bounded command queue. Commands remain there until
 the Win32 pump consumes them; `PostThreadMessageW` carries only one coalesced
@@ -142,6 +146,11 @@ wakeup and never a command payload. A failed wakeup leaves an accepted terminal
 in the bounded queue for the overlay safety timer. Full/disconnected terminal
 delivery and renderer termination are reported as faults, so `InputKernel`
 follows its replay/cancel and bypass policy without delaying physical input.
+Asynchronous renderer-owner death first discards not-yet-executed activation
+or action work, terminalizes any already-suppressed session through
+`RendererFault` and `Shutdown`, drains the bounded replay lane, and only then
+allows fatal teardown. A pending physical up therefore cannot strand a
+suppressed down.
 
 The action message loop reports activation ready/failed, injection started,
 completion, before-injection failure, and after-injection failure through
@@ -172,9 +181,9 @@ not enter the callback.
 
 ## Contract and complexity accounting
 
-The P03c manifest has 18 independent obligations and 18 unique runnable cases:
-`O = 18`, `O_v = 18`, `U = 0`. No evidence pair appears in P02, P03a, P03b,
-or more than once in P03c. Logical contract cases are `T = 18`, `T_r = 0`,
+The P03c manifest has 21 independent obligations and 21 unique runnable cases:
+`O = 21`, `O_v = 21`, `U = 0`. No evidence pair appears in P02, P03a, P03b,
+or more than once in P03c. Logical contract cases are `T = 21`, `T_r = 0`,
 `P = 0`, `D = 0`, and `F = 0`.
 
 No dependency is added. Fixed lanes and one latest-value mailbox replace the

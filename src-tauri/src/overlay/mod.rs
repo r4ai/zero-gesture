@@ -118,12 +118,41 @@ pub(crate) struct OverlayClient {
     sender: Sender<OverlayCommand>,
     thread_id: Arc<AtomicU32>,
     wake_pending: Arc<AtomicBool>,
+    terminal_reserved: bool,
 }
 
 impl OverlayClient {
-    pub(crate) fn try_send(&self, command: OverlayCommand) -> OverlayDelivery {
+    pub(crate) fn try_send(&mut self, command: OverlayCommand) -> OverlayDelivery {
+        let start = matches!(&command, OverlayCommand::StartGesture);
+        let lossy = matches!(
+            &command,
+            OverlayCommand::TrackPoint { .. } | OverlayCommand::UpdateLabel(_)
+        );
+        let end = matches!(&command, OverlayCommand::EndGesture);
+        let capacity = self.sender.capacity().expect("overlay queue is bounded");
+        if start && (self.terminal_reserved || self.sender.len().saturating_add(2) > capacity) {
+            return OverlayDelivery::Full;
+        }
+        if lossy
+            && self
+                .sender
+                .len()
+                .saturating_add(usize::from(self.terminal_reserved))
+                >= capacity
+        {
+            return OverlayDelivery::Full;
+        }
+        if end && !self.terminal_reserved {
+            return OverlayDelivery::Fault;
+        }
         match self.sender.try_send(command) {
-            Ok(()) => {}
+            Ok(()) => {
+                if start {
+                    self.terminal_reserved = true;
+                } else if end {
+                    self.terminal_reserved = false;
+                }
+            }
             Err(TrySendError::Full(_)) => return OverlayDelivery::Full,
             Err(TrySendError::Disconnected(_)) => return OverlayDelivery::Fault,
         }
@@ -310,6 +339,7 @@ pub(crate) fn spawn(runtime: Arc<RuntimeConfig>) -> io::Result<(OverlayClient, J
             sender: overlay_tx,
             thread_id,
             wake_pending,
+            terminal_reserved: false,
         },
         handle,
     ))
@@ -356,16 +386,23 @@ mod tests {
     fn failed_wakeup_keeps_an_accepted_terminal_in_the_bounded_queue() {
         use super::{OverlayClient, OverlayCommand, OverlayDelivery};
         use crossbeam_channel::bounded;
-        use std::sync::atomic::{AtomicBool, AtomicU32};
+        use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
         use std::sync::Arc;
 
-        let (sender, receiver) = bounded(1);
-        let client = OverlayClient {
+        let (sender, receiver) = bounded(2);
+        let mut client = OverlayClient {
             sender,
             thread_id: Arc::new(AtomicU32::new(0)),
-            wake_pending: Arc::new(AtomicBool::new(false)),
+            wake_pending: Arc::new(AtomicBool::new(true)),
+            terminal_reserved: false,
         };
 
+        assert!(matches!(
+            client.try_send(OverlayCommand::StartGesture),
+            OverlayDelivery::Accepted
+        ));
+        receiver.try_recv().unwrap();
+        client.wake_pending.store(false, Ordering::Release);
         assert!(matches!(
             client.try_send(OverlayCommand::EndGesture),
             OverlayDelivery::Fault
@@ -373,6 +410,44 @@ mod tests {
         assert!(matches!(
             receiver.try_recv(),
             Ok(OverlayCommand::EndGesture)
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn overlay_queue_reserves_terminal_during_lossy_saturation() {
+        use super::{OverlayClient, OverlayCommand, OverlayDelivery};
+        use crossbeam_channel::bounded;
+        use std::sync::atomic::{AtomicBool, AtomicU32};
+        use std::sync::Arc;
+
+        let (sender, receiver) = bounded(3);
+        let mut client = OverlayClient {
+            sender,
+            thread_id: Arc::new(AtomicU32::new(0)),
+            wake_pending: Arc::new(AtomicBool::new(true)),
+            terminal_reserved: false,
+        };
+
+        assert!(matches!(
+            client.try_send(OverlayCommand::StartGesture),
+            OverlayDelivery::Accepted
+        ));
+        assert!(matches!(
+            client.try_send(OverlayCommand::TrackPoint { x: 1, y: 2 }),
+            OverlayDelivery::Accepted
+        ));
+        assert!(matches!(
+            client.try_send(OverlayCommand::UpdateLabel(None)),
+            OverlayDelivery::Full
+        ));
+        assert!(matches!(
+            client.try_send(OverlayCommand::EndGesture),
+            OverlayDelivery::Accepted
+        ));
+        assert!(matches!(
+            receiver.try_iter().last(),
+            Some(OverlayCommand::EndGesture)
         ));
     }
 }

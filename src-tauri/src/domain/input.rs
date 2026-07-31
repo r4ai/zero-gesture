@@ -262,11 +262,7 @@ impl InputKernel {
         }
 
         match input {
-            InputEvent::Shutdown => {
-                self.machine.cancel();
-                self.state = KernelState::Bypass;
-                InputDecision::pass(InputMode::Bypass)
-            }
+            InputEvent::Shutdown => self.handle_shutdown(),
             event @ (InputEvent::ExecutorFault | InputEvent::RendererFault) => {
                 self.handle_owner_fault(owner_fault(event))
             }
@@ -691,6 +687,26 @@ impl InputKernel {
                 self.state = KernelState::Bypass;
                 InputDecision::pass(InputMode::Bypass)
             }
+        }
+    }
+
+    fn handle_shutdown(&mut self) -> InputDecision {
+        self.machine.cancel();
+        let state = std::mem::replace(&mut self.state, KernelState::Bypass);
+        let KernelState::ReplayPending(pending) = state else {
+            return InputDecision::pass(InputMode::Bypass);
+        };
+        let mut effects = InputEffects::default();
+        effects.push(InputEffect::ReplayTrigger {
+            session: pending.id,
+            trigger: pending.trigger,
+            down_at: pending.down_at,
+            up_at: pending.last_point,
+        });
+        InputDecision {
+            disposition: Disposition::Pass,
+            effects,
+            mode: InputMode::Bypass,
         }
     }
 

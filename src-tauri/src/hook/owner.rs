@@ -256,6 +256,13 @@ impl NativeInputOwner {
         self.handle_owner_event(InputEvent::RendererFault);
     }
 
+    pub(super) fn renderer_terminated(&mut self) {
+        self.actions = FixedLane::new();
+        self.action_wakeup = false;
+        self.renderer_fault();
+        self.handle_owner_event(InputEvent::Shutdown);
+    }
+
     pub(super) fn shutdown(&mut self) {
         self.handle_owner_event(InputEvent::Shutdown);
         self.actions = FixedLane::new();
@@ -685,6 +692,45 @@ mod tests {
             }) if queued == session
         ));
         assert!(owner.renderer.queue.len <= RENDER_CAPACITY);
+    }
+
+    #[test]
+    fn async_renderer_termination_replays_active_suppression_before_shutdown() {
+        let (_directory, _writer, mut owner) = setup();
+        let down = Point::new(10, 20);
+        context(&mut owner, 1, down, 1);
+        assert_eq!(
+            owner.callback(MouseEvent::ButtonDown(TriggerButton::Right), down, 1),
+            Disposition::Suppress
+        );
+        let ActionWork::Activate { session, .. } = owner.pop_action().unwrap() else {
+            panic!("expected activation");
+        };
+        assert!(owner.actions.push(ActionWork::Activate {
+            session,
+            target: TargetToken(17),
+        }));
+
+        owner.renderer_terminated();
+
+        assert!(matches!(
+            owner.pop_action(),
+            Some(ActionWork::Replay {
+                session: replayed,
+                trigger: TriggerButton::Right,
+                down_at,
+                up_at,
+            }) if replayed == session && down_at == down && up_at == down
+        ));
+        assert!(owner.pop_action().is_none());
+        assert_eq!(
+            owner.callback(
+                MouseEvent::ButtonUp(TriggerButton::Right),
+                Point::new(30, 40),
+                2
+            ),
+            Disposition::Pass
+        );
     }
 
     #[test]

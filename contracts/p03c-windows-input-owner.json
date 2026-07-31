@@ -16,7 +16,7 @@
     },
     {
       "id": "P03C-CONTEXT-002",
-      "obligation": "The ARM64-safe seqlock reader applies an acquire fence before final version validation and concurrent readers observe only complete published contexts.",
+      "obligation": "The mailbox writer marks its version odd with AcqRel before relaxed payload stores and closes with Release; the reader uses an acquire fence before final validation. Concurrent stress guards complete-value behavior but is not claimed as weak-memory proof.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/hook/win32.rs",
       "evidence_name": "concurrent_context_mailbox_reads_never_observe_torn_fields"
@@ -99,6 +99,20 @@
       "evidence_name": "failed_wakeup_keeps_an_accepted_terminal_in_the_bounded_queue"
     },
     {
+      "id": "P03C-RENDER-005",
+      "obligation": "The Hook-pump to renderer-owner queue reserves one terminal slot from accepted Start through End, and lossy point saturation cannot consume that slot.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/hook/win32.rs",
+      "evidence_name": "renderer_owner_queue_reserves_terminal_during_lossy_saturation"
+    },
+    {
+      "id": "P03C-RENDER-006",
+      "obligation": "The renderer-owner to overlay queue reserves one terminal slot from accepted Start through End, and lossy point or label saturation cannot consume that slot.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/overlay/mod.rs",
+      "evidence_name": "overlay_queue_reserves_terminal_during_lossy_saturation"
+    },
+    {
       "id": "P03C-LIFECYCLE-002",
       "obligation": "Engine readiness follows successful native hook and timer installation; an install failure exits nonzero without readiness and a fresh Engine can restart.",
       "runner": "cargo-test",
@@ -125,6 +139,13 @@
       "runner": "cargo-test",
       "evidence_file": "src-tauri/tests/p03_engine_process.rs",
       "evidence_name": "renderer_worker_termination_exits_engine"
+    },
+    {
+      "id": "P03C-LIFECYCLE-005",
+      "obligation": "Asynchronous renderer-owner death terminalizes an active suppressed-down session through InputKernel, discards stale activation/action work, queues exactly one bounded replay, and enters pass-through before fatal shutdown.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/hook/owner.rs",
+      "evidence_name": "async_renderer_termination_replays_active_suppression_before_shutdown"
     }
   ]
 }

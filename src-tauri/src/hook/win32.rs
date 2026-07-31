@@ -41,6 +41,7 @@ const SAFETY_TIMER_PERIOD_MS: u32 = 100;
 const CONTEXT_SAMPLE_PERIOD_MS: u64 = 4;
 const CONTEXT_PUBLISH_PERIOD_MS: u32 = 25;
 const RENDERER_SHUTDOWN_TIMEOUT_MS: u64 = 500;
+const RENDERER_QUEUE_CAPACITY: usize = 64;
 
 struct HookThreadState {
     owner: NativeInputOwner,
@@ -79,7 +80,7 @@ impl ContextMailbox {
     }
 
     fn publish(&self, context: Option<ContextView>) {
-        let writing = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;
+        let writing = self.sequence.fetch_add(1, Ordering::AcqRel) + 1;
         debug_assert_eq!(writing & 1, 1);
         if let Some(context) = context {
             self.generation.store(context.generation, Ordering::Relaxed);
@@ -166,15 +167,15 @@ impl RendererWorker {
         }
     }
 
-    fn send(&self, command: OverlayCommand) -> bool {
+    fn send(&mut self, command: OverlayCommand) -> bool {
         self.sender
-            .as_ref()
+            .as_mut()
             .is_some_and(|sender| matches!(sender.try_send(command), OverlayDelivery::Accepted))
     }
 
-    fn send_lossy(&self, command: OverlayCommand) -> bool {
+    fn send_lossy(&mut self, command: OverlayCommand) -> bool {
         self.sender
-            .as_ref()
+            .as_mut()
             .is_some_and(|sender| match sender.try_send(command) {
                 OverlayDelivery::Accepted | OverlayDelivery::Full => true,
                 OverlayDelivery::Fault => false,
@@ -247,11 +248,12 @@ struct RendererClient {
     sender: Sender<RendererRequest>,
     status: Receiver<RendererStatus>,
     handle: Option<JoinHandle<()>>,
+    terminal_reserved: bool,
 }
 
 impl RendererClient {
     fn spawn() -> std::io::Result<Self> {
-        let (sender, requests) = bounded(64);
+        let (sender, requests) = bounded(RENDERER_QUEUE_CAPACITY);
         let (status_tx, status) = bounded(1);
         let handle = thread::Builder::new()
             .name("renderer-owner".to_string())
@@ -260,12 +262,46 @@ impl RendererClient {
             sender,
             status,
             handle: Some(handle),
+            terminal_reserved: false,
         })
     }
 
-    fn try_send(&self, request: RendererRequest, lossy: bool) -> bool {
+    fn try_send(&mut self, request: RendererRequest, lossy: bool) -> bool {
+        let start = matches!(&request, RendererRequest::Start { .. });
+        let end = matches!(
+            &request,
+            RendererRequest::Command {
+                command: OverlayCommand::EndGesture,
+                ..
+            }
+        );
+        if start
+            && (self.terminal_reserved
+                || self.sender.len().saturating_add(2) > RENDERER_QUEUE_CAPACITY)
+        {
+            return false;
+        }
+        if lossy
+            && self
+                .sender
+                .len()
+                .saturating_add(usize::from(self.terminal_reserved))
+                >= RENDERER_QUEUE_CAPACITY
+        {
+            return true;
+        }
+        if end && !self.terminal_reserved {
+            return false;
+        }
         match self.sender.try_send(request) {
-            Ok(()) => true,
+            Ok(()) => {
+                if start {
+                    self.terminal_reserved = true;
+                } else if end {
+                    self.terminal_reserved = false;
+                }
+                true
+            }
             Err(TrySendError::Full(_)) if lossy => true,
             Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => false,
         }
@@ -452,8 +488,8 @@ pub(super) fn run_loop_win32(
 
 fn poll_worker_failure() -> Option<HookFailure> {
     HOOK_STATE.with(|cell| {
-        let state = cell.borrow();
-        let state = state.as_ref()?;
+        let mut state = cell.borrow_mut();
+        let state = state.as_mut()?;
         if state
             .context_handle
             .as_ref()
@@ -461,10 +497,14 @@ fn poll_worker_failure() -> Option<HookFailure> {
         {
             return Some(HookFailure::new("context", "terminated unexpectedly"));
         }
-        state
-            .renderer
-            .has_failed()
-            .then(|| HookFailure::new("renderer", "terminated unexpectedly"))
+        if !state.renderer.has_failed() {
+            return None;
+        }
+        state.owner.renderer_terminated();
+        while let Some(work) = state.owner.pop_action() {
+            execute_action_work(state, work);
+        }
+        Some(HookFailure::new("renderer", "terminated unexpectedly"))
     })
 }
 
@@ -974,11 +1014,65 @@ mod tests {
             sender,
             status,
             handle: None,
+            terminal_reserved: false,
         };
         let started = std::time::Instant::now();
 
+        let mut client = client;
         assert!(!client.try_send(RendererRequest::Shutdown, false));
         assert!(started.elapsed() < Duration::from_millis(50));
         drop(requests);
+    }
+
+    #[test]
+    fn renderer_owner_queue_reserves_terminal_during_lossy_saturation() {
+        let (sender, requests) = bounded(RENDERER_QUEUE_CAPACITY);
+        let (_status_tx, status) = bounded(1);
+        let mut client = RendererClient {
+            sender,
+            status,
+            handle: None,
+            terminal_reserved: false,
+        };
+        let runtime =
+            crate::config::ActiveConfig::from_document(crate::config::ConfigDocument::default())
+                .unwrap()
+                .runtime();
+
+        assert!(client.try_send(
+            RendererRequest::Start {
+                generation: ConfigGeneration(1),
+                runtime,
+            },
+            false,
+        ));
+        for index in 0..RENDERER_QUEUE_CAPACITY {
+            assert!(client.try_send(
+                RendererRequest::Command {
+                    command: OverlayCommand::TrackPoint {
+                        x: index as i32,
+                        y: 0,
+                    },
+                    lossy: true,
+                },
+                true,
+            ));
+        }
+        assert_eq!(requests.len(), RENDERER_QUEUE_CAPACITY - 1);
+        assert!(client.try_send(
+            RendererRequest::Command {
+                command: OverlayCommand::EndGesture,
+                lossy: false,
+            },
+            false,
+        ));
+        assert_eq!(requests.len(), RENDERER_QUEUE_CAPACITY);
+        assert!(matches!(
+            requests.try_iter().last(),
+            Some(RendererRequest::Command {
+                command: OverlayCommand::EndGesture,
+                ..
+            })
+        ));
     }
 }
