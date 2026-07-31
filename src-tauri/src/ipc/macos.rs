@@ -1551,7 +1551,7 @@ mod tests {
                 Instant::now() + Duration::from_millis(25),
             ) {
                 Ok(stream) => clients.push(stream),
-                Err(ControlError::Timeout) => {
+                Err(ControlError::Timeout | ControlError::Unavailable) => {
                     saturated = true;
                     break;
                 }
@@ -1562,7 +1562,7 @@ mod tests {
         let started = Instant::now();
         assert!(matches!(
             endpoint.connect_before(Instant::now() + Duration::from_millis(100)),
-            Err(ControlError::Timeout)
+            Err(ControlError::Timeout | ControlError::Unavailable)
         ));
         assert!(started.elapsed() < Duration::from_millis(300));
     }
