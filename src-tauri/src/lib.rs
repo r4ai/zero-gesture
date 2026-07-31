@@ -370,6 +370,10 @@ pub fn run() {
     }
 }
 
+fn tauri_context() -> tauri::Context {
+    tauri::generate_context!()
+}
+
 #[cfg(windows)]
 fn run_engine() -> Result<(), String> {
     let log_level = log_config::resolve_log_level();
@@ -475,7 +479,7 @@ fn run_engine() -> Result<(), String> {
             }
             Ok(())
         })
-        .build(tauri::generate_context!())
+        .build(tauri_context())
         .map_err(|error| format!("failed to build Engine: {error}"))?;
 
     app.run(|app, event| {
@@ -500,7 +504,7 @@ fn run_engine() -> Result<(), String> {
             tray::setup_macos_packaging_spike(app)?;
             Ok(())
         })
-        .build(tauri::generate_context!())
+        .build(tauri_context())
         .map_err(|error| format!("failed to build macOS Engine: {error}"))?;
 
     app.run(|app, event| {
@@ -584,7 +588,7 @@ fn run_settings() -> Result<(), String> {
             commands::start_window_capture,
             commands::stop_window_capture
         ])
-        .build(tauri::generate_context!())
+        .build(tauri_context())
         .map_err(|error| format!("failed to build Settings: {error}"))?;
 
     app.run(|app, event| {
