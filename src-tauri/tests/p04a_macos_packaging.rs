@@ -119,12 +119,16 @@ fn descendant_commands(root: u32) -> Vec<String> {
     commands
 }
 
-fn content_window_count(probe: &Path, pid: u32) -> usize {
-    String::from_utf8(command_output(probe.to_str().unwrap(), &[&pid.to_string()]).stdout)
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap()
+fn content_window_count(probe: &Path, pid: u32) -> (usize, String) {
+    let output = command_output(probe.to_str().unwrap(), &[&pid.to_string()]);
+    (
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap(),
+        String::from_utf8(output.stderr).unwrap(),
+    )
 }
 
 #[test]
@@ -209,8 +213,18 @@ let count = windows.filter { window in
     let owner = (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value
     let layer = (window[kCGWindowLayer as String] as? NSNumber)?.intValue
     return owner == pid && layer == 0
-}.count
-print(count)
+}
+let details = count.map { window in
+    let name = window[kCGWindowName as String] ?? "<none>"
+    let bounds = window[kCGWindowBounds as String] ?? "<none>"
+    let alpha = window[kCGWindowAlpha as String] ?? "<none>"
+    let onScreen = window[kCGWindowIsOnscreen as String] ?? "<none>"
+    let store = window[kCGWindowStoreType as String] ?? "<none>"
+    let sharing = window[kCGWindowSharingState as String] ?? "<none>"
+    return "name=\(name) bounds=\(bounds) alpha=\(alpha) onScreen=\(onScreen) store=\(store) sharing=\(sharing)"
+}.joined(separator: "\n")
+FileHandle.standardError.write(details.data(using: .utf8)!)
+print(count.count)
 "#,
     )
     .unwrap();
@@ -219,10 +233,10 @@ print(count)
         &[source.to_str().unwrap(), "-o", probe.to_str().unwrap()],
     );
     let _engine = EngineProcess::start(&bundle, |pid| {
+        let (count, details) = content_window_count(&probe, pid);
         assert_eq!(
-            content_window_count(&probe, pid),
-            0,
-            "Engine owned a content window during startup"
+            count, 0,
+            "Engine owned a content window during startup:\n{details}"
         );
     });
 }
