@@ -1,8 +1,8 @@
 # Zero Gesture Architecture Design Document
 
 > [!NOTE]
-> この文書は移行前のWindows実装を説明する。
-> 採用済みのマルチプラットフォーム目標設計と移行ゲートは
+> この文書はP03c時点のWindows実装を説明する。
+> マルチプラットフォーム目標設計と後続移行ゲートは
 > [ADR index](./adr/README.md) を正とする。
 
 ## 1. Overview
@@ -23,27 +23,28 @@ Zero Gesture は、Windows専用の高性能マウスジェスチャーツール
 ```mermaid
 graph TD
     subgraph "Main Process (Rust)"
-        T[Tray Icon Manager] -->|Spawn| H[Hook Thread]
-        T -->|Spawn| O[Overlay Thread]
-        T <-->|Invoke/Events| W[Settings Webview]
-
-        SM[State Manager]
-        note1[Config / Rules]
-        SM -.-> H
+        T[Tray Icon Manager]
+        C[Engine Config Owner] --> P[Two-slot Publication]
+        T <-->|Control IPC| W[Settings Webview]
     end
 
-    subgraph "Hook Thread (Win32 Message Loop)"
+    subgraph "Windows Native Input Owner"
         HM["Mouse Hook (WH_MOUSE_LL)"]
-        GL[Gesture Logic]
+        K[InputKernel]
+        X[Context Worker]
+        A[Bounded Action FIFO]
+        R[Bounded Renderer FIFO]
 
-        HM -->|Raw Coords| GL
-        GL -->|Draw Command| O
-        GL -->|Action| EX[Executor]
+        P -->|Immutable Snapshot| K
+        X -->|Latest Context| K
+        HM -->|Point / Event / Tick| K
+        K --> A
+        K --> R
     end
 
     subgraph "Overlay Thread (Win32 Message Loop)"
-        WIN[Transparent Window]
-
+        R -->|Drop points on overload| O[Bounded Bridge]
+        O --> WIN[Transparent Window]
         WIN --> GDI[GDI Renderer]
     end
 
@@ -52,6 +53,7 @@ graph TD
     end
 
     User((User Input)) --> HM
+    A --> EX[Executor]
     EX -->|"SendInput (keyboard only)"| OS((Windows OS))
 ```
 
@@ -59,18 +61,18 @@ graph TD
 
 ## 3. Component Details
 
-### 3.1. Main Thread (Tauri Entrypoint)
+### 3.1. Engine Lifecycle and IPC Owner
 
-アプリケーションのライフサイクルを管理します。
+Tauri main threadがアプリケーションのライフサイクルを管理し、専用IPC owner threadが設定mutationを単一所有します。
 
 - **Responsibility:**
   - Tauriランタイムの初期化。
   - システムトレイ（タスクトレイ）のアイコンとメニュー管理。
   - Engine Config ownerだけが行う設定ファイルの読み書き（Disk I/O）。
   - 設定画面（Webview）の表示/非表示トグル。
-  - immutable compiled configを二つの固定slotへ保持し、generation/indexをatomic publishする。Windows hookからのread wiringはP03cで行う。
-  - P03cまでの互換動作として、durable commit/publication後、Applied応答前に既存Hook/Overlay worker pairをcommitted configから再生成する。再生成失敗はdiskをrollbackせずEngine全体を終了し、次のbounded restartでcommitted truthを再読込する。workerはdisk writerではない。
-  - Tray labelはworker projection後にTauri main threadへ非同期enqueueする。IPC owner threadは同期menu APIを呼ばず、tray自身の変更はApplied受信後にmain thread上でもlabelを整合する。
+  - immutable compiled configを二つの固定slotへ保持し、generation/indexをatomic publishする。Windows native input ownerはidle時にproven reader protocolでsnapshotを取得し、active gesture/action/replayの終了までgenerationをpinする。
+  - durable commit/publication後もHook threadを再起動しない。Applied observerはnative ownerの生存だけを確認し、次のidle inputが新generationを読む。owner failureはdiskをrollbackせずEngine全体を終了し、次のbounded restartでcommitted truthを再読込する。
+  - Tray labelはApplied後にTauri main threadへ非同期enqueueする。IPC owner threadは同期menu APIを呼ばず、tray自身の変更はApplied受信後にmain thread上でもlabelを整合する。
 
 ### 3.2. Hook Thread (The "Sensor")
 
@@ -81,9 +83,10 @@ UIスレッドのブロックを防ぐため、独立したスレッドでマウ
   - **Low-Level Mouse Hook:** `WH_MOUSE_LL` を使用してマウスイベントをフック。
   - **Event Suppression:** ジェスチャー開始トリガー（例: 右クリック）を検知した場合、OSへのイベント伝播をブロック（`1`をreturn）し、コンテキストメニューの出現を防ぐ。
   - **Gesture Recognition:** マウスの移動ベクトルを計算し、定義されたジェスチャー（例: `Right` -> `Down`）と照合する。
-  - **Context Resolution:** configured trigger down時、callback内で`WindowFromPoint`、foreground fallback、window情報取得、app matching、target activationを同期実行する。これは移行対象の既知hot-path debtである。目標設計ではcallback外Context workerがpointer sampleからcontext/binding/targetを事前解決し、fresh cacheがないtriggerをpassする意図的な安全変更を行う。
-  - **Communication:** 描画commandを`crossbeam-channel`経由で **Overlay Thread** へ送信する。
-  - **Action:** callbackでactionをqueueへ積み、同じHook Threadのmessage loopへpostしてcallback復帰後にkeyboard actionだけを実行する。
+  - **Input owner:** callbackは`MSLLHOOKSTRUCT`のpoint/event/tickを`InputKernel`へ渡し、二slot readerの固定atomic操作と固定長lane reservationだけでpass/suppressを同期決定する。allocation、lock、blocking send、IPC/JSON、log、file I/O、OS query、thread生成、Tauri/WebView callを行わない。
+  - **Context Resolution:** callback外のContext workerが`GetCursorPos`、`WindowFromPoint`、window/process情報、app matchingを事前解決し、一つのlatest-value mailboxへgeneration/binding/target/point/tickを公開する。exact point、100 ms以内、same generationを満たさないtriggerはfail-openでpassする。
+  - **Communication:** callbackはaction 16件、renderer 64件の独立した固定長FIFOへnumeric workだけをenqueueする。renderer point/labelはoverload時にdropできるが、start/end用terminal slotを予約する。
+  - **Action:** target activation、keyboard action、trigger replayは同じaction FIFOをHook Threadのmessage loopがcallback復帰後に実行する。activation resultとinjection/completion failureは`InputKernel`へ戻す。
 
 ### 3.3. Overlay Thread (The "Visuals")
 
@@ -93,7 +96,7 @@ TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成
 - **Responsibility:**
   - **Window Creation:** `WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW` スタイルの全画面透明ウィンドウを作成。
   - **Rendering:** Hook Threadから送られてくる座標データを元に、GDI（`Polyline` + バックバッファビットマップ）を用いてラインを描画する。移行でもGDIを維持し、別rendererの採用は性能契約の未達を測定した後に別ADRで判断する。Direct2Dは未実装（常にerrorを返すstubのみ）。
-  - **Lifecycle:** ジェスチャー中のみ可視化（`ShowWindow`）し、終了後は非表示＆描画クリアを行うことでリソースを節約。
+  - **Lifecycle:** ジェスチャー中のみ可視化（`ShowWindow`）し、終了後は非表示＆描画クリアを行う。renderer workerはgesture start時にpin済みgenerationへlazy起動し、次generationの最初のgestureでのみ置換する。bridge channelは64件にbounded化し、point/labelはdrop-on-full、lifecycle failureはInput ownerへ返す。
 
 ### 3.4. Settings UI (The "Interface")
 
@@ -156,6 +159,9 @@ TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成
 │   │   ├── config/             // schema v2、legacy migration、immutable compile
 │   │   ├── commands.rs         // Tauri IPC コマンドハンドラ
 │   │   ├── executor.rs         // アクション実行 (SendInput等)
+│   │   ├── hook/
+│   │   │   ├── owner.rs       // InputKernel、config pin、固定action/renderer lane
+│   │   │   └── win32.rs       // WH_MOUSE_LL、context worker、owner message loop
 │   │   ├── domain/
 │   │   │   ├── mod.rs         // portable gesture module interface
 │   │   │   ├── recognition.rs // ジェスチャー方向計算

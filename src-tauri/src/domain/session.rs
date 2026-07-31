@@ -112,6 +112,7 @@ pub(crate) struct GestureConfig {
 }
 
 impl GestureConfig {
+    #[cfg(test)]
     fn has_any_binding_for_trigger(&self, trigger: TriggerButton) -> bool {
         self.binding_sets.iter().any(|set| {
             set.release_bindings
@@ -330,6 +331,7 @@ impl GestureMachine {
     ///
     /// Windows uses this before performing its existing target activation and
     /// application matching. Active sessions never request fresh context.
+    #[cfg(test)]
     pub(crate) fn can_start(&self, trigger: TriggerButton) -> bool {
         matches!(self.state, SessionState::Idle) && self.config.has_any_binding_for_trigger(trigger)
     }

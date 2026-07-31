@@ -149,6 +149,10 @@ impl ConfigSnapshotGuard<'_> {
     pub(crate) fn generation(&self) -> u64 {
         self.0.generation()
     }
+
+    pub(crate) fn runtime(&self) -> Arc<RuntimeConfig> {
+        Arc::clone(&self.0)
+    }
 }
 
 impl Deref for ConfigSnapshotGuard<'_> {

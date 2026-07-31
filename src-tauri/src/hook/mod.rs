@@ -4,35 +4,26 @@
 //! decoding, semantic validation, application selector compilation, and
 //! binding compilation happen in [`crate::config`] before this thread starts.
 
+mod owner;
 #[cfg(windows)]
 mod win32;
 
 use std::io;
 use std::sync::atomic::AtomicU32;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
-use crossbeam_channel::Sender;
 use log::info;
 #[cfg(not(windows))]
 use log::warn;
 
-use crate::config::RuntimeConfig;
-use crate::overlay::OverlayCommand;
+use crate::config::ConfigSnapshotReader;
 
-/// Messages sent from the main thread to the hook thread.
-pub enum HookControl {
-    /// Request the hook thread to stop and exit.
-    Shutdown,
-}
-
-/// Spawns the hook thread with a compiled immutable configuration snapshot.
-pub fn spawn(
-    runtime: Arc<RuntimeConfig>,
-    overlay_tx: Sender<OverlayCommand>,
-) -> io::Result<(Sender<HookControl>, Arc<AtomicU32>, JoinHandle<()>)> {
+/// Spawns the native input owner with the Engine publication reader.
+pub fn spawn(reader: ConfigSnapshotReader) -> io::Result<(Arc<AtomicU32>, JoinHandle<()>)> {
     info!("starting hook thread");
-    let (control_tx, control_rx) = crossbeam_channel::unbounded();
     let tid = Arc::new(AtomicU32::new(0));
     let tid_clone = tid.clone();
 
@@ -40,14 +31,29 @@ pub fn spawn(
         .name("hook-thread".to_string())
         .spawn(move || {
             #[cfg(windows)]
-            win32::run_loop_win32(runtime, overlay_tx, tid_clone, control_rx);
+            win32::run_loop_win32(reader, tid_clone);
             #[cfg(not(windows))]
             {
-                let _ = (runtime, overlay_tx, tid_clone, control_rx);
+                let _ = (reader, tid_clone);
                 warn!("Mouse hook is only supported on Windows");
             }
         })?;
-    info!("hook thread spawned");
-
-    Ok((control_tx, tid, handle))
+    for _ in 0..1_000 {
+        if tid.load(Ordering::Acquire) != 0 {
+            info!("hook thread spawned");
+            return Ok((tid, handle));
+        }
+        if handle.is_finished() {
+            let _ = handle.join();
+            return Err(io::Error::other(
+                "native input owner exited before publishing readiness",
+            ));
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    drop(handle);
+    Err(io::Error::new(
+        io::ErrorKind::TimedOut,
+        "native input owner readiness timed out",
+    ))
 }

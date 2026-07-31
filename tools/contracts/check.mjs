@@ -32,6 +32,14 @@ const MANIFESTS = [
     idDescription:
       "P03B-OWNER-NNN, P03B-RCU-NNN, P03B-CODEC-NNN, P03B-IPC-NNN, P03B-RECOVERY-NNN, or P03B-PERSIST-NNN",
   },
+  {
+    label: "P03c",
+    path: "contracts/p03c-windows-input-owner.json",
+    idPattern:
+      /^P03C-(?:HOT|CONTEXT|GENERATION|INPUT|ACTION|OVERLOAD|REPLAY|RENDER|LIFECYCLE)-\d{3}$/,
+    idDescription:
+      "P03C-HOT-NNN, P03C-CONTEXT-NNN, P03C-GENERATION-NNN, P03C-INPUT-NNN, P03C-ACTION-NNN, P03C-OVERLOAD-NNN, P03C-REPLAY-NNN, P03C-RENDER-NNN, or P03C-LIFECYCLE-NNN",
+  },
 ]
 const REPO_ROOT = path.resolve(fileURLToPath(new URL("../..", import.meta.url)))
 

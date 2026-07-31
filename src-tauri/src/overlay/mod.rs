@@ -34,7 +34,7 @@ mod direct2d;
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
-use crossbeam_channel::{unbounded, Sender};
+use crossbeam_channel::{bounded, Sender};
 use log::info;
 
 #[cfg(not(windows))]
@@ -192,7 +192,7 @@ pub(crate) fn spawn(
     runtime: Arc<RuntimeConfig>,
 ) -> std::io::Result<(Sender<OverlayCommand>, JoinHandle<()>)> {
     info!("starting overlay thread");
-    let (overlay_tx, overlay_rx) = unbounded();
+    let (overlay_tx, overlay_rx) = bounded(64);
 
     // Snapshot config before entering the thread.
     let overlay_config = {
