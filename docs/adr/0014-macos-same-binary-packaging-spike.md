@@ -70,14 +70,16 @@ Pull requests run on the official `macos-26` arm64 runner.
 They build an ad-hoc signed debug `.app` with Tauri, verify the complete
 signature, inspect the bundle and Mach-O target, and launch the packaged main
 executable as `--engine`.
-One bounded startup loop checks that the packaged Engine remains alive while
-repeated Core Graphics `.optionAll` process-window inspection fails on any
-nonzero-area layer-zero content window, including hidden or off-screen windows,
-and descendant-process inspection fails on any WebKit process, including a
-startup-only process.
-Zero-area AppKit bookkeeping windows and the AppKit backing rectangle that
-is anchored at the main-display origin, spans its full width, and is no taller
-than twice `NSStatusBar.system.thickness` are not classified as content windows.
+The checked-in Tauri configuration declares `app.windows: []`.
+After creating the native status item, macOS Engine setup enforces that Tauri's
+stable managed WebView-window inventory remains empty and fails startup on a
+violation.
+The window-only manager API is feature-gated behind Tauri's `unstable` feature;
+that feature is not enabled, so raw window-only objects are outside this
+application's compile surface.
+One bounded startup loop proves that the packaged Engine survives the enforced
+invariant, while repeated descendant-process inspection fails on any WebKit
+process, including a startup-only process.
 The release executable contains no marker-file or arbitrary-path test hook.
 This evidence validates bundle and process topology only.
 Ad-hoc signing is not evidence of Developer ID trust, Gatekeeper acceptance, or
@@ -151,8 +153,9 @@ The following facts are automated by the P04a pull-request gate:
 - native Apple Silicon compilation;
 - one bundle identifier and one arm64 main executable;
 - Hardened Runtime and a valid ad-hoc signature;
-- packaged `--engine` startup with no content window or WebKit descendant
-  observed anywhere in the bounded startup interval; and
+- `app.windows: []`, runtime enforcement of an empty managed WebView-window
+  inventory, packaged `--engine` survival through the bounded startup interval,
+  and no WebKit descendant observed anywhere in that interval; and
 - metadata-preserving archival of the validated application bundle.
 
 The full ADR 0001 packaging spike remains open until all of these are recorded

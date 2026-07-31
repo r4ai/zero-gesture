@@ -502,6 +502,11 @@ fn run_engine() -> Result<(), String> {
         .setup(|app| {
             app.manage(ThreadRuntime::settings());
             tray::setup_macos_packaging_spike(app)?;
+            if !app.webview_windows().is_empty() {
+                return Err(
+                    io::Error::other("macOS Engine must not own a managed WebView window").into(),
+                );
+            }
             Ok(())
         })
         .build(tauri_context())
