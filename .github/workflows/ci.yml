@@ -215,6 +215,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
+          components: clippy
           targets: aarch64-apple-darwin
 
       - name: Cache Rust build artifacts
@@ -224,6 +225,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Lint macOS target
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin --all-targets -- -D warnings
 
       - name: Build ad-hoc signed application bundle
         env:

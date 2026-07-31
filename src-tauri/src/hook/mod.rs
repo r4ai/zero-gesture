@@ -9,6 +9,7 @@ mod owner;
 mod win32;
 
 use std::io;
+#[cfg(windows)]
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering;
@@ -58,17 +59,19 @@ pub fn spawn(
         .name("hook-thread".to_string())
         .spawn(move || {
             #[cfg(windows)]
-            let result = panic::catch_unwind(AssertUnwindSafe(|| {
-                win32::run_loop_win32(reader, event_tx.clone())
-            }))
-            .unwrap_or_else(|_| Err(HookFailure::new("hook", "panicked")));
+            let result = {
+                panic::catch_unwind(AssertUnwindSafe(|| {
+                    win32::run_loop_win32(reader, event_tx.clone())
+                }))
+                .unwrap_or_else(|_| Err(HookFailure::new("hook", "panicked")))
+            };
             #[cfg(not(windows))]
-            {
+            let result = {
                 let _ = reader;
                 warn!("Mouse hook is only supported on Windows");
                 let _ = event_tx.send(HookEvent::Ready(1));
-                let result = Ok(());
-            }
+                Ok(())
+            };
             if let Err(failure) = result {
                 let _ = event_tx.send(HookEvent::Fatal(failure));
             }
