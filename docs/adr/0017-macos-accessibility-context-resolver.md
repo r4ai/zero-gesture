@@ -53,6 +53,12 @@ application properties as atomic. The worker installs its own autorelease
 pool. It does not use AppKit view, window, responder, drawing, or event APIs,
 so no Tauri main-thread hop is required.
 
+The AX leaf carries only two concrete function pointers for setting the
+element timeout and copying one attribute. Production binds them directly to
+ApplicationServices; deterministic macOS tests bind recorders to the same
+`focused_window` / `window_title` / `copy_timed_ax_attribute` path. This is a
+private FFI test seam, not a backend trait or platform abstraction.
+
 The native observation contains only:
 
 - the basename from `proc_pidpath` for the existing Shared `process_name`
@@ -95,13 +101,16 @@ raw path, or input value is logged.
 `event_tap_callback` has no resolver reference and continues to perform
 exactly the ADR 0016 queue/counter work. The run-loop owner also has no
 resolver reference in P04b3a: it drains and discards normalized observations,
-so the resident Engine submits zero context requests.
+so the resident Engine submits zero context requests. The macOS hook
+bootstrap drops its `ConfigSnapshotReader` before entering that owner instead
+of retaining a publication reader which this phase cannot consume.
 
 The dormant P04b3b seam limits mouse movement requests to one per 25 ms.
-Button-down may request immediately, but never waits for a result. One fixed
-atomic latest-request slot and a capacity-one wake channel coalesce overload
-to the newest point/timestamp while a prior query is in flight. The worker
-never builds a request backlog.
+Button-down may request immediately, but never waits for a result. Button-up,
+wheel, and other normalized events do not request context. One fixed atomic
+latest-request slot and a capacity-one wake channel coalesce overload to the
+newest point/timestamp while a prior query is in flight. The worker never
+builds a request backlog.
 
 The worker publishes one complete numeric latest snapshot containing the
 existing `ContextView` fields and its private process/fingerprint facts. The
@@ -134,6 +143,16 @@ any in-flight AX call is bounded by the 50 ms messaging timeout. A worker-exit
 guard invalidates the latest snapshot, including unwinding. P04b3a's resident
 Engine never starts this lifecycle.
 
+Preflight completion is one atomic lifecycle fact. Shutdown invalidates the
+snapshot immediately and joins only after that fact is published. If
+capability preflight is still blocked, shutdown detaches the thread so Engine
+teardown remains bounded; after the capability call returns, the worker sees
+stop and releases its reader, channels, and snapshot itself. User-space code
+cannot kill a thread blocked inside an OS FFI call, so a permanently blocked
+call can retain those thread-owned resources until the OS call returns. This
+limit is acceptable here because P04b3a never starts the worker in the
+resident Engine.
+
 Permission denial, AX error or timeout, focus/target switch or exit,
 configuration unavailability, malformed/oversized string, stale cache,
 request overload, or worker lag all degrade to Unknown. There is no retry loop
@@ -142,19 +161,21 @@ category-only stop log run only on the dormant worker.
 
 ## Verification
 
-`contracts/p04b3a-macos-context-resolver.json` maps twenty-three independently
-falsifiable obligations to twenty-three uniquely named tests:
-`O = 23`, `O_v = 23`, `U = 0`, `T = 23`, `T_u = 23`, `T_i = 0`, `T_e = 0`,
+`contracts/p04b3a-macos-context-resolver.json` maps twenty-four independently
+falsifiable obligations to twenty-four uniquely named tests:
+`O = 24`, `O_v = 24`, `U = 0`, `T = 24`, `T_u = 24`, `T_i = 0`, `T_e = 0`,
 `T_r = 0`, `P = 0`, `D = 0`, and `F = 0`.
 
 The Apple Silicon macOS CI job compiles every target with Clippy, runs the
 library tests without requiring Accessibility trust, builds the ad-hoc signed
 application, and reruns the packaged same-executable/UDS gates. Deterministic
-tests cover no-prompt options, resident idle separation, capacity-one
-coalescing, production failure publication, nullable ownership, readiness
-before FFI, exact timed AX query order, focus-switch rejection, bounded full
-executable basename, PID reuse, non-unique fingerprint semantics, freshness,
-private macOS matching, unchanged Windows serialization, and worker stop.
+tests cover no-prompt options, bootstrap/owner idle separation, capacity-one
+coalescing, accepted and rejected request kinds, stateful production-worker
+failure publication, nullable ownership, readiness and bounded shutdown around
+blocked preflight, exact production-leaf timed AX query order, focus-switch
+rejection, bounded full executable basename, PID reuse, non-unique fingerprint
+semantics, freshness, private macOS matching, unchanged Windows serialization,
+and worker stop.
 
 The non-interactive runner cannot grant or revoke Accessibility trust and does
 not inject a real AX timeout, switch a real focused GUI window during a query,

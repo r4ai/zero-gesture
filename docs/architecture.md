@@ -102,13 +102,15 @@ Listen Event permissionのpromptもEngineから表示せず、後続Settings UI�
 
 P04b3aでは後続consumerがまだ存在しないため、run-loop ownerは正規化queueを
 drainするだけでcontext workerを起動せず、Accessibility preflightやAX/process
-queryを実行しない。crate-privateなworker/cache seamはproduction compileされ、
-capacity-one coalescing、25 ms rate limit、50 ms AX timeout、title取得前後の
-focused-window `CFEqual`、PID・process start時刻によるcache invalidationを
-deterministic testで固定する。nullable CF値、denied/error/timeout、
-focus/target変更、不正文字列はUnknownへ劣化し、P04b3bが実consumerと同時に
-workerを接続する。`ForegroundWindowInfo`の既存Windows payloadは変更せず、
-P04b2同様のlisten-only通過を維持する。
+queryを実行しない。bootstrapは未使用`ConfigSnapshotReader`をowner開始前に
+解放する。crate-privateなworker/cache seamはproduction compileされ、
+capacity-one coalescing、MouseMoveだけの25 ms rate limit、ButtonDown即時要求、
+50 ms AX timeout、title取得前後のfocused-window `CFEqual`、PID・process
+start時刻によるcache invalidationをdeterministic testで固定する。
+nullable CF値、denied/error/timeout、focus/target変更、不正文字列はUnknownへ
+劣化し、P04b3bが実consumerと同時にworkerを接続する。
+`ForegroundWindowInfo`の既存Windows payloadは変更せず、P04b2同様の
+listen-only通過を維持する。
 
 ### 3.3. Overlay Thread (The "Visuals")
 

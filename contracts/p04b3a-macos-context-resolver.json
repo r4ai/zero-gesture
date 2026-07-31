@@ -16,7 +16,7 @@
     },
     {
       "id": "P04B3A-ISOLATION-002",
-      "obligation": "Before the P04b3b consumer exists, the resident macOS owner does not spawn or submit work to the context resolver.",
+      "obligation": "Before the P04b3b consumer exists, the macOS bootstrap releases its config reader and neither bootstrap nor resident owner starts or submits to the context resolver.",
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/hook/macos.rs",
       "evidence_name": "resident_owner_keeps_context_queries_disconnected_until_consumer_phase"
@@ -30,10 +30,10 @@
     },
     {
       "id": "P04B3A-REQUEST-002",
-      "obligation": "The dormant next-phase request seam rate-limits mouse movement before worker submission.",
+      "obligation": "The dormant request seam accepts button-down immediately, rate-limits only mouse movement, and rejects button-up, wheel, and other events.",
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/hook/macos_context.rs",
-      "evidence_name": "mouse_move_requests_are_rate_limited_before_worker_submission"
+      "evidence_name": "only_mouse_move_and_button_down_submit_context_requests"
     },
     {
       "id": "P04B3A-REQUEST-003",
@@ -44,28 +44,28 @@
     },
     {
       "id": "P04B3A-FAILURE-001",
-      "obligation": "Accessibility permission denial invalidates prior context and publishes Unknown.",
+      "obligation": "The production worker invalidates a prior successful context when resolution returns Accessibility permission denial.",
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/hook/macos_context.rs",
       "evidence_name": "permission_denial_clears_the_latest_context"
     },
     {
       "id": "P04B3A-FAILURE-002",
-      "obligation": "A non-timeout Accessibility error invalidates prior context and publishes Unknown.",
+      "obligation": "The production worker invalidates a prior successful context when resolution returns a non-timeout Accessibility error.",
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/hook/macos_context.rs",
       "evidence_name": "accessibility_error_clears_the_latest_context"
     },
     {
       "id": "P04B3A-FAILURE-003",
-      "obligation": "The AX cannot-complete timeout class invalidates prior context and publishes Unknown.",
+      "obligation": "The production worker invalidates a prior successful context when resolution returns the AX cannot-complete timeout class.",
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/hook/macos_context.rs",
       "evidence_name": "accessibility_timeout_clears_the_latest_context"
     },
     {
       "id": "P04B3A-FAILURE-004",
-      "obligation": "A target exit or invalid process identity invalidates prior context and publishes Unknown.",
+      "obligation": "The production worker invalidates a prior successful context when resolution returns target exit or invalid process identity.",
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/hook/macos_context.rs",
       "evidence_name": "target_exit_clears_the_latest_context"
@@ -153,6 +153,13 @@
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/hook/macos_context.rs",
       "evidence_name": "worker_readiness_precedes_the_capability_ffi_boundary"
+    },
+    {
+      "id": "P04B3A-LIFECYCLE-003",
+      "obligation": "Shutdown during a blocked capability preflight returns without joining, invalidates immediately, and releases worker resources after the preflight returns.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_name": "blocked_capability_does_not_block_shutdown_and_releases_resources_after_return"
     },
     {
       "id": "P04B3A-BOUNDARY-001",

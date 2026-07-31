@@ -24,37 +24,41 @@ const WORKER_POLL: Duration = Duration::from_millis(10);
 const READY_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_CONTEXT_UTF16_UNITS: usize = 512;
 const MAX_CONTEXT_UTF8_BYTES: usize = MAX_CONTEXT_UTF16_UNITS * 4;
+#[cfg(target_os = "macos")]
 const AX_MESSAGING_TIMEOUT_SECONDS: f32 = 0.05;
 #[cfg(target_os = "macos")]
 const AX_ERROR_CANNOT_COMPLETE: i32 = -25204;
 
-#[cfg(any(target_os = "macos", test))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AxElementKind {
-    Application,
-    Window,
-}
-
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct AxQuerySpec {
-    element: AxElementKind,
     attribute: &'static [u8],
     timeout_seconds: f32,
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 const FOCUSED_WINDOW_QUERY: AxQuerySpec = AxQuerySpec {
-    element: AxElementKind::Application,
     attribute: b"AXFocusedWindow",
     timeout_seconds: AX_MESSAGING_TIMEOUT_SECONDS,
 };
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 const WINDOW_TITLE_QUERY: AxQuerySpec = AxQuerySpec {
-    element: AxElementKind::Window,
     attribute: b"AXTitle",
     timeout_seconds: AX_MESSAGING_TIMEOUT_SECONDS,
+};
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy)]
+struct AxFunctions {
+    set_messaging_timeout: unsafe fn(*mut c_void, f32) -> i32,
+    copy_attribute_value: unsafe fn(*mut c_void, *const c_void, *mut *const c_void) -> i32,
+}
+
+#[cfg(target_os = "macos")]
+const SYSTEM_AX_FUNCTIONS: AxFunctions = AxFunctions {
+    set_messaging_timeout: system_set_messaging_timeout,
+    copy_attribute_value: system_copy_attribute_value,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,7 +100,6 @@ enum ResolveFailure {
 
 type Resolution = Result<ResolvedContext, ResolveFailure>;
 type CapabilityCheck = fn() -> bool;
-type Resolver = fn(&ConfigSnapshotReader, ContextRequest) -> Resolution;
 
 struct WorkerResources {
     reader: ConfigSnapshotReader,
@@ -104,6 +107,7 @@ struct WorkerResources {
     receiver: Receiver<()>,
     snapshots: Arc<SnapshotMailbox>,
     stop: Arc<AtomicBool>,
+    preflight_complete: Arc<AtomicBool>,
 }
 
 struct RequestMailbox {
@@ -276,6 +280,7 @@ pub(super) struct ContextWorker {
     requests: Arc<RequestMailbox>,
     snapshots: Arc<SnapshotMailbox>,
     stop: Arc<AtomicBool>,
+    preflight_complete: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
     last_request_tick: Option<u32>,
 }
@@ -286,18 +291,23 @@ impl ContextWorker {
         Self::spawn_with(reader, accessibility_preflight, resolve_native)
     }
 
-    fn spawn_with(
+    fn spawn_with<R>(
         reader: ConfigSnapshotReader,
         capability: CapabilityCheck,
-        resolver: Resolver,
-    ) -> Result<Self, HookFailure> {
+        resolver: R,
+    ) -> Result<Self, HookFailure>
+    where
+        R: Fn(&ConfigSnapshotReader, ContextRequest) -> Resolution + Send + 'static,
+    {
         let (requests, receiver) = RequestMailbox::new();
         let snapshots = Arc::new(SnapshotMailbox::new());
         let stop = Arc::new(AtomicBool::new(false));
+        let preflight_complete = Arc::new(AtomicBool::new(false));
         let (ready, readiness) = bounded(1);
         let thread_requests = Arc::clone(&requests);
         let thread_snapshots = Arc::clone(&snapshots);
         let thread_stop = Arc::clone(&stop);
+        let thread_preflight_complete = Arc::clone(&preflight_complete);
         let handle = thread::Builder::new()
             .name("macos-context".to_string())
             .spawn(move || {
@@ -308,6 +318,7 @@ impl ContextWorker {
                         receiver,
                         snapshots: thread_snapshots,
                         stop: thread_stop,
+                        preflight_complete: thread_preflight_complete,
                     },
                     ready,
                     capability,
@@ -325,6 +336,7 @@ impl ContextWorker {
             requests,
             snapshots,
             stop,
+            preflight_complete,
             handle: Some(handle),
             last_request_tick: None,
         })
@@ -350,19 +362,26 @@ impl ContextWorker {
 impl Drop for ContextWorker {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
+        self.snapshots.publish(None);
         let _ = self.requests.wake.try_send(());
         if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+            if self.preflight_complete.load(Ordering::Acquire) {
+                let _ = handle.join();
+            } else {
+                drop(handle);
+            }
         }
     }
 }
 
-fn worker_loop(
+fn worker_loop<R>(
     resources: WorkerResources,
     ready: Sender<()>,
     capability: CapabilityCheck,
-    resolver: Resolver,
-) {
+    resolver: R,
+) where
+    R: Fn(&ConfigSnapshotReader, ContextRequest) -> Resolution,
+{
     let _exit = WorkerExit {
         snapshots: Arc::clone(&resources.snapshots),
     };
@@ -371,6 +390,7 @@ fn worker_loop(
         return;
     }
     let trusted = capability();
+    resources.preflight_complete.store(true, Ordering::Release);
     if resources.stop.load(Ordering::Acquire) {
         return;
     }
@@ -419,8 +439,16 @@ fn discard_slow_resolution(resolution: Resolution, elapsed: Duration) -> Resolut
 }
 
 fn request_due(last_tick: Option<u32>, event: MouseEvent, tick: u32) -> bool {
-    matches!(event, MouseEvent::ButtonDown(_))
-        || last_tick.is_none_or(|last| tick.wrapping_sub(last) >= REQUEST_PERIOD_MS)
+    match event {
+        MouseEvent::ButtonDown(_) => true,
+        MouseEvent::MouseMove => {
+            last_tick.is_none_or(|last| tick.wrapping_sub(last) >= REQUEST_PERIOD_MS)
+        }
+        MouseEvent::ButtonUp(_)
+        | MouseEvent::WheelUp(_)
+        | MouseEvent::WheelDown(_)
+        | MouseEvent::Other => false,
+    }
 }
 
 fn pack_point(point: Point) -> u64 {
@@ -577,7 +605,7 @@ impl Drop for AutoreleasePool {
     }
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 fn run_ax_query<T>(
     spec: AxQuerySpec,
     set_timeout: impl FnOnce(f32) -> Result<(), ResolveFailure>,
@@ -606,8 +634,8 @@ unsafe fn native_observation() -> Result<NativeObservation, ResolveFailure> {
     let _pool = AutoreleasePool::new()?;
     let (pid, process, process_name, bundle_identifier) = frontmost_process()?;
     let (window, title) = resolve_consistent_window(
-        || focused_window(pid),
-        |window| window_title(window),
+        || focused_window(pid, SYSTEM_AX_FUNCTIONS),
+        |window| window_title(window, SYSTEM_AX_FUNCTIONS),
         |first, current| CFEqual(first.as_ptr(), current.as_ptr()) != 0,
     )?;
     let window_fingerprint = CFHash(window.as_ptr()) as u64;
@@ -641,7 +669,7 @@ unsafe fn frontmost_process(
 }
 
 #[cfg(target_os = "macos")]
-unsafe fn focused_window(pid: i32) -> Result<OwnedCf, ResolveFailure> {
+unsafe fn focused_window(pid: i32, functions: AxFunctions) -> Result<OwnedCf, ResolveFailure> {
     let ax_application = OwnedCf::from_create(
         AXUIElementCreateApplication(pid).cast_const(),
         ResolveFailure::TargetExited,
@@ -650,6 +678,7 @@ unsafe fn focused_window(pid: i32) -> Result<OwnedCf, ResolveFailure> {
         ax_application.as_mut_ptr(),
         FOCUSED_WINDOW_QUERY,
         AXUIElementGetTypeID(),
+        functions,
     )?;
     let mut window_pid = 0;
     require_ax(AXUIElementGetPid(window.as_mut_ptr(), &mut window_pid))?;
@@ -660,9 +689,13 @@ unsafe fn focused_window(pid: i32) -> Result<OwnedCf, ResolveFailure> {
 }
 
 #[cfg(target_os = "macos")]
-unsafe fn window_title(window: &OwnedCf) -> Result<String, ResolveFailure> {
-    let title =
-        copy_timed_ax_attribute(window.as_mut_ptr(), WINDOW_TITLE_QUERY, CFStringGetTypeID())?;
+unsafe fn window_title(window: &OwnedCf, functions: AxFunctions) -> Result<String, ResolveFailure> {
+    let title = copy_timed_ax_attribute(
+        window.as_mut_ptr(),
+        WINDOW_TITLE_QUERY,
+        CFStringGetTypeID(),
+        functions,
+    )?;
     copy_cf_string(title.as_ptr())
 }
 
@@ -671,15 +704,30 @@ unsafe fn copy_timed_ax_attribute(
     element: *mut c_void,
     spec: AxQuerySpec,
     expected_type: usize,
+    functions: AxFunctions,
 ) -> Result<OwnedCf, ResolveFailure> {
     run_ax_query(
         spec,
-        |timeout| require_ax(AXUIElementSetMessagingTimeout(element, timeout)),
+        |timeout| require_ax((functions.set_messaging_timeout)(element, timeout)),
         |attribute| {
             let attribute = create_cf_string(attribute)?;
-            copy_ax_attribute(element, attribute.as_ptr(), expected_type)
+            copy_ax_attribute(element, attribute.as_ptr(), expected_type, functions)
         },
     )
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn system_set_messaging_timeout(element: *mut c_void, timeout: f32) -> i32 {
+    AXUIElementSetMessagingTimeout(element, timeout)
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn system_copy_attribute_value(
+    element: *mut c_void,
+    attribute: *const c_void,
+    value: *mut *const c_void,
+) -> i32 {
+    AXUIElementCopyAttributeValue(element, attribute, value)
 }
 
 #[cfg(target_os = "macos")]
@@ -763,9 +811,10 @@ unsafe fn copy_ax_attribute(
     element: *mut std::ffi::c_void,
     attribute: *const std::ffi::c_void,
     expected_type: usize,
+    functions: AxFunctions,
 ) -> Result<OwnedCf, ResolveFailure> {
     let mut value = std::ptr::null();
-    require_ax(AXUIElementCopyAttributeValue(
+    require_ax((functions.copy_attribute_value)(
         element, attribute, &mut value,
     ))?;
     let value = OwnedCf::from_create(value, ResolveFailure::InvalidData)?;
@@ -915,15 +964,33 @@ extern "C" {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::{Cell, RefCell};
+    use std::cell::Cell;
+    #[cfg(target_os = "macos")]
+    use std::cell::RefCell;
     use std::time::{Duration, Instant};
 
     use crossbeam_channel::TryRecvError;
 
     use super::*;
     use crate::config::{self, ConfigDocument, ConfigOwner};
+    use crate::domain::TriggerButton;
 
     static RELEASE_CAPABILITY: AtomicBool = AtomicBool::new(false);
+    static BLOCKED_CAPABILITY_ENTERED: AtomicBool = AtomicBool::new(false);
+    static RELEASE_BLOCKED_CAPABILITY: AtomicBool = AtomicBool::new(false);
+
+    #[cfg(target_os = "macos")]
+    #[derive(Debug, PartialEq)]
+    enum RecordedAxCall {
+        Timeout(f32),
+        Attribute(String),
+        Equal,
+    }
+
+    #[cfg(target_os = "macos")]
+    thread_local! {
+        static RECORDED_AX_CALLS: RefCell<Vec<RecordedAxCall>> = const { RefCell::new(Vec::new()) };
+    }
 
     fn identity(pid: i32, started_seconds: u64, window_fingerprint: u64) -> ContextIdentity {
         ContextIdentity {
@@ -955,10 +1022,47 @@ mod tests {
         mailbox
     }
 
+    fn wait_until(timeout: Duration, mut condition: impl FnMut() -> bool) -> bool {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if condition() {
+                return true;
+            }
+            thread::yield_now();
+        }
+        condition()
+    }
+
     fn assert_failure_clears(failure: ResolveFailure) {
-        let mailbox = mailbox_with_value();
-        publish_resolution(&mailbox, Err(failure));
-        assert!(mailbox.latest(Point::new(1, 2), 10).is_none());
+        let (_directory, reader) = reader();
+        let first_resolution = AtomicBool::new(true);
+        let mut worker = ContextWorker::spawn_with(reader, allowed, move |_, request| {
+            if first_resolution.swap(false, Ordering::AcqRel) {
+                Ok(resolved(identity(41, 100, 9), request.point, request.tick))
+            } else {
+                Err(failure)
+            }
+        })
+        .unwrap();
+        let first_point = Point::new(1, 2);
+        worker.observe(
+            MouseEvent::ButtonDown(TriggerButton::Right),
+            first_point,
+            1_000_000,
+        );
+        assert!(wait_until(Duration::from_millis(200), || {
+            worker.latest(first_point, 1).is_some()
+        }));
+
+        worker.observe(
+            MouseEvent::ButtonDown(TriggerButton::Right),
+            Point::new(3, 4),
+            2_000_000,
+        );
+        assert!(wait_until(Duration::from_millis(200), || {
+            worker.latest(first_point, 1).is_none()
+        }));
+        worker.shutdown();
     }
 
     fn allowed() -> bool {
@@ -967,6 +1071,14 @@ mod tests {
 
     fn delayed_capability() -> bool {
         while !RELEASE_CAPABILITY.load(Ordering::Acquire) {
+            thread::yield_now();
+        }
+        true
+    }
+
+    fn blocked_capability() -> bool {
+        BLOCKED_CAPABILITY_ENTERED.store(true, Ordering::Release);
+        while !RELEASE_BLOCKED_CAPABILITY.load(Ordering::Acquire) {
             thread::yield_now();
         }
         true
@@ -1018,68 +1130,93 @@ mod tests {
     }
 
     #[test]
+    fn blocked_capability_does_not_block_shutdown_and_releases_resources_after_return() {
+        BLOCKED_CAPABILITY_ENTERED.store(false, Ordering::Release);
+        RELEASE_BLOCKED_CAPABILITY.store(false, Ordering::Release);
+        let (_directory, reader) = reader();
+        let worker = ContextWorker::spawn_with(reader, blocked_capability, fake_resolver).unwrap();
+        assert!(wait_until(Duration::from_millis(200), || {
+            BLOCKED_CAPABILITY_ENTERED.load(Ordering::Acquire)
+        }));
+        let snapshots = Arc::downgrade(&worker.snapshots);
+        let release = thread::spawn(|| {
+            thread::sleep(Duration::from_millis(300));
+            RELEASE_BLOCKED_CAPABILITY.store(true, Ordering::Release);
+        });
+
+        let started = Instant::now();
+        worker.shutdown();
+
+        assert!(started.elapsed() < Duration::from_millis(150));
+        release.join().unwrap();
+        assert!(wait_until(Duration::from_millis(200), || {
+            snapshots.upgrade().is_none()
+        }));
+    }
+
+    #[cfg(target_os = "macos")]
+    unsafe fn record_ax_timeout(_: *mut c_void, timeout: f32) -> i32 {
+        RECORDED_AX_CALLS.with(|calls| {
+            calls.borrow_mut().push(RecordedAxCall::Timeout(timeout));
+        });
+        0
+    }
+
+    #[cfg(target_os = "macos")]
+    unsafe fn record_ax_attribute(
+        _: *mut c_void,
+        attribute: *const c_void,
+        value: *mut *const c_void,
+    ) -> i32 {
+        let attribute = copy_cf_string(attribute).unwrap();
+        RECORDED_AX_CALLS.with(|calls| {
+            calls
+                .borrow_mut()
+                .push(RecordedAxCall::Attribute(attribute.clone()));
+        });
+        *value = match attribute.as_str() {
+            "AXFocusedWindow" => {
+                AXUIElementCreateApplication(std::process::id() as i32).cast_const()
+            }
+            "AXTitle" => {
+                CFStringCreateWithBytes(std::ptr::null(), b"title".as_ptr(), 5, 0x0800_0100, 0)
+            }
+            _ => std::ptr::null(),
+        };
+        0
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
     fn consistent_window_query_applies_the_exact_timed_ax_sequence() {
-        #[derive(Debug, PartialEq)]
-        enum Call {
-            Timeout(AxElementKind, f32),
-            Attribute(AxElementKind, Vec<u8>),
-            Equal,
-        }
+        RECORDED_AX_CALLS.with(|calls| calls.borrow_mut().clear());
+        let functions = AxFunctions {
+            set_messaging_timeout: record_ax_timeout,
+            copy_attribute_value: record_ax_attribute,
+        };
+        let pid = std::process::id() as i32;
+        let result = unsafe {
+            resolve_consistent_window(
+                || focused_window(pid, functions),
+                |window| window_title(window, functions),
+                |_, _| {
+                    RECORDED_AX_CALLS.with(|calls| calls.borrow_mut().push(RecordedAxCall::Equal));
+                    true
+                },
+            )
+        };
 
-        let calls = RefCell::new(Vec::new());
-        let result = resolve_consistent_window(
-            || {
-                run_ax_query(
-                    FOCUSED_WINDOW_QUERY,
-                    |timeout| {
-                        calls
-                            .borrow_mut()
-                            .push(Call::Timeout(AxElementKind::Application, timeout));
-                        Ok(())
-                    },
-                    |attribute| {
-                        calls.borrow_mut().push(Call::Attribute(
-                            AxElementKind::Application,
-                            attribute.to_vec(),
-                        ));
-                        Ok(7_u64)
-                    },
-                )
-            },
-            |_| {
-                run_ax_query(
-                    WINDOW_TITLE_QUERY,
-                    |timeout| {
-                        calls
-                            .borrow_mut()
-                            .push(Call::Timeout(AxElementKind::Window, timeout));
-                        Ok(())
-                    },
-                    |attribute| {
-                        calls
-                            .borrow_mut()
-                            .push(Call::Attribute(AxElementKind::Window, attribute.to_vec()));
-                        Ok("title")
-                    },
-                )
-            },
-            |left, right| {
-                calls.borrow_mut().push(Call::Equal);
-                left == right
-            },
-        );
-
-        assert_eq!(result, Ok((7, "title")));
+        assert_eq!(result.map(|(_, title)| title), Ok("title".to_string()));
         assert_eq!(
-            calls.into_inner(),
+            RECORDED_AX_CALLS.with(|calls| calls.take()),
             [
-                Call::Timeout(AxElementKind::Application, 0.05),
-                Call::Attribute(AxElementKind::Application, b"AXFocusedWindow".to_vec()),
-                Call::Timeout(AxElementKind::Window, 0.05),
-                Call::Attribute(AxElementKind::Window, b"AXTitle".to_vec()),
-                Call::Timeout(AxElementKind::Application, 0.05),
-                Call::Attribute(AxElementKind::Application, b"AXFocusedWindow".to_vec()),
-                Call::Equal,
+                RecordedAxCall::Timeout(0.05),
+                RecordedAxCall::Attribute("AXFocusedWindow".to_string()),
+                RecordedAxCall::Timeout(0.05),
+                RecordedAxCall::Attribute("AXTitle".to_string()),
+                RecordedAxCall::Timeout(0.05),
+                RecordedAxCall::Attribute("AXFocusedWindow".to_string()),
+                RecordedAxCall::Equal,
             ]
         );
     }
@@ -1211,7 +1348,7 @@ mod tests {
     }
 
     #[test]
-    fn mouse_move_requests_are_rate_limited_before_worker_submission() {
+    fn only_mouse_move_and_button_down_submit_context_requests() {
         assert!(request_due(None, MouseEvent::MouseMove, 1_000));
         assert!(!request_due(Some(1_000), MouseEvent::MouseMove, 1_024));
         assert!(request_due(Some(1_000), MouseEvent::MouseMove, 1_025));
@@ -1220,6 +1357,14 @@ mod tests {
             MouseEvent::ButtonDown(crate::domain::TriggerButton::Right),
             1_025
         ));
+        assert!(!request_due(
+            None,
+            MouseEvent::ButtonUp(TriggerButton::Right),
+            1_025
+        ));
+        assert!(!request_due(None, MouseEvent::WheelUp(1), 1_025));
+        assert!(!request_due(None, MouseEvent::WheelDown(1), 1_025));
+        assert!(!request_due(None, MouseEvent::Other, 1_025));
     }
 
     #[test]

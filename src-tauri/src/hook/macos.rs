@@ -20,8 +20,6 @@ use crossbeam_channel::Sender;
 use log::warn;
 
 use super::{HookEvent, HookFailure};
-#[cfg(target_os = "macos")]
-use crate::config::ConfigSnapshotReader;
 use crate::domain::{MouseEvent, Point, TriggerButton};
 
 const EVENT_QUEUE_CAPACITY: usize = 64;
@@ -334,7 +332,6 @@ enum StartupFailure {
 
 #[cfg(target_os = "macos")]
 pub(super) fn run_loop_macos(
-    _reader: ConfigSnapshotReader,
     stop: Arc<AtomicBool>,
     events: Sender<HookEvent>,
 ) -> Result<(), HookFailure> {
@@ -690,14 +687,20 @@ mod tests {
 
     #[test]
     fn resident_owner_keeps_context_queries_disconnected_until_consumer_phase() {
-        let source = include_str!("macos.rs")
+        let macos_source = include_str!("macos.rs")
             .split("mod tests {")
             .next()
             .unwrap();
+        let bootstrap_source = include_str!("mod.rs");
 
-        assert!(!source.contains(concat!("Context", "Worker")));
-        assert!(!source.contains(concat!("macos_", "context::")));
-        assert!(!source.contains(concat!("context.", "observe(")));
+        for source in [macos_source, bootstrap_source] {
+            assert!(!source.contains(concat!("Context", "Worker")));
+            assert!(!source.contains(concat!("macos_", "context::")));
+            assert!(!source.contains(concat!("context.", "observe(")));
+        }
+        assert!(!macos_source.contains("ConfigSnapshotReader"));
+        assert!(!bootstrap_source.contains("run_loop_macos(reader"));
+        assert!(bootstrap_source.contains("drop(reader)"));
     }
 
     #[test]
