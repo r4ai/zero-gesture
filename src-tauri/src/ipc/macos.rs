@@ -274,6 +274,9 @@ impl ServerTransport {
         while !stop.load(Ordering::Acquire) {
             match self.listener.accept() {
                 Ok((stream, _)) => {
+                    stream
+                        .set_nonblocking(false)
+                        .map_err(|error| endpoint_io("configure Unix control connection", error))?;
                     if let Err(error) = verify_peer(stream.as_raw_fd(), self.effective_uid) {
                         warn!("rejected macOS IPC peer: {error}");
                         continue;
