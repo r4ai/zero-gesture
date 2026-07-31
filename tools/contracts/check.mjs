@@ -54,6 +54,14 @@ const MANIFESTS = [
     idDescription:
       "P04B1-ENDPOINT-NNN, P04B1-PEER-NNN, P04B1-IPC-NNN, P04B1-CONFIG-NNN, or P04B1-PROCESS-NNN",
   },
+  {
+    label: "P04b2",
+    path: "contracts/p04b2-macos-event-tap-owner.json",
+    idPattern:
+      /^P04B2-(?:HOT|OVERLOAD|DISABLE|ORDER|NORMALIZE|PASS|LIFECYCLE)-\d{3}$/,
+    idDescription:
+      "P04B2-HOT-NNN, P04B2-OVERLOAD-NNN, P04B2-DISABLE-NNN, P04B2-ORDER-NNN, P04B2-NORMALIZE-NNN, P04B2-PASS-NNN, or P04B2-LIFECYCLE-NNN",
+  },
 ]
 const REPO_ROOT = path.resolve(fileURLToPath(new URL("../..", import.meta.url)))
 

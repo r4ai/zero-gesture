@@ -4,22 +4,24 @@
 //! publication reader. An active gesture pins one generation while a context
 //! worker resolves window/application state outside the callback.
 
+#[cfg(any(target_os = "macos", test))]
+mod macos;
 mod owner;
 #[cfg(windows)]
 mod win32;
 
 use std::io;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 use std::panic::{self, AssertUnwindSafe};
-use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use crossbeam_channel::{bounded, Receiver};
 use log::info;
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 use log::warn;
 
 use crate::config::ConfigSnapshotReader;
@@ -47,17 +49,26 @@ pub(crate) enum HookEvent {
     Fatal(HookFailure),
 }
 
+type HookSpawn = (
+    Arc<AtomicU32>,
+    Arc<AtomicBool>,
+    JoinHandle<()>,
+    Receiver<HookEvent>,
+);
+
 /// Spawns the native input owner with the Engine publication reader.
-pub fn spawn(
-    reader: ConfigSnapshotReader,
-) -> io::Result<(Arc<AtomicU32>, JoinHandle<()>, Receiver<HookEvent>)> {
+pub fn spawn(reader: ConfigSnapshotReader) -> io::Result<HookSpawn> {
     info!("starting hook thread");
     let tid = Arc::new(AtomicU32::new(0));
+    let stop = Arc::new(AtomicBool::new(false));
+    let thread_stop = Arc::clone(&stop);
     let (event_tx, event_rx) = bounded(1);
 
     let handle = thread::Builder::new()
         .name("hook-thread".to_string())
         .spawn(move || {
+            #[cfg(windows)]
+            let _ = thread_stop;
             #[cfg(windows)]
             let result = {
                 panic::catch_unwind(AssertUnwindSafe(|| {
@@ -65,9 +76,18 @@ pub fn spawn(
                 }))
                 .unwrap_or_else(|_| Err(HookFailure::new("hook", "panicked")))
             };
-            #[cfg(not(windows))]
+            #[cfg(target_os = "macos")]
             let result = {
                 let _ = reader;
+                panic::catch_unwind(AssertUnwindSafe(|| {
+                    macos::run_loop_macos(thread_stop, event_tx.clone())
+                }))
+                .unwrap_or_else(|_| Err(HookFailure::new("event tap", "panicked")))
+            };
+            #[cfg(not(any(windows, target_os = "macos")))]
+            let result = {
+                let _ = reader;
+                let _ = thread_stop;
                 warn!("Mouse hook is only supported on Windows");
                 let _ = event_tx.send(HookEvent::Ready(1));
                 Ok(())
@@ -80,7 +100,7 @@ pub fn spawn(
         Ok(HookEvent::Ready(thread_id)) => {
             tid.store(thread_id, Ordering::Release);
             info!("hook thread spawned");
-            Ok((tid, handle, event_rx))
+            Ok((tid, stop, handle, event_rx))
         }
         Ok(HookEvent::Fatal(failure)) => {
             let _ = handle.join();

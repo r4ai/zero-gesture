@@ -1,7 +1,7 @@
 # Zero Gesture Architecture Design Document
 
 > [!NOTE]
-> この文書はP03c時点のWindows実装を説明する。
+> この文書はP03cのWindows実装とP04b2のmacOS入力観測境界を説明する。
 > マルチプラットフォーム目標設計と後続移行ゲートは
 > [ADR index](./adr/README.md) を正とする。
 
@@ -90,6 +90,16 @@ UIスレッドのブロックを防ぐため、独立したスレッドでマウ
   - **Action:** target activation、keyboard action、trigger replayは同じaction FIFOをHook Threadのmessage loopがcallback復帰後に実行する。activation resultとinjection/completion failureは`InputKernel`へ戻す。
   - **Readiness/Fatal:** Hook thread IDは`SetWindowsHookExW`とsafety timerの成功後にだけreadyとして公開する。message loopはcontext/renderer ownerの終了を継続監視し、予期しない終了ではsuppressionを解除してEngineをnonzero終了する。
 
+### 3.2.1. macOS Event Tap Owner
+
+macOS Engineは専用native threadでlisten-only `CGEventTap`と`CFRunLoop`を
+所有する。callbackはevent内のmouse情報を既存`MouseEvent`/`Point`へ正規化し、
+64件の固定SPSC queueへenqueueするだけで、常に元eventをOSへ返す。
+permission拒否、tap生成失敗、disable、queue overloadはすべてfail-openである。
+
+P04b2ではcontext、`InputKernel`、抑止/replay、action、rendererへ接続しない。
+Listen Event permissionのpromptもEngineから表示せず、後続Settings UIへ委ねる。
+
 ### 3.3. Overlay Thread (The "Visuals")
 
 TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成・制御します。
@@ -141,6 +151,7 @@ TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成
 | :------------------- | :--------------------------------- | :----------------------------------------------- |
 | **App Framework**    | `tauri` v2                         | アプリケーションシェル、設定UI、ビルドシステム   |
 | **Windows API**      | `windows-sys`                      | Win32 APIへのRawアクセス (Hooks, GDI, Input)     |
+| **macOS Input**      | Core Graphics / Core Foundation FFI | listen-only Event Tapとrun-loop ownership       |
 | **Concurrency**      | `std::thread`, `crossbeam-channel` | スレッド管理と高速なメッセージパッシング         |
 | **State Mngt**       | Engine owner + fixed two-slot publication | 設定mutationの単一所有とlock-free snapshot read |
 | **Serialization**    | `serde`, `serde_json`              | 設定ファイルの保存・読み込み                     |
@@ -191,5 +202,6 @@ TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成
 ## 7. Performance Considerations
 
 - **Blocking:** 現行Hook callbackはnormalize/evaluate、fixed atomic snapshot/context read、fixed-capacity lane reserve、coalesced nonblocking wakeup、pass/suppress returnに限定する。OS context query、activation/action実行、renderer lifecycle/joinはcallbackとHook pumpの外へ分離済みである。
+- **macOS fail-open:** Event Tap callbackはevent fieldの正規化、固定SPSC enqueue、atomic KPIだけを行う。listen-only tapのためP04b2では入力抑止経路自体がなく、queue full時はdropして通過する。
 - **Memory Safety:** `unsafe` ブロックを多用するWin32 API部分は、Rustのラッパー関数で適切に抽象化し、メモリリークや未定義動作を防ぐ。
 - **Drawing:** 現在とWindows移行中はGDI（`Polyline` + バックバッファ）を使用する。`direct2d.rs`は未実装stubであり、性能契約の未達を測定した場合だけ別ADR/PRでrenderer変更を検討する。macOSのAppKit/Core Animation adapterはこのWindows判断と分離する。

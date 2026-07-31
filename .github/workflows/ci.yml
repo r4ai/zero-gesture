@@ -229,7 +229,7 @@ jobs:
       - name: Lint macOS target
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin --all-targets -- -D warnings -A dead-code
 
-      - name: Test macOS UDS control plane
+      - name: Test macOS UDS and native input owners
         run: cargo test --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin --lib -- --test-threads=1
 
       - name: Build ad-hoc signed application bundle

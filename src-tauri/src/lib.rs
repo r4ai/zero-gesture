@@ -39,6 +39,7 @@ pub struct ConfigDir(pub PathBuf);
 /// example, the tray "Quit" handler can trigger a graceful shutdown.
 struct WorkerThreads {
     hook_thread_tid: Arc<AtomicU32>,
+    hook_stop: Arc<AtomicBool>,
     hook_handle: Option<JoinHandle<()>>,
     hook_events: Option<crossbeam_channel::Receiver<hook::HookEvent>>,
 }
@@ -82,7 +83,7 @@ impl WorkerThreads {
             std::fs::write(path, b"worker-started").map_err(RuntimeProjectionError::TestMarker)?;
         }
         info!("starting native input owner");
-        let (hook_thread_tid, hook_handle, hook_events) =
+        let (hook_thread_tid, hook_stop, hook_handle, hook_events) =
             hook::spawn(reader).map_err(|source| RuntimeProjectionError::WorkerSpawn {
                 worker: "hook",
                 source,
@@ -91,6 +92,7 @@ impl WorkerThreads {
 
         Ok(Self {
             hook_thread_tid,
+            hook_stop,
             hook_handle: Some(hook_handle),
             hook_events: Some(hook_events),
         })
@@ -99,6 +101,7 @@ impl WorkerThreads {
     /// Sends shutdown signals to both background threads and waits for them.
     fn shutdown(&mut self) -> Result<(), RuntimeProjectionError> {
         info!("stopping worker threads");
+        self.hook_stop.store(true, Ordering::Release);
         // Post WM_QUIT to the hook thread's Win32 message loop.
         let tid = self.hook_thread_tid.load(Ordering::Acquire);
         if tid != 0 {
@@ -478,9 +481,18 @@ fn run_engine() -> Result<(), String> {
             };
             let engine_control = ipc::EngineControl::for_prepared_server(&server);
             let (config_owner, _) = config::ConfigOwner::startup(&config_dir_path);
+            let snapshot_reader = config_owner.reader();
             app.manage(engine_control);
             app.manage(ConfigDir(config_dir_path));
-            app.manage(ThreadRuntime::settings());
+            let thread_runtime = ThreadRuntime::start(snapshot_reader).map_err(|error| {
+                tauri::Error::Setup((Box::new(error) as Box<dyn std::error::Error>).into())
+            })?;
+            app.manage(thread_runtime);
+            app.state::<ThreadRuntime>()
+                .monitor_owner(app.handle().clone())
+                .map_err(|error| {
+                    tauri::Error::Setup((Box::new(error) as Box<dyn std::error::Error>).into())
+                })?;
             tray::setup_macos_packaging_spike(app)?;
             if !app.webview_windows().is_empty() {
                 return Err(

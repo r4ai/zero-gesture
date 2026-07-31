@@ -1,0 +1,53 @@
+{
+  "cases": [
+    {
+      "id": "P04B2-HOT-001",
+      "obligation": "The macOS callback core normalizes and enqueues representative mouse input without heap allocation.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos.rs",
+      "evidence_name": "callback_core_normalizes_mouse_input_without_allocating"
+    },
+    {
+      "id": "P04B2-OVERLOAD-001",
+      "obligation": "A full macOS callback queue drops the new event while preserving accepted FIFO input and bounded KPI counters.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos.rs",
+      "evidence_name": "callback_queue_overload_drops_new_input_and_preserves_fifo_order"
+    },
+    {
+      "id": "P04B2-DISABLE-001",
+      "obligation": "Repeated timeout or user-input disable notifications coalesce into one worker-side re-enable request without callback-side retry.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos.rs",
+      "evidence_name": "tap_disable_notifications_coalesce_for_worker_side_reenable"
+    },
+    {
+      "id": "P04B2-ORDER-001",
+      "obligation": "The macOS run-loop worker drains every accepted normalized input in callback order.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos.rs",
+      "evidence_name": "worker_drain_consumes_every_accepted_input_in_callback_order"
+    },
+    {
+      "id": "P04B2-NORMALIZE-001",
+      "obligation": "macOS mouse buttons, movement, and signed scroll input map to the existing portable mouse boundary.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos.rs",
+      "evidence_name": "macos_event_mapping_matches_the_portable_mouse_boundary"
+    },
+    {
+      "id": "P04B2-PASS-001",
+      "obligation": "The CGEventTap is listen-only and subscribes only to the supported mouse-event mask, so P04b2 cannot suppress physical input.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos.rs",
+      "evidence_name": "listen_only_mask_contains_every_supported_mouse_event"
+    },
+    {
+      "id": "P04B2-LIFECYCLE-001",
+      "obligation": "A permission-denied or creation-failed macOS owner still publishes pass-through readiness and observes deterministic Engine stop.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos.rs",
+      "evidence_name": "degraded_owner_publishes_ready_and_stops_deterministically"
+    }
+  ]
+}

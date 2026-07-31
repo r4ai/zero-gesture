@@ -20,6 +20,7 @@ ADRは実装の詳細設計ではなく、後続PRが守る外部契約、不変
 | [0013](./0013-windows-native-input-owner.md) | Accepted | Windows native input ownerをInputKernel、二slot snapshot、bounded context/action/renderer laneへ接続する |
 | [0014](./0014-macos-same-binary-packaging-spike.md) | Accepted | macOS arm64の同一bundle/executable、署名、window/WebViewなしEngine起動をpackaging gateにする |
 | [0015](./0015-macos-uds-control-plane.md) | Accepted | macOSのuser-only runtime directory、UDS、peer UID検証、共有control coreを固定する |
+| [0016](./0016-macos-listen-only-event-tap-owner.md) | Accepted | macOS Engineの専用threadでlisten-only CGEventTap、bounded SPSC、fail-open lifecycleを所有する |
 
 ## Reading order
 
@@ -35,6 +36,7 @@ ADR 0012はP03bで実装したEngine-owned config transaction、Settings/tray mu
 ADR 0013はP03cで実装した実Windows callback、generation pin、事前解決context、action/renderer lane、owner lifecycleを記録する。
 ADR 0014はP04a（既存計画のP05）で固定したmacOS arm64 bundle、同一署名identity、ad-hoc CI、Developer ID/notarization release gateと未検証条件を記録する。
 ADR 0015はP04b1で固定したmacOS user-only UDS endpoint、singleton/stale cleanup、peer UID検証、共有control core seamを記録する。
+ADR 0016はP04b2で固定したmacOS listen-only Event Tap、allocation-free callback、bounded normalization、degraded lifecycleを記録する。
 
 ## Status policy
 
