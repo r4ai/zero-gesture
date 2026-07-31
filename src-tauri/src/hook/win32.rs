@@ -1,10 +1,10 @@
 use std::cell::RefCell;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{fence, AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use crossbeam_channel::{Sender, TrySendError};
+use crossbeam_channel::{bounded, Receiver, RecvTimeoutError, Sender, TryRecvError, TrySendError};
 use log::{debug, error, info, warn};
 use windows_sys::Win32::System::Threading::GetCurrentThreadId;
 use windows_sys::Win32::{
@@ -28,9 +28,10 @@ use crate::config::{ConfigSnapshotReader, RuntimeConfig};
 use crate::domain::input::{ConfigGeneration, TargetToken};
 use crate::domain::{BindingSetId, Disposition, MouseEvent, Point, TriggerButton};
 use crate::executor;
-use crate::overlay::{self, OverlayCommand};
+use crate::overlay::{self, OverlayClient, OverlayCommand, OverlayDelivery};
 
-use super::owner::{ActionWork, ContextView, NativeInputOwner, RenderWork};
+use super::owner::{ActionWork, ContextView, NativeInputOwner, RenderWork, CONTEXT_MAX_AGE_MS};
+use super::{HookEvent, HookFailure};
 
 const WM_ACTION_READY: u32 = WM_APP + 1;
 const WM_RENDER_READY: u32 = WM_APP + 2;
@@ -45,7 +46,9 @@ struct HookThreadState {
     owner: NativeInputOwner,
     owner_tid: u32,
     context: Arc<ContextMailbox>,
-    renderer: RendererWorker,
+    context_stop: Arc<AtomicBool>,
+    context_handle: Option<JoinHandle<Result<(), HookFailure>>>,
+    renderer: RendererClient,
 }
 
 thread_local! {
@@ -76,7 +79,8 @@ impl ContextMailbox {
     }
 
     fn publish(&self, context: Option<ContextView>) {
-        self.sequence.fetch_add(1, Ordering::AcqRel);
+        let writing = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;
+        debug_assert_eq!(writing & 1, 1);
         if let Some(context) = context {
             self.generation.store(context.generation, Ordering::Relaxed);
             self.binding_set
@@ -89,7 +93,7 @@ impl ContextMailbox {
         } else {
             self.valid.store(false, Ordering::Relaxed);
         }
-        self.sequence.fetch_add(1, Ordering::Release);
+        self.sequence.store(writing + 1, Ordering::Release);
     }
 
     fn read(&self) -> Option<ContextView> {
@@ -104,7 +108,8 @@ impl ContextMailbox {
             let target = self.target.load(Ordering::Relaxed);
             let point = self.point.load(Ordering::Relaxed);
             let updated_tick = self.tick.load(Ordering::Relaxed);
-            if self.sequence.load(Ordering::Acquire) != before {
+            fence(Ordering::Acquire);
+            if self.sequence.load(Ordering::Relaxed) != before {
                 continue;
             }
             if !valid {
@@ -124,7 +129,8 @@ impl ContextMailbox {
 
 struct RendererWorker {
     generation: Option<ConfigGeneration>,
-    sender: Option<Sender<OverlayCommand>>,
+    runtime: Option<Arc<RuntimeConfig>>,
+    sender: Option<OverlayClient>,
     handle: Option<JoinHandle<()>>,
 }
 
@@ -132,6 +138,7 @@ impl RendererWorker {
     fn new() -> Self {
         Self {
             generation: None,
+            runtime: None,
             sender: None,
             handle: None,
         }
@@ -144,9 +151,10 @@ impl RendererWorker {
         if !self.shutdown() {
             return false;
         }
-        match overlay::spawn(runtime) {
+        match overlay::spawn(Arc::clone(&runtime)) {
             Ok((sender, handle)) => {
                 self.generation = Some(generation);
+                self.runtime = Some(runtime);
                 self.sender = Some(sender);
                 self.handle = Some(handle);
                 true
@@ -161,33 +169,49 @@ impl RendererWorker {
     fn send(&self, command: OverlayCommand) -> bool {
         self.sender
             .as_ref()
-            .is_some_and(|sender| sender.try_send(command).is_ok())
+            .is_some_and(|sender| matches!(sender.try_send(command), OverlayDelivery::Accepted))
     }
 
     fn send_lossy(&self, command: OverlayCommand) -> bool {
         self.sender
             .as_ref()
             .is_some_and(|sender| match sender.try_send(command) {
-                Ok(()) | Err(TrySendError::Full(_)) => true,
-                Err(TrySendError::Disconnected(_)) => false,
+                OverlayDelivery::Accepted | OverlayDelivery::Full => true,
+                OverlayDelivery::Fault => false,
             })
+    }
+
+    fn has_unexpected_exit(&self) -> bool {
+        self.handle.as_ref().is_some_and(JoinHandle::is_finished)
+    }
+
+    fn label(&self, action: Option<crate::domain::ActionId>) -> Option<String> {
+        action.map(|action| {
+            self.runtime
+                .as_ref()
+                .expect("renderer runtime must exist while rendering")
+                .action_label(action)
+                .to_string()
+        })
     }
 
     fn shutdown(&mut self) -> bool {
         let mut clean = true;
         if let Some(sender) = self.sender.take() {
-            clean = sender
-                .send_timeout(
+            clean = matches!(
+                sender.send_timeout(
                     OverlayCommand::Shutdown,
                     Duration::from_millis(RENDERER_SHUTDOWN_TIMEOUT_MS),
-                )
-                .is_ok();
+                ),
+                OverlayDelivery::Accepted
+            );
         }
         if let Some(handle) = self.handle.take() {
             for _ in 0..RENDERER_SHUTDOWN_TIMEOUT_MS / 10 {
                 if handle.is_finished() {
                     clean &= handle.join().is_ok();
                     self.generation = None;
+                    self.runtime = None;
                     return clean;
                 }
                 thread::sleep(Duration::from_millis(10));
@@ -195,14 +219,140 @@ impl RendererWorker {
             clean = false;
         }
         self.generation = None;
+        self.runtime = None;
         clean
     }
 }
 
-pub(super) fn run_loop_win32(reader: ConfigSnapshotReader, tid_arc: Arc<AtomicU32>) {
+enum RendererRequest {
+    Start {
+        generation: ConfigGeneration,
+        runtime: Arc<RuntimeConfig>,
+    },
+    Command {
+        command: OverlayCommand,
+        lossy: bool,
+    },
+    Label {
+        action: Option<crate::domain::ActionId>,
+    },
+    Shutdown,
+}
+
+enum RendererStatus {
+    Fatal,
+}
+
+struct RendererClient {
+    sender: Sender<RendererRequest>,
+    status: Receiver<RendererStatus>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl RendererClient {
+    fn spawn() -> std::io::Result<Self> {
+        let (sender, requests) = bounded(64);
+        let (status_tx, status) = bounded(1);
+        let handle = thread::Builder::new()
+            .name("renderer-owner".to_string())
+            .spawn(move || run_renderer_owner(requests, status_tx))?;
+        Ok(Self {
+            sender,
+            status,
+            handle: Some(handle),
+        })
+    }
+
+    fn try_send(&self, request: RendererRequest, lossy: bool) -> bool {
+        match self.sender.try_send(request) {
+            Ok(()) => true,
+            Err(TrySendError::Full(_)) if lossy => true,
+            Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => false,
+        }
+    }
+
+    fn has_failed(&self) -> bool {
+        matches!(
+            self.status.try_recv(),
+            Ok(RendererStatus::Fatal) | Err(TryRecvError::Disconnected)
+        ) || self.handle.as_ref().is_some_and(JoinHandle::is_finished)
+    }
+
+    fn shutdown(&mut self) -> bool {
+        let requested = self
+            .sender
+            .send_timeout(
+                RendererRequest::Shutdown,
+                Duration::from_millis(RENDERER_SHUTDOWN_TIMEOUT_MS),
+            )
+            .is_ok();
+        let joined = self
+            .handle
+            .take()
+            .is_none_or(|handle| handle.join().is_ok());
+        requested && joined
+    }
+}
+
+fn run_renderer_owner(requests: Receiver<RendererRequest>, status: Sender<RendererStatus>) {
+    let mut worker = RendererWorker::new();
+    let mut clean = true;
+    loop {
+        #[cfg(debug_assertions)]
+        if test_failure_marker_exists("ZG_P03C_TEST_RENDERER_FAILURE_MARKER") {
+            clean = false;
+            break;
+        }
+        match requests.recv_timeout(Duration::from_millis(25)) {
+            Ok(RendererRequest::Start {
+                generation,
+                runtime,
+            }) => {
+                if !worker.ensure(generation, runtime) || !worker.send(OverlayCommand::StartGesture)
+                {
+                    clean = false;
+                    break;
+                }
+            }
+            Ok(RendererRequest::Command { command, lossy }) => {
+                let delivered = if lossy {
+                    worker.send_lossy(command)
+                } else {
+                    worker.send(command)
+                };
+                if !delivered {
+                    clean = false;
+                    break;
+                }
+            }
+            Ok(RendererRequest::Label { action }) => {
+                let label = worker.label(action);
+                if !worker.send_lossy(OverlayCommand::UpdateLabel(label)) {
+                    clean = false;
+                    break;
+                }
+            }
+            Ok(RendererRequest::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
+            Err(RecvTimeoutError::Timeout) => {
+                if worker.has_unexpected_exit() {
+                    clean = false;
+                    break;
+                }
+            }
+        }
+    }
+    clean &= worker.shutdown();
+    if !clean {
+        let _ = status.try_send(RendererStatus::Fatal);
+    }
+}
+
+pub(super) fn run_loop_win32(
+    reader: ConfigSnapshotReader,
+    events: Sender<HookEvent>,
+) -> Result<(), HookFailure> {
     unsafe {
         let tid = GetCurrentThreadId();
-        tid_arc.store(tid, Ordering::Release);
         let context = Arc::new(ContextMailbox::new());
         let context_stop = Arc::new(AtomicBool::new(false));
         let context_handle = spawn_context_worker(
@@ -210,48 +360,81 @@ pub(super) fn run_loop_win32(reader: ConfigSnapshotReader, tid_arc: Arc<AtomicU3
             tid,
             Arc::clone(&context),
             Arc::clone(&context_stop),
-        );
+        )
+        .map_err(|_| HookFailure::new("context", "failed to start"))?;
+        let renderer =
+            RendererClient::spawn().map_err(|_| HookFailure::new("renderer", "failed to start"))?;
         HOOK_STATE.with(|cell| {
             *cell.borrow_mut() = Some(HookThreadState {
                 owner: NativeInputOwner::new(reader),
                 owner_tid: tid,
                 context,
-                renderer: RendererWorker::new(),
+                context_stop,
+                context_handle: Some(context_handle),
+                renderer,
             });
         });
 
-        let hook = SetWindowsHookExW(
-            WH_MOUSE_LL,
-            Some(low_level_mouse_proc),
-            std::ptr::null_mut(),
-            0,
-        );
+        #[cfg(debug_assertions)]
+        let inject_install_failure =
+            std::env::var_os("ZG_P03C_TEST_HOOK_INSTALL_FAILURE").is_some();
+        #[cfg(not(debug_assertions))]
+        let inject_install_failure = false;
+        let hook = if inject_install_failure {
+            std::ptr::null_mut()
+        } else {
+            SetWindowsHookExW(
+                WH_MOUSE_LL,
+                Some(low_level_mouse_proc),
+                std::ptr::null_mut(),
+                0,
+            )
+        };
         if hook.is_null() {
-            error!("SetWindowsHookExW failed");
-            context_stop.store(true, Ordering::Release);
-            let _ = context_handle.join();
-            HOOK_STATE.with(|cell| *cell.borrow_mut() = None);
-            return;
+            shutdown_hook_state();
+            return Err(HookFailure::new("hook", "installation failed"));
         }
-        SetTimer(
+        if SetTimer(
             std::ptr::null_mut(),
             SAFETY_TIMER_ID,
             SAFETY_TIMER_PERIOD_MS,
             None,
-        );
+        ) == 0
+        {
+            UnhookWindowsHookEx(hook);
+            shutdown_hook_state();
+            return Err(HookFailure::new("hook", "safety timer setup failed"));
+        }
+        if events.send(HookEvent::Ready(tid)).is_err() {
+            KillTimer(std::ptr::null_mut(), SAFETY_TIMER_ID);
+            UnhookWindowsHookEx(hook);
+            shutdown_hook_state();
+            return Err(HookFailure::new("hook", "readiness receiver disappeared"));
+        }
         debug!("WH_MOUSE_LL hook installed (tid={tid})");
 
         let mut msg: MSG = std::mem::zeroed();
+        let mut failure = None;
         loop {
             let result = GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0);
-            if result == 0 || result == -1 {
+            if result == 0 {
+                break;
+            }
+            if result == -1 {
+                failure = Some(HookFailure::new("hook", "message loop failed"));
                 break;
             }
             match msg.message {
                 WM_ACTION_READY => drain_actions(),
                 WM_RENDER_READY => drain_renderer(),
                 WM_CONTEXT_READY => update_context(),
-                WM_TIMER => handle_safety_timer(),
+                WM_TIMER => {
+                    handle_safety_timer();
+                    if let Some(worker_failure) = poll_worker_failure() {
+                        failure = Some(worker_failure);
+                        break;
+                    }
+                }
                 _ => {
                     DispatchMessageW(&msg);
                 }
@@ -260,18 +443,49 @@ pub(super) fn run_loop_win32(reader: ConfigSnapshotReader, tid_arc: Arc<AtomicU3
 
         KillTimer(std::ptr::null_mut(), SAFETY_TIMER_ID);
         UnhookWindowsHookEx(hook);
-        context_stop.store(true, Ordering::Release);
-        let _ = context_handle.join();
-        HOOK_STATE.with(|cell| {
-            if let Some(state) = cell.borrow_mut().as_mut() {
-                state.owner.shutdown();
-                let _ = state.renderer.shutdown();
-            }
-            *cell.borrow_mut() = None;
-        });
+        failure = failure.or_else(shutdown_hook_state);
         debug!("WH_MOUSE_LL hook removed");
         info!("hook thread stopped (tid={tid})");
+        failure.map_or(Ok(()), Err)
     }
+}
+
+fn poll_worker_failure() -> Option<HookFailure> {
+    HOOK_STATE.with(|cell| {
+        let state = cell.borrow();
+        let state = state.as_ref()?;
+        if state
+            .context_handle
+            .as_ref()
+            .is_some_and(JoinHandle::is_finished)
+        {
+            return Some(HookFailure::new("context", "terminated unexpectedly"));
+        }
+        state
+            .renderer
+            .has_failed()
+            .then(|| HookFailure::new("renderer", "terminated unexpectedly"))
+    })
+}
+
+fn shutdown_hook_state() -> Option<HookFailure> {
+    HOOK_STATE.with(|cell| {
+        let mut state = cell.borrow_mut().take()?;
+        state.owner.shutdown();
+        state.context_stop.store(true, Ordering::Release);
+        let context_failed = state
+            .context_handle
+            .take()
+            .is_some_and(|handle| !matches!(handle.join(), Ok(Ok(()))));
+        let renderer_failed = !state.renderer.shutdown();
+        if context_failed {
+            Some(HookFailure::new("context", "terminated unexpectedly"))
+        } else if renderer_failed {
+            Some(HookFailure::new("renderer", "terminated unexpectedly"))
+        } else {
+            None
+        }
+    })
 }
 
 unsafe extern "system" fn low_level_mouse_proc(
@@ -384,28 +598,34 @@ fn drain_renderer() {
                     generation,
                     session: _,
                 } => state.owner.runtime(generation).is_some_and(|runtime| {
-                    state.renderer.ensure(generation, runtime)
-                        && state.renderer.send(OverlayCommand::StartGesture)
+                    state.renderer.try_send(
+                        RendererRequest::Start {
+                            generation,
+                            runtime,
+                        },
+                        false,
+                    )
                 }),
-                RenderWork::Point { point, .. } => {
-                    state.renderer.send_lossy(OverlayCommand::TrackPoint {
-                        x: point.x,
-                        y: point.y,
-                    })
-                }
-                RenderWork::Label { action, .. } => {
-                    let label = action.and_then(|action| {
-                        state
-                            .renderer
-                            .generation
-                            .and_then(|generation| state.owner.runtime(generation))
-                            .map(|runtime| runtime.action_label(action).to_string())
-                    });
-                    state
-                        .renderer
-                        .send_lossy(OverlayCommand::UpdateLabel(label))
-                }
-                RenderWork::End { .. } => state.renderer.send(OverlayCommand::EndGesture),
+                RenderWork::Point { point, .. } => state.renderer.try_send(
+                    RendererRequest::Command {
+                        command: OverlayCommand::TrackPoint {
+                            x: point.x,
+                            y: point.y,
+                        },
+                        lossy: true,
+                    },
+                    true,
+                ),
+                RenderWork::Label { action, .. } => state
+                    .renderer
+                    .try_send(RendererRequest::Label { action }, true),
+                RenderWork::End { .. } => state.renderer.try_send(
+                    RendererRequest::Command {
+                        command: OverlayCommand::EndGesture,
+                        lossy: false,
+                    },
+                    false,
+                ),
             };
             if !delivered {
                 state.owner.renderer_fault();
@@ -443,13 +663,17 @@ fn spawn_context_worker(
     owner_tid: u32,
     mailbox: Arc<ContextMailbox>,
     stop: Arc<AtomicBool>,
-) -> JoinHandle<()> {
+) -> std::io::Result<JoinHandle<Result<(), HookFailure>>> {
     thread::Builder::new()
         .name("input-context".to_string())
         .spawn(move || {
             let mut last_signature = None;
             let mut last_publish_tick = 0_u32;
             while !stop.load(Ordering::Acquire) {
+                #[cfg(debug_assertions)]
+                if test_failure_marker_exists("ZG_P03C_TEST_CONTEXT_FAILURE_MARKER") {
+                    return Err(HookFailure::new("context", "fault injected"));
+                }
                 let context = resolve_context(&reader);
                 let tick = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount() };
                 let signature = context.map(|context| {
@@ -472,8 +696,8 @@ fn spawn_context_worker(
                 }
                 thread::sleep(Duration::from_millis(CONTEXT_SAMPLE_PERIOD_MS));
             }
+            Ok(())
         })
-        .expect("failed to spawn input context worker")
 }
 
 fn resolve_context(reader: &ConfigSnapshotReader) -> Option<ContextView> {
@@ -485,18 +709,32 @@ fn resolve_context(reader: &ConfigSnapshotReader) -> Option<ContextView> {
     if unsafe { GetCursorPos(&mut cursor) } == 0 {
         return None;
     }
+    let sampled_tick = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount() };
     let target = top_level_window(cursor)?;
     let info = crate::window_info::get_window_info_by_hwnd(target);
     let binding_set = snapshot
         .match_windows_app(&info)
         .unwrap_or_else(|| snapshot.default_binding_set());
+    let resolved_tick = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount() };
+    if !context_resolution_is_fresh(sampled_tick, resolved_tick) {
+        return None;
+    }
     Some(ContextView {
         generation: snapshot.generation(),
         binding_set,
         target: TargetToken(target as usize as u64),
         point: Point::new(cursor.x, cursor.y),
-        updated_tick: unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount() },
+        updated_tick: sampled_tick,
     })
+}
+
+fn context_resolution_is_fresh(sampled_tick: u32, resolved_tick: u32) -> bool {
+    resolved_tick.wrapping_sub(sampled_tick) <= CONTEXT_MAX_AGE_MS
+}
+
+#[cfg(debug_assertions)]
+fn test_failure_marker_exists(variable: &str) -> bool {
+    std::env::var_os(variable).is_some_and(|path| std::path::Path::new(&path).exists())
 }
 
 fn top_level_window(point: POINT) -> Option<HWND> {
@@ -676,5 +914,71 @@ mod tests {
         }));
         mailbox.publish(None);
         assert!(mailbox.read().is_none());
+    }
+
+    #[test]
+    fn delayed_context_resolution_is_rejected_as_stale() {
+        assert!(context_resolution_is_fresh(1_000, 1_100));
+        assert!(!context_resolution_is_fresh(1_000, 1_101));
+        assert!(context_resolution_is_fresh(u32::MAX - 50, 49));
+    }
+
+    #[test]
+    fn concurrent_context_mailbox_reads_never_observe_torn_fields() {
+        let mailbox = Arc::new(ContextMailbox::new());
+        let first = ContextView {
+            generation: 11,
+            binding_set: BindingSetId::from_index(1).unwrap(),
+            target: TargetToken(101),
+            point: Point::new(1_001, -1_001),
+            updated_tick: 1_011,
+        };
+        let second = ContextView {
+            generation: 22,
+            binding_set: BindingSetId::from_index(2).unwrap(),
+            target: TargetToken(202),
+            point: Point::new(2_002, -2_002),
+            updated_tick: 2_022,
+        };
+        mailbox.publish(Some(first));
+        let writer_mailbox = Arc::clone(&mailbox);
+        let writer = thread::spawn(move || {
+            for index in 0..50_000 {
+                writer_mailbox.publish(Some(if index % 2 == 0 { second } else { first }));
+            }
+        });
+        for _ in 0..50_000 {
+            if let Some(value) = mailbox.read() {
+                let complete_first = value.generation == first.generation
+                    && value.binding_set == first.binding_set
+                    && value.target == first.target
+                    && value.point == first.point
+                    && value.updated_tick == first.updated_tick;
+                let complete_second = value.generation == second.generation
+                    && value.binding_set == second.binding_set
+                    && value.target == second.target
+                    && value.point == second.point
+                    && value.updated_tick == second.updated_tick;
+                assert!(complete_first || complete_second);
+            }
+        }
+        writer.join().unwrap();
+    }
+
+    #[test]
+    fn renderer_lifecycle_backpressure_never_blocks_the_hook_thread() {
+        let (sender, requests) = bounded(1);
+        assert!(sender.try_send(RendererRequest::Shutdown).is_ok());
+        let (_status_tx, status) = bounded(1);
+        let client = RendererClient {
+            sender,
+            status,
+            handle: None,
+        };
+        let started = std::time::Instant::now();
+
+        assert!(!client.try_send(RendererRequest::Shutdown, false));
+        assert!(started.elapsed() < Duration::from_millis(50));
+        drop(requests);
     }
 }

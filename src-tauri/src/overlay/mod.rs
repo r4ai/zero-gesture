@@ -2,16 +2,15 @@
 //!
 //! Manages a transparent overlay window that draws the mouse gesture trail
 //! using a pluggable rendering backend on a near-fullscreen layered window.
-//! Commands are received via a crossbeam channel from the hook thread and
-//! bridged into the Win32 message loop via custom `WM_APP` messages.
+//! Commands remain in one bounded channel until the Win32 message pump
+//! consumes them. A coalesced `WM_APP` wakeup never carries command payload.
 //!
 //! # Architecture
 //!
 //! The overlay runs on a dedicated OS thread with its own Win32 message loop.
-//! A bridge thread reads [`OverlayCommand`] from the crossbeam channel and
-//! posts corresponding `WM_APP+N` messages to the overlay thread via
-//! `PostThreadMessageW`, decoupling the channel-based API from the Win32
-//! message pump.
+//! Producers enqueue into the bounded channel and post one coalesced wakeup.
+//! A safety timer also drains the same channel, so a failed message post
+//! cannot discard an accepted terminal command.
 //!
 //! The window uses `WS_EX_LAYERED` with `LWA_COLORKEY` (black = transparent)
 //! so that only the drawn trail is visible. `WS_EX_TRANSPARENT` ensures mouse
@@ -31,10 +30,13 @@ mod window;
 #[cfg(windows)]
 mod direct2d;
 
-use std::sync::Arc;
+use std::io;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{mpsc, Arc};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
-use crossbeam_channel::{bounded, Sender};
+use crossbeam_channel::{bounded, SendTimeoutError, Sender, TrySendError};
 use log::info;
 
 #[cfg(not(windows))]
@@ -44,6 +46,7 @@ use log::warn;
 use windows_sys::Win32::{
     Foundation::{POINT, RECT},
     Graphics::Gdi::HDC,
+    UI::WindowsAndMessaging::PostThreadMessageW,
 };
 
 use crate::config::RuntimeConfig;
@@ -103,6 +106,60 @@ pub enum OverlayCommand {
     UpdateLabel(Option<String>),
     /// Shut down the overlay thread.
     Shutdown,
+}
+
+pub(crate) enum OverlayDelivery {
+    Accepted,
+    Full,
+    Fault,
+}
+
+pub(crate) struct OverlayClient {
+    sender: Sender<OverlayCommand>,
+    thread_id: Arc<AtomicU32>,
+    wake_pending: Arc<AtomicBool>,
+}
+
+impl OverlayClient {
+    pub(crate) fn try_send(&self, command: OverlayCommand) -> OverlayDelivery {
+        match self.sender.try_send(command) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) => return OverlayDelivery::Full,
+            Err(TrySendError::Disconnected(_)) => return OverlayDelivery::Fault,
+        }
+        self.wake()
+    }
+
+    pub(crate) fn send_timeout(
+        &self,
+        command: OverlayCommand,
+        timeout: Duration,
+    ) -> OverlayDelivery {
+        match self.sender.send_timeout(command, timeout) {
+            Ok(()) => self.wake(),
+            Err(SendTimeoutError::Timeout(_)) => OverlayDelivery::Full,
+            Err(SendTimeoutError::Disconnected(_)) => OverlayDelivery::Fault,
+        }
+    }
+
+    fn wake(&self) -> OverlayDelivery {
+        if !self.wake_pending.swap(true, Ordering::AcqRel) {
+            #[cfg(windows)]
+            if unsafe {
+                PostThreadMessageW(
+                    self.thread_id.load(Ordering::Acquire),
+                    window::WAKE_MESSAGE,
+                    0,
+                    0,
+                )
+            } == 0
+            {
+                self.wake_pending.store(false, Ordering::Release);
+                return OverlayDelivery::Fault;
+            }
+        }
+        OverlayDelivery::Accepted
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -188,11 +245,12 @@ pub(super) struct OverlayConfig {
 /// control the overlay. The [`JoinHandle`] can be used to wait for the
 /// thread to finish.
 ///
-pub(crate) fn spawn(
-    runtime: Arc<RuntimeConfig>,
-) -> std::io::Result<(Sender<OverlayCommand>, JoinHandle<()>)> {
+pub(crate) fn spawn(runtime: Arc<RuntimeConfig>) -> io::Result<(OverlayClient, JoinHandle<()>)> {
     info!("starting overlay thread");
     let (overlay_tx, overlay_rx) = bounded(64);
+    let thread_id = Arc::new(AtomicU32::new(0));
+    let wake_pending = Arc::new(AtomicBool::new(false));
+    let (ready_tx, ready_rx) = mpsc::sync_channel(1);
 
     // Snapshot config before entering the thread.
     let overlay_config = {
@@ -207,20 +265,54 @@ pub(crate) fn spawn(
         }
     };
 
+    let worker_thread_id = Arc::clone(&thread_id);
+    let worker_wake_pending = Arc::clone(&wake_pending);
     let handle = thread::Builder::new()
         .name("overlay-thread".to_string())
         .spawn(move || {
             #[cfg(windows)]
-            window::run_loop_win32(overlay_config, overlay_rx);
+            window::run_loop_win32(
+                overlay_config,
+                overlay_rx,
+                worker_thread_id,
+                worker_wake_pending,
+                ready_tx,
+            );
             #[cfg(not(windows))]
             {
-                let _ = (overlay_config, overlay_rx);
+                let _ = (
+                    overlay_config,
+                    overlay_rx,
+                    worker_thread_id,
+                    worker_wake_pending,
+                );
                 warn!("Overlay is only supported on Windows");
+                let _ = ready_tx.send(Ok(()));
             }
         })?;
+    match ready_rx.recv_timeout(Duration::from_secs(1)) {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            let _ = handle.join();
+            return Err(error);
+        }
+        Err(error) => {
+            drop(handle);
+            return Err(io::Error::other(format!(
+                "overlay readiness failed: {error}"
+            )));
+        }
+    }
     info!("overlay thread spawned");
 
-    Ok((overlay_tx, handle))
+    Ok((
+        OverlayClient {
+            sender: overlay_tx,
+            thread_id,
+            wake_pending,
+        },
+        handle,
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -257,5 +349,30 @@ mod tests {
         assert_eq!(parse_hex_color(""), default);
         assert_eq!(parse_hex_color("#GGGGGG"), default);
         assert_eq!(parse_hex_color("#12345"), default); // wrong length
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn failed_wakeup_keeps_an_accepted_terminal_in_the_bounded_queue() {
+        use super::{OverlayClient, OverlayCommand, OverlayDelivery};
+        use crossbeam_channel::bounded;
+        use std::sync::atomic::{AtomicBool, AtomicU32};
+        use std::sync::Arc;
+
+        let (sender, receiver) = bounded(1);
+        let client = OverlayClient {
+            sender,
+            thread_id: Arc::new(AtomicU32::new(0)),
+            wake_pending: Arc::new(AtomicBool::new(false)),
+        };
+
+        assert!(matches!(
+            client.try_send(OverlayCommand::EndGesture),
+            OverlayDelivery::Fault
+        ));
+        assert!(matches!(
+            receiver.try_recv(),
+            Ok(OverlayCommand::EndGesture)
+        ));
     }
 }

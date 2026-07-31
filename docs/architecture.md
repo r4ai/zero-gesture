@@ -42,8 +42,9 @@ graph TD
         K --> R
     end
 
-    subgraph "Overlay Thread (Win32 Message Loop)"
-        R -->|Drop points on overload| O[Bounded Bridge]
+    subgraph "Renderer Owner + Overlay Thread"
+        R -->|Nonblocking lifecycle/work| RO[Renderer Owner]
+        RO -->|One bounded queue + coalesced wakeup| O[Overlay Pump]
         O --> WIN[Transparent Window]
         WIN --> GDI[GDI Renderer]
     end
@@ -87,6 +88,7 @@ UIスレッドのブロックを防ぐため、独立したスレッドでマウ
   - **Context Resolution:** callback外のContext workerが`GetCursorPos`、`WindowFromPoint`、window/process情報、app matchingを事前解決し、一つのlatest-value mailboxへgeneration/binding/target/point/tickを公開する。exact point、100 ms以内、same generationを満たさないtriggerはfail-openでpassする。
   - **Communication:** callbackはaction 16件、renderer 64件の独立した固定長FIFOへnumeric workだけをenqueueする。renderer point/labelはoverload時にdropできるが、start/end用terminal slotを予約する。
   - **Action:** target activation、keyboard action、trigger replayは同じaction FIFOをHook Threadのmessage loopがcallback復帰後に実行する。activation resultとinjection/completion failureは`InputKernel`へ戻す。
+  - **Readiness/Fatal:** Hook thread IDは`SetWindowsHookExW`とsafety timerの成功後にだけreadyとして公開する。message loopはcontext/renderer ownerの終了を継続監視し、予期しない終了ではsuppressionを解除してEngineをnonzero終了する。
 
 ### 3.3. Overlay Thread (The "Visuals")
 
@@ -96,7 +98,8 @@ TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成
 - **Responsibility:**
   - **Window Creation:** `WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW` スタイルの全画面透明ウィンドウを作成。
   - **Rendering:** Hook Threadから送られてくる座標データを元に、GDI（`Polyline` + バックバッファビットマップ）を用いてラインを描画する。移行でもGDIを維持し、別rendererの採用は性能契約の未達を測定した後に別ADRで判断する。Direct2Dは未実装（常にerrorを返すstubのみ）。
-  - **Lifecycle:** ジェスチャー中のみ可視化（`ShowWindow`）し、終了後は非表示＆描画クリアを行う。renderer workerはgesture start時にpin済みgenerationへlazy起動し、次generationの最初のgestureでのみ置換する。bridge channelは64件にbounded化し、point/labelはdrop-on-full、lifecycle failureはInput ownerへ返す。
+  - **Lifecycle:** ジェスチャー中のみ可視化（`ShowWindow`）し、終了後は非表示＆描画クリアを行う。Hook pumpはrenderer ownerへnonblocking enqueueするだけで、overlayの起動・generation置換・joinはrenderer owner側で行う。
+  - **Delivery:** overlay commandは一つの64件bounded queueにpump消費まで保持し、payloadを別のWin32 message queueへ移さない。`PostThreadMessageW`はcoalesced wakeupだけを運び、失敗時もsafety timerが同じqueueをdrainする。point/labelはoverload時にdrop可能だが、terminal失敗とworker終了はowner/kernelへfaultとして戻す。
 
 ### 3.4. Settings UI (The "Interface")
 
@@ -170,10 +173,6 @@ TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成
 │   │   ├── capture.rs          // ウィンドウキャプチャ
 │   │   ├── window_info.rs      // アクティブウィンドウ情報取得
 │   │   ├── log.rs              // ログ設定
-│   │   ├── hook/
-│   │   │   ├── mod.rs          // フック起動・バインディングコンパイル
-│   │   │   ├── app_match.rs    // アプリ名マッチング
-│   │   │   └── win32.rs        // Win32 callback、変換、effect適用
 │   │   └── overlay/
 │   │       ├── mod.rs          // TrailRendererトレイト、OverlayCommand定義
 │   │       ├── window.rs       // Win32ウィンドウ作成・メッセージループ
@@ -191,6 +190,6 @@ TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成
 
 ## 7. Performance Considerations
 
-- **Blocking:** 目標設計ではHook callbackをnormalize/evaluate、essential creditのnonblocking reserve/send、best-effort render send、pass/suppress returnの順に限定する。現行callbackはconfigured trigger down時のwindow activation/query/app matching、overlay channel送信、action/replay queueingを同期実行しており、ADR 0002に従って移行する必要がある。
+- **Blocking:** 現行Hook callbackはnormalize/evaluate、fixed atomic snapshot/context read、fixed-capacity lane reserve、coalesced nonblocking wakeup、pass/suppress returnに限定する。OS context query、activation/action実行、renderer lifecycle/joinはcallbackとHook pumpの外へ分離済みである。
 - **Memory Safety:** `unsafe` ブロックを多用するWin32 API部分は、Rustのラッパー関数で適切に抽象化し、メモリリークや未定義動作を防ぐ。
 - **Drawing:** 現在とWindows移行中はGDI（`Polyline` + バックバッファ）を使用する。`direct2d.rs`は未実装stubであり、性能契約の未達を測定した場合だけ別ADR/PRでrenderer変更を検討する。macOSのAppKit/Core Animation adapterはこのWindows判断と分離する。

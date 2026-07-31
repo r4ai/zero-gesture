@@ -66,6 +66,10 @@ impl EngineFixture {
     }
 
     fn spawn(&self, fail_first_pipe: bool) -> EngineChild {
+        self.spawn_with_env(fail_first_pipe.then_some(("ZG_P03_TEST_FAIL_FIRST_PIPE", "1")))
+    }
+
+    fn spawn_with_env(&self, environment: Option<(&str, &str)>) -> EngineChild {
         let mut command = Command::new(ENGINE_EXE);
         command
             .arg("--engine")
@@ -76,8 +80,8 @@ impl EngineFixture {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        if fail_first_pipe {
-            command.env("ZG_P03_TEST_FAIL_FIRST_PIPE", "1");
+        if let Some((name, value)) = environment {
+            command.env(name, value);
         }
         EngineChild {
             child: command.spawn().unwrap(),
@@ -160,6 +164,45 @@ fn actual_engine_child_starts_no_webview2_descendant() {
         webview2_descendants(engine.child.id()),
         Vec::<String>::new()
     );
+}
+
+#[test]
+fn hook_install_failure_prevents_readiness_and_a_fresh_engine_restarts() {
+    let fixture = EngineFixture::new(br#"{"enabled":false}"#);
+    let mut failed = fixture.spawn_with_env(Some(("ZG_P03C_TEST_HOOK_INSTALL_FAILURE", "1")));
+    fixture.wait_failed(&mut failed.child);
+    assert!(!fixture.ready_marker.exists());
+
+    let mut restarted = fixture.spawn(false);
+    fixture.wait_ready(&mut restarted.child);
+}
+
+#[test]
+fn context_worker_termination_exits_engine_and_a_fresh_engine_restarts() {
+    let fixture = EngineFixture::new(br#"{"enabled":false}"#);
+    let failure_marker = fixture.config_dir.join("fail-context");
+    let marker = failure_marker.to_string_lossy().into_owned();
+    let mut failed = fixture.spawn_with_env(Some(("ZG_P03C_TEST_CONTEXT_FAILURE_MARKER", &marker)));
+    fixture.wait_ready(&mut failed.child);
+    fs::write(&failure_marker, b"fail").unwrap();
+    fixture.wait_failed(&mut failed.child);
+    fs::remove_file(failure_marker).unwrap();
+    fs::remove_file(&fixture.ready_marker).unwrap();
+
+    let mut restarted = fixture.spawn(false);
+    fixture.wait_ready(&mut restarted.child);
+}
+
+#[test]
+fn renderer_worker_termination_exits_engine() {
+    let fixture = EngineFixture::new(br#"{"enabled":false}"#);
+    let failure_marker = fixture.config_dir.join("fail-renderer");
+    let marker = failure_marker.to_string_lossy().into_owned();
+    let mut failed =
+        fixture.spawn_with_env(Some(("ZG_P03C_TEST_RENDERER_FAILURE_MARKER", &marker)));
+    fixture.wait_ready(&mut failed.child);
+    fs::write(failure_marker, b"fail").unwrap();
+    fixture.wait_failed(&mut failed.child);
 }
 
 fn content_window_count(process_id: u32) -> u32 {

@@ -98,9 +98,19 @@ or unavailable context passes the physical event without starting. These
 constants are conservative correctness bounds, not a final P06 latency
 acceptance claim.
 
+The mailbox writer publishes fields before a release version store. Readers
+load the opening version with acquire semantics, load fields relaxed, execute
+an acquire fence, and only then validate the closing version. This is the
+canonical seqlock ordering on ARM64 as well as x86-64.
+
 The context contains a dense `BindingSetId` and opaque HWND-derived
 `TargetToken`. Target activation occurs later in the action lane. The callback
 never discovers or activates a window.
+
+The worker records `updated_tick` beside `GetCursorPos`, before window/process
+resolution. If resolution itself exceeds the 100 ms freshness bound, the
+observation is rejected instead of being published with a later, misleading
+timestamp.
 
 ### Distinct bounded lanes and outcomes
 
@@ -122,11 +132,16 @@ timer also drains both lanes, so a transient native message-post failure cannot
 strand bounded work indefinitely.
 
 The renderer lane reserves one terminal slot from start through end. Points and
-labels are lossy when only that terminal slot remains. The existing overlay
-bridge is also bounded at 64 entries; point/label sends use nonblocking
-drop-on-full, while start/end full or disconnect is a renderer fault. A
-renderer fault is fed back to `InputKernel`, which follows its replay/cancel
-and bypass policy without delaying physical input.
+labels are lossy when only that terminal slot remains. The Hook pump only uses
+nonblocking sends to a renderer owner; overlay start, generation replacement,
+shutdown, and join occur on that owner thread.
+
+The overlay has one 64-entry bounded command queue. Commands remain there until
+the Win32 pump consumes them; `PostThreadMessageW` carries only one coalesced
+wakeup and never a command payload. A failed wakeup leaves an accepted terminal
+in the bounded queue for the overlay safety timer. Full/disconnected terminal
+delivery and renderer termination are reported as faults, so `InputKernel`
+follows its replay/cancel and bypass policy without delaying physical input.
 
 The action message loop reports activation ready/failed, injection started,
 completion, before-injection failure, and after-injection failure through
@@ -137,25 +152,29 @@ use the captured suppressed down and physical-up coordinates exactly once.
 
 ### Renderer and owner lifecycle
 
-The overlay renderer is lazy and owned by the hook message loop. `RenderStart`
+The overlay renderer is lazy and owned by the renderer owner. `RenderStart`
 starts it for the pinned generation; a later generation replaces it only when
 the prior gesture has ended and the next start arrives. Point overload does
-not delay action delivery. Lifecycle failure enters the kernel fault path
-rather than continuing a headless gesture.
+not delay action delivery, and replacement/shutdown waits never run on the
+installed hook message pump.
 
 Engine startup order remains singleton/secret/first pipe, config startup and
-publication, then input owner. Shutdown posts `WM_QUIT`, unhooks input, stops
-and joins the context worker, puts the kernel in idempotent bypass, clears both
-lanes and the generation pin, and stops the renderer. A worker panic is a
-typed fatal owner failure. Once the hook is removed or the kernel is shut
-down, later physical input is never suppressed; ordinary tray, Settings, IPC,
-JSON, and WebView failures do not enter the callback.
+publication, then input owner. Readiness is published only after
+`SetWindowsHookExW` and the safety timer are installed. The Hook loop
+continuously observes context and renderer-owner termination; unexpected
+termination unhooks input, shuts down the kernel, and causes a nonzero fatal
+Engine exit. Shutdown posts `WM_QUIT`, unhooks input before any renderer wait,
+stops and joins the context worker, puts the kernel in idempotent bypass,
+clears both lanes and the generation pin, and then joins renderer ownership.
+Once the hook is removed or the kernel is shut down, later physical input is
+never suppressed; ordinary tray, Settings, IPC, JSON, and WebView failures do
+not enter the callback.
 
 ## Contract and complexity accounting
 
-The P03c manifest has 12 independent obligations and 12 unique runnable cases:
-`O = 12`, `O_v = 12`, `U = 0`. No evidence pair appears in P02, P03a, P03b,
-or more than once in P03c. Logical contract cases are `T = 12`, `T_r = 0`,
+The P03c manifest has 18 independent obligations and 18 unique runnable cases:
+`O = 18`, `O_v = 18`, `U = 0`. No evidence pair appears in P02, P03a, P03b,
+or more than once in P03c. Logical contract cases are `T = 18`, `T_r = 0`,
 `P = 0`, `D = 0`, and `F = 0`.
 
 No dependency is added. Fixed lanes and one latest-value mailbox replace the

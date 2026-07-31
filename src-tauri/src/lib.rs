@@ -38,6 +38,7 @@ pub struct ConfigDir(pub PathBuf);
 struct WorkerThreads {
     hook_thread_tid: Arc<AtomicU32>,
     hook_handle: Option<JoinHandle<()>>,
+    hook_events: Option<crossbeam_channel::Receiver<hook::HookEvent>>,
 }
 
 #[derive(Debug)]
@@ -79,7 +80,7 @@ impl WorkerThreads {
             std::fs::write(path, b"worker-started").map_err(RuntimeProjectionError::TestMarker)?;
         }
         info!("starting native input owner");
-        let (hook_thread_tid, hook_handle) =
+        let (hook_thread_tid, hook_handle, hook_events) =
             hook::spawn(reader).map_err(|source| RuntimeProjectionError::WorkerSpawn {
                 worker: "hook",
                 source,
@@ -89,6 +90,7 @@ impl WorkerThreads {
         Ok(Self {
             hook_thread_tid,
             hook_handle: Some(hook_handle),
+            hook_events: Some(hook_events),
         })
     }
 
@@ -155,6 +157,40 @@ impl ThreadRuntime {
         Self {
             state: Mutex::new(RuntimeState::Disabled),
         }
+    }
+
+    fn monitor_owner(&self, app_handle: tauri::AppHandle) -> Result<(), RuntimeProjectionError> {
+        let events = {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| RuntimeProjectionError::StatePoisoned)?;
+            let RuntimeState::Running(workers) = &mut *state else {
+                return Err(RuntimeProjectionError::RuntimeShutDown);
+            };
+            workers
+                .hook_events
+                .take()
+                .ok_or(RuntimeProjectionError::RuntimeShutDown)?
+        };
+        thread::Builder::new()
+            .name("input-owner-monitor".to_string())
+            .spawn(move || {
+                if let Ok(hook::HookEvent::Fatal(failure)) = events.recv() {
+                    error!("native input owner stopped: {failure}");
+                    if let Some(runtime) = app_handle.try_state::<ThreadRuntime>() {
+                        if let Err(error) = runtime.shutdown() {
+                            error!("failed to stop Engine after native owner failure: {error}");
+                        }
+                    }
+                    std::process::exit(1);
+                }
+            })
+            .map(|_| ())
+            .map_err(|source| RuntimeProjectionError::WorkerSpawn {
+                worker: "input-owner-monitor",
+                source,
+            })
     }
 
     /// Returns `true` if [`ThreadRuntime::shutdown`] has been called,
@@ -373,6 +409,11 @@ fn run_engine() -> Result<(), String> {
                 tauri::Error::Setup((Box::new(error) as Box<dyn std::error::Error>).into())
             })?;
             app.manage(thread_runtime);
+            app.state::<ThreadRuntime>()
+                .monitor_owner(app.handle().clone())
+                .map_err(|error| {
+                    tauri::Error::Setup((Box::new(error) as Box<dyn std::error::Error>).into())
+                })?;
             app.manage(commands::CaptureState(std::sync::Mutex::new(None)));
             tray::setup(app, enabled)?;
 
@@ -580,43 +621,5 @@ mod tests {
             )
             .unwrap_err();
         assert!(matches!(error, RuntimeProjectionError::StatePoisoned));
-    }
-
-    #[test]
-    fn crashed_native_owner_is_typed_and_a_fresh_owner_can_restart() {
-        let failed = thread::spawn(|| panic!("injected hook worker failure"));
-        while !failed.is_finished() {
-            thread::yield_now();
-        }
-        let runtime = ThreadRuntime {
-            state: Mutex::new(RuntimeState::Running(WorkerThreads {
-                hook_thread_tid: Arc::new(AtomicU32::new(0)),
-                hook_handle: Some(failed),
-            })),
-        };
-        let mut disabled = config::ConfigDocument::default();
-        disabled.shared.enabled = false;
-
-        let error = runtime
-            .observe_applied(&config::ActiveConfig::from_document(disabled).unwrap())
-            .unwrap_err();
-
-        assert!(matches!(
-            error,
-            RuntimeProjectionError::WorkerPanicked("hook")
-        ));
-        assert!(matches!(
-            *runtime.state.lock().unwrap(),
-            RuntimeState::Running(_)
-        ));
-        assert!(matches!(
-            runtime.shutdown(),
-            Err(RuntimeProjectionError::WorkerPanicked("hook"))
-        ));
-
-        let directory = tempfile::tempdir().unwrap();
-        let (owner, _) = config::ConfigOwner::startup(directory.path());
-        let restarted = ThreadRuntime::start(owner.reader()).unwrap();
-        restarted.shutdown().unwrap();
     }
 }

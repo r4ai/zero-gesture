@@ -1,13 +1,15 @@
 //! Win32 window management for the gesture overlay.
 //!
-//! Contains the message loop, bridge thread, window creation, WndProcs,
+//! Contains the message loop, bounded-command drain, window creation, WndProcs,
 //! and all message handlers. The actual trail rendering is delegated to
 //! a [`TrailRenderer`](super::TrailRenderer) implementation.
 
 use std::cell::RefCell;
-use std::thread;
+use std::io;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{mpsc::SyncSender, Arc};
 
-use crossbeam_channel::Receiver;
+use crossbeam_channel::{Receiver, TryRecvError};
 use log::{debug, error, info, trace};
 
 use windows_sys::Win32::{
@@ -23,12 +25,12 @@ use windows_sys::Win32::{
     System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentThreadId},
     UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
-        GetSystemMetrics, PostQuitMessage, PostThreadMessageW, RegisterClassExW,
-        SetLayeredWindowAttributes, SetWindowPos, ShowWindow, UnregisterClassW, HWND_NOTOPMOST,
-        HWND_TOPMOST, LWA_ALPHA, LWA_COLORKEY, MSG, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
-        SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-        SWP_SHOWWINDOW, SW_HIDE, WM_APP, WM_DESTROY, WM_ERASEBKGND, WM_PAINT, WNDCLASSEXW,
-        WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_POPUP,
+        GetSystemMetrics, KillTimer, PostQuitMessage, RegisterClassExW, SetLayeredWindowAttributes,
+        SetTimer, SetWindowPos, ShowWindow, UnregisterClassW, HWND_NOTOPMOST, HWND_TOPMOST,
+        LWA_ALPHA, LWA_COLORKEY, MSG, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
+        SM_YVIRTUALSCREEN, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SW_HIDE, WM_APP,
+        WM_DESTROY, WM_ERASEBKGND, WM_PAINT, WM_TIMER, WNDCLASSEXW, WS_EX_LAYERED,
+        WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_POPUP,
     },
 };
 
@@ -39,11 +41,9 @@ use super::{OverlayCommand, OverlayConfig, TrailRenderer};
 // Custom messages
 // ---------------------------------------------------------------------------
 
-const WM_OVERLAY_START: u32 = WM_APP + 1;
-const WM_OVERLAY_TRACK: u32 = WM_APP + 2;
-const WM_OVERLAY_END: u32 = WM_APP + 3;
-const WM_OVERLAY_SHUTDOWN: u32 = WM_APP + 4;
-const WM_OVERLAY_LABEL: u32 = WM_APP + 5;
+pub(super) const WAKE_MESSAGE: u32 = WM_APP + 1;
+const OVERLAY_TIMER_ID: usize = 1;
+const OVERLAY_TIMER_PERIOD_MS: u32 = 100;
 
 /// Tiny inset applied to overlay bounds to avoid "exact fullscreen window"
 /// classification by parts of the Windows shell.
@@ -148,16 +148,19 @@ thread_local! {
 
 /// Main loop of the overlay thread (Windows implementation).
 ///
-/// 1. Gets the current thread ID for message posting.
-/// 2. Spawns a bridge thread that reads [`OverlayCommand`] from the crossbeam
-///    channel and posts corresponding `WM_APP+N` messages.
-/// 3. Registers a window class and creates a near-fullscreen layered window
+/// 1. Gets the current thread ID for coalesced wakeups.
+/// 2. Registers a window class and creates a near-fullscreen layered window
 ///    (with a tiny inset to avoid exact-fullscreen shell classification).
-/// 4. Creates a renderer and stores state in thread-local [`OVERLAY_STATE`].
-/// 5. Runs the Win32 message loop until `WM_QUIT`.
-/// 6. Cleans up: renderer resources, destroys window, unregisters class,
-///    joins the bridge thread.
-pub(super) fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<OverlayCommand>) {
+/// 3. Creates a renderer and stores state in thread-local [`OVERLAY_STATE`].
+/// 4. Drains the one bounded command queue on coalesced wakeups or the timer.
+/// 5. Cleans up renderer and window resources after `WM_QUIT`.
+pub(super) fn run_loop_win32(
+    config: OverlayConfig,
+    overlay_rx: Receiver<OverlayCommand>,
+    thread_id: Arc<AtomicU32>,
+    wake_pending: Arc<AtomicBool>,
+    ready: SyncSender<io::Result<()>>,
+) {
     unsafe {
         // Set per-monitor DPI awareness for this thread so that
         // GetSystemMetrics / CreateWindowExW use physical pixels,
@@ -168,52 +171,8 @@ pub(super) fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<Overlay
         );
 
         let tid = GetCurrentThreadId();
+        thread_id.store(tid, Ordering::Release);
         info!("overlay thread started (tid={tid})");
-
-        // Bridge thread: crossbeam channel → Win32 messages.
-        let bridge = thread::Builder::new()
-            .name("overlay-bridge".to_string())
-            .spawn(move || {
-                while let Ok(cmd) = overlay_rx.recv() {
-                    let (posted, label_payload, should_break) = match cmd {
-                        OverlayCommand::StartGesture => {
-                            (PostThreadMessageW(tid, WM_OVERLAY_START, 0, 0), 0, false)
-                        }
-                        OverlayCommand::TrackPoint { x, y } => (
-                            PostThreadMessageW(tid, WM_OVERLAY_TRACK, x as WPARAM, y as LPARAM),
-                            0,
-                            false,
-                        ),
-                        OverlayCommand::EndGesture => {
-                            (PostThreadMessageW(tid, WM_OVERLAY_END, 0, 0), 0, false)
-                        }
-                        OverlayCommand::UpdateLabel(text) => {
-                            let w_param = match text {
-                                Some(s) => Box::into_raw(Box::new(s)) as WPARAM,
-                                None => 0,
-                            };
-                            (
-                                PostThreadMessageW(tid, WM_OVERLAY_LABEL, w_param, 0),
-                                w_param,
-                                false,
-                            )
-                        }
-                        OverlayCommand::Shutdown => {
-                            (PostThreadMessageW(tid, WM_OVERLAY_SHUTDOWN, 0, 0), 0, true)
-                        }
-                    };
-                    if posted == 0 {
-                        if label_payload != 0 {
-                            drop(Box::from_raw(label_payload as *mut String));
-                        }
-                        break;
-                    }
-                    if should_break {
-                        break;
-                    }
-                }
-            })
-            .expect("failed to spawn overlay bridge thread");
 
         // Register window class.
         let hinstance = GetModuleHandleW(std::ptr::null());
@@ -234,8 +193,7 @@ pub(super) fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<Overlay
 
         let atom = RegisterClassExW(&wc);
         if atom == 0 {
-            error!("RegisterClassExW failed for overlay window");
-            let _ = bridge.join();
+            let _ = ready.send(Err(io::Error::last_os_error()));
             return;
         }
 
@@ -288,9 +246,8 @@ pub(super) fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<Overlay
         );
 
         if hwnd.is_null() {
-            error!("CreateWindowExW failed for overlay window");
             UnregisterClassW(CLASS_NAME.as_ptr(), hinstance);
-            let _ = bridge.join();
+            let _ = ready.send(Err(io::Error::last_os_error()));
             return;
         }
 
@@ -301,10 +258,9 @@ pub(super) fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<Overlay
         let renderer: Box<dyn TrailRenderer> = match GdiRenderer::new(hwnd, &config, ww, wh) {
             Ok(r) => Box::new(r),
             Err(e) => {
-                error!("failed to create GDI renderer: {e}");
                 DestroyWindow(hwnd);
                 UnregisterClassW(CLASS_NAME.as_ptr(), hinstance);
-                let _ = bridge.join();
+                let _ = ready.send(Err(io::Error::other(e)));
                 return;
             }
         };
@@ -402,6 +358,22 @@ pub(super) fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<Overlay
                 last_track_pt: None,
             });
         });
+        if SetTimer(
+            std::ptr::null_mut(),
+            OVERLAY_TIMER_ID,
+            OVERLAY_TIMER_PERIOD_MS,
+            None,
+        ) == 0
+        {
+            cleanup_overlay(hwnd, hinstance);
+            let _ = ready.send(Err(io::Error::last_os_error()));
+            return;
+        }
+        if ready.send(Ok(())).is_err() {
+            KillTimer(std::ptr::null_mut(), OVERLAY_TIMER_ID);
+            cleanup_overlay(hwnd, hinstance);
+            return;
+        }
 
         // Win32 message loop.
         let mut msg: MSG = std::mem::zeroed();
@@ -412,12 +384,10 @@ pub(super) fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<Overlay
             }
 
             match msg.message {
-                WM_OVERLAY_START => handle_start(),
-                WM_OVERLAY_TRACK => handle_track(msg.wParam as i32, msg.lParam as i32),
-                WM_OVERLAY_END => handle_end(),
-                WM_OVERLAY_LABEL => handle_label(msg.wParam),
-                WM_OVERLAY_SHUTDOWN => {
-                    PostQuitMessage(0);
+                WAKE_MESSAGE | WM_TIMER => {
+                    if !drain_commands(&overlay_rx, &wake_pending) {
+                        PostQuitMessage(0);
+                    }
                 }
                 _ => {
                     DispatchMessageW(&msg);
@@ -425,25 +395,46 @@ pub(super) fn run_loop_win32(config: OverlayConfig, overlay_rx: Receiver<Overlay
             }
         }
 
-        // Cleanup.
-        OVERLAY_STATE.with(|cell| {
-            if let Some(mut state) = cell.borrow_mut().take() {
-                state.renderer.cleanup();
-                if !state.label_font.is_null() {
-                    DeleteObject(state.label_font as *mut _);
-                }
-                if !state.label_hwnd.is_null() {
-                    DestroyWindow(state.label_hwnd);
-                }
-            }
-        });
-        DestroyWindow(hwnd);
-        UnregisterClassW(CLASS_NAME.as_ptr(), hinstance);
-        UnregisterClassW(LABEL_CLASS_NAME.as_ptr(), hinstance);
+        KillTimer(std::ptr::null_mut(), OVERLAY_TIMER_ID);
+        cleanup_overlay(hwnd, hinstance);
         info!("overlay thread stopped (tid={tid})");
-
-        let _ = bridge.join();
     }
+}
+
+fn drain_commands(commands: &Receiver<OverlayCommand>, wake_pending: &AtomicBool) -> bool {
+    loop {
+        loop {
+            match commands.try_recv() {
+                Ok(OverlayCommand::StartGesture) => handle_start(),
+                Ok(OverlayCommand::TrackPoint { x, y }) => handle_track(x, y),
+                Ok(OverlayCommand::EndGesture) => handle_end(),
+                Ok(OverlayCommand::UpdateLabel(text)) => handle_label(text),
+                Ok(OverlayCommand::Shutdown) | Err(TryRecvError::Disconnected) => return false,
+                Err(TryRecvError::Empty) => break,
+            }
+        }
+        wake_pending.store(false, Ordering::Release);
+        if commands.is_empty() || wake_pending.swap(true, Ordering::AcqRel) {
+            return true;
+        }
+    }
+}
+
+unsafe fn cleanup_overlay(hwnd: HWND, hinstance: windows_sys::Win32::Foundation::HINSTANCE) {
+    OVERLAY_STATE.with(|cell| {
+        if let Some(mut state) = cell.borrow_mut().take() {
+            state.renderer.cleanup();
+            if !state.label_font.is_null() {
+                DeleteObject(state.label_font as *mut _);
+            }
+            if !state.label_hwnd.is_null() {
+                DestroyWindow(state.label_hwnd);
+            }
+        }
+    });
+    DestroyWindow(hwnd);
+    UnregisterClassW(CLASS_NAME.as_ptr(), hinstance);
+    UnregisterClassW(LABEL_CLASS_NAME.as_ptr(), hinstance);
 }
 
 // ---------------------------------------------------------------------------
@@ -582,12 +573,7 @@ fn handle_end() {
 // ---------------------------------------------------------------------------
 
 /// Handle `WM_OVERLAY_LABEL`: show or hide the gesture label.
-fn handle_label(text_ptr: WPARAM) {
-    let text = if text_ptr == 0 {
-        None
-    } else {
-        Some(unsafe { *Box::from_raw(text_ptr as *mut String) })
-    };
+fn handle_label(text: Option<String>) {
     let wide_text = text.as_ref().map(|t| {
         t.encode_utf16()
             .chain(std::iter::once(0))

@@ -9,7 +9,7 @@ use crate::domain::{ActionId, BindingSetId, Disposition, MouseEvent, Point, Trig
 
 const ACTION_CAPACITY: usize = 16;
 const RENDER_CAPACITY: usize = 64;
-const CONTEXT_MAX_AGE_MS: u32 = 100;
+pub(super) const CONTEXT_MAX_AGE_MS: u32 = 100;
 
 #[derive(Clone, Copy)]
 pub(super) struct ContextView {
