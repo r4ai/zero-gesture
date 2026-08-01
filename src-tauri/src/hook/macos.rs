@@ -254,12 +254,9 @@ impl TapState {
         self.reenable_requested.swap(false, Ordering::AcqRel)
     }
 
-    #[cfg(target_os = "macos")]
-    fn drain(&self) {
-        while self.queue.pop().is_some() {
-            // P04b2 deliberately stops at the normalized Engine boundary.
-            // Context, InputKernel, suppression, actions, and rendering are
-            // connected only in later phases.
+    fn drain(&self, mut observe: impl FnMut(NormalizedInput)) {
+        while let Some(input) = self.queue.pop() {
+            observe(input);
             self.processed.fetch_add(1, Ordering::Relaxed);
         }
     }
@@ -399,14 +396,14 @@ fn run_active(
         let result =
             unsafe { CFRunLoopRunInMode(kCFRunLoopDefaultMode, RUN_LOOP_SLICE_SECONDS, false) };
         if classify_run_loop_result(result) == RunLoopDisposition::Degrade {
-            state.drain();
+            state.drain(drop);
             run_non_timeout_owner_step(&stop, (resources, state));
             return Ok(());
         }
-        state.drain();
+        state.drain(drop);
         state.reenable_if_requested(resources.tap);
     }
-    state.drain();
+    state.drain(drop);
     drop(resources);
     Ok(())
 }
@@ -660,6 +657,50 @@ mod tests {
                 disabled: 0,
             }
         );
+    }
+
+    #[test]
+    fn callback_capture_stops_at_the_queue_before_context_resolution() {
+        let state = TapState::new();
+        state.capture_raw(RawInput {
+            event_type: EVENT_RIGHT_MOUSE_DOWN,
+            button: 0,
+            scroll: 0,
+            x: 10.0,
+            y: 20.0,
+            timestamp_ns: 30_000_000,
+        });
+
+        assert_eq!(state.snapshot().processed, 0);
+        let mut observed = None;
+        state.drain(|input| observed = Some(input));
+        assert_eq!(
+            observed,
+            Some(NormalizedInput {
+                event: MouseEvent::ButtonDown(TriggerButton::Right),
+                point: Point::new(10, 20),
+                timestamp_ns: 30_000_000,
+            })
+        );
+        assert_eq!(state.snapshot().processed, 1);
+    }
+
+    #[test]
+    fn resident_owner_keeps_context_queries_disconnected_until_consumer_phase() {
+        let macos_source = include_str!("macos.rs")
+            .split("mod tests {")
+            .next()
+            .unwrap();
+        let bootstrap_source = include_str!("mod.rs");
+
+        for source in [macos_source, bootstrap_source] {
+            assert!(!source.contains(concat!("Context", "Worker")));
+            assert!(!source.contains(concat!("macos_", "context::")));
+            assert!(!source.contains(concat!("context.", "observe(")));
+        }
+        assert!(!macos_source.contains("ConfigSnapshotReader"));
+        assert!(!bootstrap_source.contains("run_loop_macos(reader"));
+        assert!(bootstrap_source.contains("drop(reader)"));
     }
 
     #[test]

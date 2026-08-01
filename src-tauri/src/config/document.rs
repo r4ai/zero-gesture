@@ -562,6 +562,18 @@ impl Key {
             }
         }
     }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) fn macos_name(self) -> &'static str {
+        match self {
+            Self::Primary | Self::Command => "command",
+            Self::Secondary | Self::Option => "option",
+            Self::Alt | Self::Win => {
+                unreachable!("Windows-only keys are rejected before macOS compilation")
+            }
+            key => key.windows_name(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
