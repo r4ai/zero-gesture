@@ -16,10 +16,10 @@
     },
     {
       "id": "P04B3A-ISOLATION-002",
-      "obligation": "Before the P04b3b consumer exists, the macOS bootstrap releases its config reader and neither bootstrap nor resident owner starts or submits to the context resolver.",
+      "obligation": "The Event Tap callback has no direct context or action-worker reference after the P04b3b run-loop consumer is connected.",
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/hook/macos.rs",
-      "evidence_name": "resident_owner_keeps_context_queries_disconnected_until_consumer_phase"
+      "evidence_name": "callback_remains_isolated_from_context_and_action_workers"
     },
     {
       "id": "P04B3A-REQUEST-001",

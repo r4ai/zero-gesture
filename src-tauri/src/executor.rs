@@ -10,6 +10,9 @@ use log::warn;
 
 use crate::config::Action;
 
+#[cfg(any(target_os = "macos", test))]
+pub(crate) mod macos;
+
 /// Parse a human-readable key name into a Win32 virtual-key code.
 ///
 /// Supports:

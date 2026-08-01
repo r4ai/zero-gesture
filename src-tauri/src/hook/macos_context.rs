@@ -1,8 +1,8 @@
 //! macOS Accessibility context resolver.
 //!
-//! The Event Tap callback cannot reach this module. P04b3a compiles and tests
-//! the concrete worker/cache seam but leaves it disconnected until P04b3b has
-//! a snapshot consumer, so the resident Engine performs no context OS query.
+//! The Event Tap callback cannot reach this module. P04b3b starts the concrete
+//! P04b3a worker/cache only beside its run-loop consumer, so context OS queries
+//! exist solely for action routing and never delay the callback.
 
 use std::sync::atomic::{fence, AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -449,6 +449,10 @@ fn request_due(last_tick: Option<u32>, event: MouseEvent, tick: u32) -> bool {
         | MouseEvent::WheelDown(_)
         | MouseEvent::Other => false,
     }
+}
+
+pub(super) fn observes_event(event: MouseEvent) -> bool {
+    matches!(event, MouseEvent::ButtonDown(_) | MouseEvent::MouseMove)
 }
 
 fn pack_point(point: Point) -> u64 {
@@ -1349,6 +1353,12 @@ mod tests {
 
     #[test]
     fn only_mouse_move_and_button_down_submit_context_requests() {
+        assert!(observes_event(MouseEvent::MouseMove));
+        assert!(observes_event(MouseEvent::ButtonDown(TriggerButton::Right)));
+        assert!(!observes_event(MouseEvent::ButtonUp(TriggerButton::Right)));
+        assert!(!observes_event(MouseEvent::WheelUp(1)));
+        assert!(!observes_event(MouseEvent::WheelDown(1)));
+        assert!(!observes_event(MouseEvent::Other));
         assert!(request_due(None, MouseEvent::MouseMove, 1_000));
         assert!(!request_due(Some(1_000), MouseEvent::MouseMove, 1_024));
         assert!(request_due(Some(1_000), MouseEvent::MouseMove, 1_025));

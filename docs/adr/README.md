@@ -22,6 +22,7 @@ ADRは実装の詳細設計ではなく、後続PRが守る外部契約、不変
 | [0015](./0015-macos-uds-control-plane.md) | Accepted | macOSのuser-only runtime directory、UDS、peer UID検証、共有control coreを固定する |
 | [0016](./0016-macos-listen-only-event-tap-owner.md) | Accepted | macOS Engineの専用threadでlisten-only CGEventTap、bounded SPSC、fail-open lifecycleを所有する |
 | [0017](./0017-macos-accessibility-context-resolver.md) | Accepted | promptなしAccessibility preflightとbounded macOS context worker/cacheを固定する |
+| [0018](./0018-macos-action-executor-and-event-tagging.md) | Accepted | bounded macOS action worker、self-generated event marker、最小context consumer接続を固定する |
 
 ## Reading order
 
@@ -39,6 +40,7 @@ ADR 0014はP04a（既存計画のP05）で固定したmacOS arm64 bundle、同�
 ADR 0015はP04b1で固定したmacOS user-only UDS endpoint、singleton/stale cleanup、peer UID検証、共有control core seamを記録する。
 ADR 0016はP04b2で固定したmacOS listen-only Event Tap、allocation-free callback、bounded normalization、degraded lifecycleを記録する。
 ADR 0017はP04b3aで固定したconsumer接続前のidle境界、promptなしAccessibility seam、worker threading、AX timeout、context identity/cache、fail-open semanticsを記録する。
+ADR 0018はP04b3bで接続したrun-loop context consumer、bounded keyboard action worker、self-generated event marker、failure/defer境界を記録する。
 
 ## Status policy
 
