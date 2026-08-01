@@ -22,11 +22,11 @@ type CGEventRef = *mut c_void;
 
 #[derive(Clone, Copy)]
 struct CgFunctions {
-    preflight_post_access: unsafe fn() -> bool,
-    create_keyboard_event: unsafe fn(*const c_void, u16, bool) -> CGEventRef,
-    set_integer_value: unsafe fn(CGEventRef, u32, i64),
-    post_event: unsafe fn(u32, CGEventRef),
-    release: unsafe fn(*const c_void),
+    preflight_post_access: unsafe extern "C" fn() -> bool,
+    create_keyboard_event: unsafe extern "C" fn(*const c_void, u16, bool) -> CGEventRef,
+    set_integer_value: unsafe extern "C" fn(CGEventRef, u32, i64),
+    post_event: unsafe extern "C" fn(u32, CGEventRef),
+    release: unsafe extern "C" fn(*const c_void),
 }
 
 #[cfg(target_os = "macos")]
@@ -59,11 +59,14 @@ extern "C" {
 
 struct OwnedEvent {
     event: NonNull<c_void>,
-    release: unsafe fn(*const c_void),
+    release: unsafe extern "C" fn(*const c_void),
 }
 
 impl OwnedEvent {
-    unsafe fn from_create(event: CGEventRef, release: unsafe fn(*const c_void)) -> Option<Self> {
+    unsafe fn from_create(
+        event: CGEventRef,
+        release: unsafe extern "C" fn(*const c_void),
+    ) -> Option<Self> {
         NonNull::new(event).map(|event| Self { event, release })
     }
 
@@ -442,15 +445,15 @@ mod tests {
         static NULL_AT: Cell<usize> = const { Cell::new(usize::MAX) };
     }
 
-    unsafe fn preflight_allowed() -> bool {
+    unsafe extern "C" fn preflight_allowed() -> bool {
         true
     }
 
-    unsafe fn preflight_denied() -> bool {
+    unsafe extern "C" fn preflight_denied() -> bool {
         false
     }
 
-    unsafe fn record_create(_: *const c_void, key: u16, down: bool) -> CGEventRef {
+    unsafe extern "C" fn record_create(_: *const c_void, key: u16, down: bool) -> CGEventRef {
         let call = CREATE_COUNT.get();
         CREATE_COUNT.set(call + 1);
         if call == NULL_AT.get() {
@@ -465,7 +468,7 @@ mod tests {
         event
     }
 
-    unsafe fn record_tag(event: CGEventRef, field: u32, marker: i64) {
+    unsafe extern "C" fn record_tag(event: CGEventRef, field: u32, marker: i64) {
         let id = *(event.cast::<u64>()) as usize;
         CALLS.with(|calls| {
             calls
@@ -474,18 +477,18 @@ mod tests {
         });
     }
 
-    unsafe fn record_post(tap: u32, event: CGEventRef) {
+    unsafe extern "C" fn record_post(tap: u32, event: CGEventRef) {
         let id = *(event.cast::<u64>()) as usize;
         CALLS.with(|calls| calls.borrow_mut().push(RecordedCall::Post(tap, id)));
     }
 
-    unsafe fn record_release(event: *const c_void) {
+    unsafe extern "C" fn record_release(event: *const c_void) {
         let id = *(event.cast::<u64>()) as usize;
         CALLS.with(|calls| calls.borrow_mut().push(RecordedCall::Release(id)));
         drop(Box::from_raw(event.cast_mut().cast::<u64>()));
     }
 
-    fn functions(preflight: unsafe fn() -> bool) -> CgFunctions {
+    fn functions(preflight: unsafe extern "C" fn() -> bool) -> CgFunctions {
         CgFunctions {
             preflight_post_access: preflight,
             create_keyboard_event: record_create,
