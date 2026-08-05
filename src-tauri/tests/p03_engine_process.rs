@@ -7,6 +7,7 @@ use std::mem::size_of;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
@@ -16,13 +17,15 @@ use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetClassNameW, GetWindowThreadProcessId,
+    EnumWindows, GetClassNameW, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
+    IsWindowVisible, PostMessageW, SC_MINIMIZE, WM_SYSCOMMAND,
 };
 
 const ENGINE_EXE: &str = env!("CARGO_BIN_EXE_zero-gesture");
 const CONFIG_FILE: &str = "zero-gesture.config.json";
 const START_TIMEOUT: Duration = Duration::from_secs(3);
 static NEXT_NAMESPACE: AtomicU64 = AtomicU64::new(1);
+static SETTINGS_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 struct EngineChild {
     child: Child,
@@ -38,7 +41,7 @@ impl Drop for EngineChild {
 }
 
 struct EngineFixture {
-    _directory: TempDir,
+    directory: TempDir,
     config_dir: PathBuf,
     ready_marker: PathBuf,
     worker_marker: PathBuf,
@@ -59,7 +62,7 @@ impl EngineFixture {
         Self {
             ready_marker: directory.path().join("ready"),
             worker_marker: directory.path().join("worker-started"),
-            _directory: directory,
+            directory,
             config_dir,
             namespace,
         }
@@ -86,6 +89,51 @@ impl EngineFixture {
         EngineChild {
             child: command.spawn().unwrap(),
         }
+    }
+
+    fn spawn_settings(&self) -> EngineChild {
+        self.spawn_settings_with_env(None)
+    }
+
+    fn spawn_settings_with_env(&self, environment: Option<(&str, &str)>) -> EngineChild {
+        let mut command = Command::new(ENGINE_EXE);
+        command
+            .arg("--settings")
+            .env("ZG_P03_TEST_CONFIG_DIR", &self.config_dir)
+            .env("ZG_P03_TEST_NAMESPACE", &self.namespace)
+            .env("ZG_P05A_TEST_SKIP_AUTOSTART", "1")
+            .env(
+                "ZG_P04B1_TEST_SETTINGS_CONNECTED_MARKER",
+                self.settings_connected_marker(),
+            )
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        if let Some((name, value)) = environment {
+            command.env(name, value);
+        }
+        EngineChild {
+            child: command.spawn().unwrap(),
+        }
+    }
+
+    fn settings_connected_marker(&self) -> PathBuf {
+        self.directory.path().join("settings-connected")
+    }
+
+    fn wait_for_path(&self, child: &mut Child, path: &std::path::Path, description: &str) {
+        let deadline = Instant::now() + START_TIMEOUT;
+        while Instant::now() < deadline {
+            assert!(
+                child.try_wait().unwrap().is_none(),
+                "{description} exited before signaling readiness"
+            );
+            if path.exists() {
+                return;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        panic!("{description} did not signal readiness within {START_TIMEOUT:?}");
     }
 
     fn wait_ready(&self, child: &mut Child) {
@@ -167,6 +215,45 @@ fn actual_engine_child_starts_no_webview2_descendant() {
 }
 
 #[test]
+fn engine_and_settings_processes_coexist() {
+    let _settings_test = SETTINGS_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let fixture = EngineFixture::new(br#"{"enabled":false}"#);
+    let mut engine = fixture.spawn(false);
+    fixture.wait_ready(&mut engine.child);
+    let mut settings = fixture.spawn_settings();
+    fixture.wait_for_path(
+        &mut settings.child,
+        &fixture.settings_connected_marker(),
+        "Settings",
+    );
+
+    assert!(engine.child.try_wait().unwrap().is_none());
+    assert!(settings.child.try_wait().unwrap().is_none());
+}
+
+#[test]
+fn settings_coexistence_keeps_engine_webview_count_zero() {
+    let _settings_test = SETTINGS_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let fixture = EngineFixture::new(br#"{"enabled":false}"#);
+    let mut engine = fixture.spawn(false);
+    fixture.wait_ready(&mut engine.child);
+    let mut settings = fixture.spawn_settings();
+    fixture.wait_for_path(
+        &mut settings.child,
+        &fixture.settings_connected_marker(),
+        "Settings",
+    );
+
+    assert_eq!(content_window_count(engine.child.id()), 0);
+    assert!(webview2_descendants(engine.child.id()).is_empty());
+    assert!(settings.child.try_wait().unwrap().is_none());
+}
+
+#[test]
 fn hook_install_failure_prevents_readiness_and_a_fresh_engine_restarts() {
     let fixture = EngineFixture::new(br#"{"enabled":false}"#);
     let mut failed = fixture.spawn_with_env(Some(("ZG_P03C_TEST_HOOK_INSTALL_FAILURE", "1")));
@@ -203,6 +290,165 @@ fn renderer_worker_termination_exits_engine() {
     fixture.wait_ready(&mut failed.child);
     fs::write(failure_marker, b"fail").unwrap();
     fixture.wait_failed(&mut failed.child);
+}
+
+#[test]
+fn second_settings_forwards_to_the_existing_window_and_exits() {
+    let _settings_test = SETTINGS_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let fixture = EngineFixture::new(br#"{"enabled":false}"#);
+    let mut engine = fixture.spawn(false);
+    fixture.wait_ready(&mut engine.child);
+    let mut first = fixture.spawn_settings();
+    fixture.wait_for_path(
+        &mut first.child,
+        &fixture.settings_connected_marker(),
+        "first Settings",
+    );
+    let window = wait_for_content_window(&mut first.child);
+    assert_ne!(
+        unsafe { PostMessageW(window, WM_SYSCOMMAND, SC_MINIMIZE as usize, 0) },
+        0
+    );
+    let deadline = Instant::now() + START_TIMEOUT;
+    while unsafe { IsIconic(window) } == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "Settings window did not minimize"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+
+    let mut second = fixture.spawn_settings();
+    let deadline = Instant::now() + START_TIMEOUT;
+    let status = loop {
+        if let Some(status) = second.child.try_wait().unwrap() {
+            break status;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "second Settings did not exit within {START_TIMEOUT:?}"
+        );
+        thread::sleep(Duration::from_millis(20));
+    };
+
+    assert!(status.success());
+    let deadline = Instant::now() + START_TIMEOUT;
+    while unsafe { IsIconic(window) } != 0 {
+        assert!(
+            Instant::now() < deadline,
+            "existing Settings window remained minimized after forwarding"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert!(first.child.try_wait().unwrap().is_none());
+    assert!(engine.child.try_wait().unwrap().is_none());
+}
+
+#[test]
+fn settings_exit_seam_removes_webview_and_keeps_engine_running() {
+    let _settings_test = SETTINGS_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let fixture = EngineFixture::new(br#"{"enabled":false}"#);
+    let mut engine = fixture.spawn(false);
+    fixture.wait_ready(&mut engine.child);
+    let mut settings =
+        fixture.spawn_settings_with_env(Some(("ZG_P05A_TEST_EXIT_SETTINGS_AFTER_READY", "1")));
+    let settings_process_id = settings.child.id();
+    let deadline = Instant::now() + START_TIMEOUT;
+    let status = loop {
+        if let Some(status) = settings.child.try_wait().unwrap() {
+            break status;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "Settings test exit seam did not terminate the process"
+        );
+        thread::sleep(Duration::from_millis(20));
+    };
+
+    assert!(status.success());
+    assert!(
+        fixture.settings_connected_marker().exists(),
+        "Settings must connect to Engine before exercising its exit seam"
+    );
+    let deadline = Instant::now() + START_TIMEOUT;
+    while !webview2_descendants(settings_process_id).is_empty() {
+        assert!(
+            Instant::now() < deadline,
+            "WebView2 descendants remained after Settings exited"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert!(engine.child.try_wait().unwrap().is_none());
+}
+
+fn wait_for_content_window(child: &mut Child) -> HWND {
+    let deadline = Instant::now() + START_TIMEOUT;
+    loop {
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "process exited before creating its content window"
+        );
+        if let Some(window) = settings_window(child.id()) {
+            return window;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "process did not create its content window within {START_TIMEOUT:?}"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn settings_window(process_id: u32) -> Option<HWND> {
+    struct Context {
+        process_id: u32,
+        window: HWND,
+    }
+
+    unsafe extern "system" fn find_window(window: HWND, context: LPARAM) -> BOOL {
+        let context = unsafe { &mut *(context as *mut Context) };
+        let mut owner = 0;
+        unsafe {
+            GetWindowThreadProcessId(window, &mut owner);
+        }
+        if owner == context.process_id {
+            let mut title = [0_u16; 256];
+            let title_len =
+                unsafe { GetWindowTextW(window, title.as_mut_ptr(), title.len() as i32) };
+            let title = String::from_utf16_lossy(&title[..title_len as usize]);
+            let mut class = [0_u16; 256];
+            let class_len =
+                unsafe { GetClassNameW(window, class.as_mut_ptr(), class.len() as i32) };
+            let class = String::from_utf16_lossy(&class[..class_len as usize]);
+            if title == "Zero Gesture"
+                && unsafe { IsWindowVisible(window) } != 0
+                && !matches!(
+                    class.as_ref(),
+                    "Tao Thread Event Target" | "tray_icon_app" | "IME"
+                )
+            {
+                context.window = window;
+                return 0;
+            }
+        }
+        1
+    }
+
+    let mut context = Context {
+        process_id,
+        window: std::ptr::null_mut(),
+    };
+    unsafe {
+        EnumWindows(
+            Some(find_window),
+            (&mut context as *mut Context).cast::<c_void>() as LPARAM,
+        );
+    }
+    (!context.window.is_null()).then_some(context.window)
 }
 
 fn content_window_count(process_id: u32) -> u32 {

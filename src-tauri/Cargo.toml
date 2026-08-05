@@ -30,6 +30,9 @@ regex = "1"
 tauri-plugin-dialog = "2"
 
 [target.'cfg(windows)'.dependencies]
+tauri-plugin-autostart = "2"
+tauri-plugin-single-instance = "2"
+
 windows-sys = { version = "0.61", features = [
     "Win32_Security",
     "Win32_Security_Authorization",

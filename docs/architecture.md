@@ -1,7 +1,7 @@
 # Zero Gesture Architecture Design Document
 
 > [!NOTE]
-> この文書はP03cのWindows実装とP04b3bまでのmacOS入力・context/action境界を説明する。
+> この文書はP05aのWindows runtime shellとP04b3bまでのmacOS入力・context/action境界を説明する。
 > マルチプラットフォーム目標設計と後続移行ゲートは
 > [ADR index](./adr/README.md) を正とする。
 
@@ -74,6 +74,25 @@ Tauri main threadがアプリケーションのライフサイクルを管理し
   - immutable compiled configを二つの固定slotへ保持し、generation/indexをatomic publishする。Windows native input ownerはidle時にproven reader protocolでsnapshotを取得し、active gesture/action/replayの終了までgenerationをpinする。
   - durable commit/publication後もHook threadを再起動しない。Applied observerはnative ownerの生存だけを確認し、次のidle inputが新generationを読む。owner failureはdiskをrollbackせずEngine全体を終了し、次のbounded restartでcommitted truthを再読込する。
   - Tray labelはApplied後にTauri main threadへ非同期enqueueする。IPC owner threadは同期menu APIを呼ばず、tray自身の変更はApplied受信後にmain thread上でもlabelを整合する。
+
+#### Windows runtime shell
+
+P05aでは同一executableを二つの独立process modeとして維持する。Engineは
+current-user singleton、tray、IPC、native input ownerだけを保持し、content
+window/WebView2を作らない。SettingsはEngineと共存し、必要時だけ一つのWebViewを
+持つ。
+
+Settings builderだけがTauriのautostart pluginとsingle-instance pluginを登録する。
+Settingsの成功したsetupは同一exeの`--engine` login起動をenableして検証する。
+二つ目のSettings起動は既存processへ転送して終了し、既存windowを
+show/unminimize/focusする。Settings windowを閉じるとSettings processとWebView2は
+終了するが、Engine、hook、IPCは継続する。Engine trayのleft-click/Open Settingsは
+同一exeを`--settings`で起動し、反復起動も一つのSettingsへ収束する。QuitはEngine
+workerを停止してprocessを終了するが、login autostartを解除しない。
+
+実HKCU、installed bundle、Explorer、installer/upgrade/reinstall/uninstall、署名は
+P05cの実機gateであり、debug/CI process testはautostart登録を明示的に迂回する。
+順序と非対象は[ADR 0019](./adr/0019-windows-first-runtime-shell.md)を正とする。
 
 ### 3.2. Hook Thread (The "Sensor")
 

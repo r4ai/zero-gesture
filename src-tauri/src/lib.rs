@@ -9,6 +9,7 @@ mod ipc;
 mod log_config;
 pub mod overlay;
 mod process;
+mod runtime_shell;
 mod tray;
 pub mod window_info;
 
@@ -393,7 +394,12 @@ fn run_engine() -> Result<(), String> {
             tauri_plugin_log::Builder::new().level(log_level)
         };
     #[cfg(not(debug_assertions))]
-    let log_builder = tauri_plugin_log::Builder::new().level(log_level);
+    let log_builder = tauri_plugin_log::Builder::new().level(log_level).targets([
+        tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+        tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+            file_name: Some("engine".to_string()),
+        }),
+    ]);
 
     let app = tauri::Builder::default()
         .plugin(log_builder.build())
@@ -613,11 +619,49 @@ fn start_engine_ipc(
 
 fn run_settings() -> Result<(), String> {
     let log_level = log_config::resolve_log_level();
-    let app = tauri::Builder::default()
+    #[cfg(debug_assertions)]
+    let log_builder =
+        if let Some(config_dir) = std::env::var_os("ZG_P03_TEST_CONFIG_DIR") {
+            tauri_plugin_log::Builder::new().level(log_level).targets([
+                tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Folder {
+                    path: PathBuf::from(config_dir).join("logs"),
+                    file_name: Some("settings-test".to_string()),
+                }),
+            ])
+        } else {
+            tauri_plugin_log::Builder::new().level(log_level).targets([
+                tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+                tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                    file_name: Some("settings".to_string()),
+                }),
+            ])
+        };
+    #[cfg(not(debug_assertions))]
+    let log_builder = tauri_plugin_log::Builder::new().level(log_level).targets([
+        tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+        tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+            file_name: Some("settings".to_string()),
+        }),
+    ]);
+    let builder = tauri::Builder::default();
+    #[cfg(windows)]
+    let builder = builder
+        .plugin(runtime_shell::single_instance_plugin())
+        .plugin(runtime_shell::autostart_plugin());
+    let app = builder
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_log::Builder::new().level(log_level).build())
+        .plugin(log_builder.build())
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
+            #[cfg(windows)]
+            runtime_shell::ensure_engine_autostart(app).map_err(|error| {
+                tauri::Error::Setup(
+                    (Box::new(io::Error::other(error)) as Box<dyn std::error::Error>).into(),
+                )
+            })?;
+            #[cfg(any(windows, target_os = "macos"))]
+            let config_dir_path = engine_config_dir(app.path().app_config_dir()?);
+            #[cfg(not(any(windows, target_os = "macos")))]
             let config_dir_path = app.path().app_config_dir()?;
             let engine_result = std::env::current_exe()
                 .map_err(|error| error.to_string())
@@ -644,6 +688,10 @@ fn run_settings() -> Result<(), String> {
             app.manage(ThreadRuntime::settings());
             app.manage(commands::CaptureState(std::sync::Mutex::new(None)));
             tray::show_settings_window(app.handle())?;
+            #[cfg(all(windows, debug_assertions))]
+            if std::env::var_os("ZG_P05A_TEST_EXIT_SETTINGS_AFTER_READY").is_some() {
+                app.handle().exit(0);
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

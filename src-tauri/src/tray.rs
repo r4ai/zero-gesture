@@ -73,10 +73,9 @@ pub fn setup<R: Runtime>(app: &mut App<R>, enabled: bool) -> tauri::Result<()> {
             }
             MENU_QUIT => {
                 let runtime = app.state::<crate::ThreadRuntime>();
-                if let Err(error) = runtime.shutdown() {
+                if let Err(error) = quit_engine_with(|| runtime.shutdown(), || app.exit(0)) {
                     warn!("failed to stop Engine workers: {error}");
                 }
-                app.exit(0);
             }
             _ => {}
         })
@@ -123,10 +122,9 @@ pub fn setup_macos_packaging_spike<R: Runtime>(app: &mut App<R>) -> tauri::Resul
             }
             MENU_QUIT => {
                 let runtime = app.state::<crate::ThreadRuntime>();
-                if let Err(error) = runtime.shutdown() {
+                if let Err(error) = quit_engine_with(|| runtime.shutdown(), || app.exit(0)) {
                     warn!("failed to stop macOS packaging-spike Engine: {error}");
                 }
-                app.exit(0);
             }
             _ => {}
         })
@@ -151,10 +149,35 @@ pub fn setup_macos_packaging_spike<R: Runtime>(app: &mut App<R>) -> tauri::Resul
 }
 
 fn launch_settings_process() -> std::io::Result<()> {
-    std::process::Command::new(std::env::current_exe()?)
-        .arg("--settings")
-        .spawn()
-        .map(|_| ())
+    let executable = std::env::current_exe()?;
+    spawn_settings_process_with(&executable, |path, argument| {
+        std::process::Command::new(path)
+            .arg(argument)
+            .spawn()
+            .map(|_| ())
+    })
+}
+
+fn spawn_settings_process_with<E>(
+    executable: &std::path::Path,
+    spawn: impl FnOnce(&std::path::Path, &str) -> Result<(), E>,
+) -> Result<(), E> {
+    spawn(executable, "--settings")
+}
+
+fn quit_engine_with<E>(
+    shutdown: impl FnOnce() -> Result<(), E>,
+    exit: impl FnOnce(),
+) -> Result<(), E> {
+    let result = shutdown();
+    exit();
+    result
+}
+
+fn exit_settings_if_requested(close_requested: bool, exit: impl FnOnce()) {
+    if close_requested {
+        exit();
+    }
 }
 
 /// Handles the "Toggle Gestures" menu action.
@@ -246,6 +269,17 @@ pub fn show_settings_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()>
         .inner_size(800.0, 600.0)
         .build()?;
 
+    #[cfg(windows)]
+    {
+        let settings = app.clone();
+        window.on_window_event(move |event| {
+            exit_settings_if_requested(
+                matches!(event, tauri::WindowEvent::CloseRequested { .. }),
+                || settings.exit(0),
+            );
+        });
+    }
+
     window.show()?;
     window.set_focus()?;
     Ok(())
@@ -255,6 +289,7 @@ pub fn show_settings_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()>
 mod tests {
     use super::*;
     use crate::config::{self, ConfigOwner};
+    use std::path::Path;
     use std::sync::{mpsc, Arc, Mutex};
     use std::thread;
     use std::time::{Duration, Instant};
@@ -326,5 +361,58 @@ mod tests {
         assert_eq!(*label.lock().unwrap(), toggle_label(false));
         task_rx.recv_timeout(Duration::from_millis(500)).unwrap()();
         assert_eq!(*label.lock().unwrap(), toggle_label(true));
+    }
+
+    #[test]
+    fn repeated_tray_open_requests_use_settings_mode() {
+        let executable = Path::new(r"C:\Program Files\Zero Gesture\zero-gesture.exe");
+        let requests = Arc::new(Mutex::new(Vec::new()));
+
+        for _ in 0..2 {
+            let requests = Arc::clone(&requests);
+            spawn_settings_process_with(executable, move |path, argument| {
+                requests
+                    .lock()
+                    .unwrap()
+                    .push((path.to_path_buf(), argument.to_string()));
+                Ok::<(), ()>(())
+            })
+            .unwrap();
+        }
+
+        assert_eq!(
+            *requests.lock().unwrap(),
+            vec![
+                (executable.to_path_buf(), "--settings".to_string()),
+                (executable.to_path_buf(), "--settings".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn engine_quit_stops_workers_before_process_exit() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let shutdown_events = Arc::clone(&events);
+        let exit_events = Arc::clone(&events);
+
+        quit_engine_with(
+            move || {
+                shutdown_events.lock().unwrap().push("shutdown");
+                Ok::<(), ()>(())
+            },
+            move || exit_events.lock().unwrap().push("exit"),
+        )
+        .unwrap();
+
+        assert_eq!(*events.lock().unwrap(), vec!["shutdown", "exit"]);
+    }
+
+    #[test]
+    fn settings_close_request_exits_the_process() {
+        let exited = std::cell::Cell::new(false);
+
+        exit_settings_if_requested(true, || exited.set(true));
+
+        assert!(exited.get());
     }
 }
