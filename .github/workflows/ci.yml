@@ -188,20 +188,24 @@ jobs:
 
       - name: Create disposable self-signed code-signing identity
         shell: pwsh
+        timeout-minutes: 2
         run: |
           $certificate = New-SelfSignedCertificate `
             -Type CodeSigningCert `
             -Subject "CN=Zero Gesture P05c Disposable CI" `
             -CertStoreLocation "Cert:\CurrentUser\My" `
+            -Provider "Microsoft Software Key Storage Provider" `
             -KeyAlgorithm RSA `
             -KeyLength 2048 `
+            -KeyExportPolicy Exportable `
             -HashAlgorithm SHA256 `
             -NotAfter (Get-Date).AddDays(1)
           $certificatePath = Join-Path $env:RUNNER_TEMP "p05c-disposable.cer"
           Export-Certificate -Cert $certificate -FilePath $certificatePath | Out-Null
-          Import-Certificate `
-            -FilePath $certificatePath `
-            -CertStoreLocation "Cert:\CurrentUser\Root" | Out-Null
+          certutil.exe -user -addstore -f Root $certificatePath
+          if ($LASTEXITCODE -ne 0) {
+            throw "certutil failed to trust the disposable certificate."
+          }
           $config = @{
             bundle = @{
               windows = @{
