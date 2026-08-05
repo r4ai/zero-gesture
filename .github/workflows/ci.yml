@@ -200,21 +200,6 @@ jobs:
             -KeyExportPolicy Exportable `
             -HashAlgorithm SHA256 `
             -NotAfter (Get-Date).AddDays(1)
-          $rootStore = [Security.Cryptography.X509Certificates.X509Store]::new(
-            [Security.Cryptography.X509Certificates.StoreName]::Root,
-            [Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser
-          )
-          try {
-            $rootStore.Open(
-              [Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite
-            )
-            $rootStore.Add($certificate)
-          } finally {
-            $rootStore.Close()
-          }
-          if (-not (Test-Path "Cert:\CurrentUser\Root\$($certificate.Thumbprint)")) {
-            throw "Disposable certificate was not added to the current-user trust store."
-          }
           $config = @{
             bundle = @{
               windows = @{
@@ -272,10 +257,6 @@ jobs:
           if ($env:P05C_CERT_THUMBPRINT) {
             Remove-Item `
               "Cert:\CurrentUser\My\$env:P05C_CERT_THUMBPRINT" `
-              -Force `
-              -ErrorAction SilentlyContinue
-            Remove-Item `
-              "Cert:\CurrentUser\Root\$env:P05C_CERT_THUMBPRINT" `
               -Force `
               -ErrorAction SilentlyContinue
           }

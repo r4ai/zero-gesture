@@ -40,16 +40,18 @@ either autostart value.
 ## Disposable CI acceptance
 
 Windows CI creates a one-day self-signed code-signing identity in the disposable
-runner's current-user certificate stores, trusts it only on that runner, and
-removes it in an unconditional cleanup step.
+runner's current-user personal certificate store and removes it in an
+unconditional cleanup step.
+It does not weaken the protected-root policy to trust this ephemeral leaf.
 This proves that Tauri's Authenticode configuration and signed artifact path
 work; it is not publisher identity or SmartScreen reputation evidence.
 
 The CI test builds a release NSIS installer and performs:
 
 1. silent install to a path containing a space;
-2. exact ephemeral-signer thumbprint and `Valid` signature verification on the
-   installer and installed/reinstalled executable;
+2. exact ephemeral-signer thumbprint verification on the installer and
+   installed/reinstalled executable, rejection of absent/hash-mismatched
+   signatures, and recording of actual chain status;
 3. Settings launch, Engine readiness, exact quoted HKCU Run and
    StartupApproved observation;
 4. missing/wrong-token status and Quit rejection by installed production

@@ -155,12 +155,15 @@ function Get-EngineDescendantSample {
 function Assert-SignedByAcceptanceIdentity {
     param([string]$Path, [string]$ExpectedThumbprint)
     $signature = Get-AuthenticodeSignature -LiteralPath $Path
-    Assert-Condition ($signature.Status -eq "Valid") "Authenticode status is not Valid: $Path"
     Assert-Condition ($null -ne $signature.SignerCertificate) "Authenticode signer is absent: $Path"
     Assert-Condition ($signature.SignerCertificate.Thumbprint -ieq $ExpectedThumbprint) `
         "Authenticode signer thumbprint does not match the disposable identity: $Path"
+    Assert-Condition ($signature.Status -notin @("NotSigned", "HashMismatch", "NotSupportedFileFormat", "Incompatible")) `
+        "Authenticode signature is absent, invalid, or unsupported: $Path ($($signature.Status))"
     [ordered]@{
         status = $signature.Status.ToString()
+        status_message = $signature.StatusMessage
+        chain_trusted = $signature.Status -eq "Valid"
         thumbprint = $signature.SignerCertificate.Thumbprint
         subject = $signature.SignerCertificate.Subject
     }

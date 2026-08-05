@@ -80,18 +80,21 @@ protocol, and Engine worker shutdown.
 ### Disposable installed scenario
 
 Windows CI builds the actual release NSIS artifact.
-On a disposable runner only, it creates and locally trusts a one-day
-self-signed code-signing certificate.
+On a disposable runner only, it creates a one-day self-signed code-signing
+certificate without weakening the Windows protected-root policy.
 The certificate proves Tauri Authenticode wiring and is removed even when the
 job fails.
 It does not represent a publisher identity, public trust, or SmartScreen
 reputation.
+Acceptance requires the exact ephemeral signer thumbprint, rejects an absent
+or hash-mismatched signature, and records the actual chain status.
 
 One installed scenario directly verifies:
 
-1. valid disposable signature on installer and installed/reinstalled
-   executable, with each measured signer thumbprint exactly matching the
-   ephemeral CI identity;
+1. disposable signature on installer and installed/reinstalled executable,
+   with each measured signer thumbprint exactly matching the ephemeral CI
+   identity, no absent/hash-mismatched signature, and actual chain status
+   recorded;
 2. silent current-user install and a whitespace-bearing install path;
 3. exact `"absolute path" --engine` HKCU Run quoting and binary
    StartupApproved value;
