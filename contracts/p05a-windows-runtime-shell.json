@@ -1,0 +1,123 @@
+{
+  "cases": [
+    {
+      "id": "P05A-AUTOSTART-001",
+      "obligation": "The maintained autostart plugin is configured with exactly the Engine process-mode argument.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/runtime_shell.rs",
+      "evidence_name": "autostart_registration_uses_only_the_engine_mode_argument"
+    },
+    {
+      "id": "P05A-AUTOSTART-002",
+      "obligation": "The plugin and exact-command backend share one package-derived registration name; repeated setup preserves one Run and one StartupApproved value.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/runtime_shell.rs",
+      "evidence_name": "autostart_registration_is_idempotent_for_one_named_command"
+    },
+    {
+      "id": "P05A-AUTOSTART-003",
+      "obligation": "A failed plugin enable operation is returned as a registration failure after restoring the prior Run and StartupApproved values.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/runtime_shell.rs",
+      "evidence_name": "autostart_registration_failure_restores_prior_values"
+    },
+    {
+      "id": "P05A-AUTOSTART-004",
+      "obligation": "A stored-command mismatch is returned as a failure after restoring the prior Run and StartupApproved values.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/runtime_shell.rs",
+      "evidence_name": "autostart_command_mismatch_restores_prior_values"
+    },
+    {
+      "id": "P05A-AUTOSTART-005",
+      "obligation": "A stored-command read error is returned as a verification failure after restoring the prior Run and StartupApproved values.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/runtime_shell.rs",
+      "evidence_name": "autostart_verification_error_restores_prior_values"
+    },
+    {
+      "id": "P05A-AUTOSTART-006",
+      "obligation": "The production Windows autostart serializer quotes a spaced executable path and appends exactly the Engine mode argument.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/runtime_shell.rs",
+      "evidence_name": "autostart_command_quotes_a_spaced_windows_executable_path"
+    },
+    {
+      "id": "P05A-AUTOSTART-007",
+      "obligation": "If the exact-command rewrite fails after plugin enable, rollback removes every malformed intermediate value when no prior values existed.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/runtime_shell.rs",
+      "evidence_name": "autostart_rewrite_failure_removes_plugin_intermediate_values"
+    },
+    {
+      "id": "P05A-PROCESS-001",
+      "obligation": "Actual Windows Engine and Settings processes remain alive concurrently under one executable identity.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/tests/p03_engine_process.rs",
+      "evidence_name": "engine_and_settings_processes_coexist"
+    },
+    {
+      "id": "P05A-PROCESS-002",
+      "obligation": "A concurrently running Settings process adds no content window or WebView2 descendant to the Engine process.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/tests/p03_engine_process.rs",
+      "evidence_name": "settings_coexistence_keeps_engine_webview_count_zero"
+    },
+    {
+      "id": "P05A-SETTINGS-001",
+      "obligation": "A second actual Settings launch exits successfully and activates one content window in the existing Settings process while Engine remains alive.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/tests/p03_engine_process.rs",
+      "evidence_name": "second_settings_forwards_to_the_existing_window_and_exits"
+    },
+    {
+      "id": "P05A-SETTINGS-002",
+      "obligation": "The production Settings CloseRequested leaf requests process exit.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/tray.rs",
+      "evidence_name": "settings_close_request_exits_the_process"
+    },
+    {
+      "id": "P05A-SETTINGS-003",
+      "obligation": "After observing a live Settings content window and WebView2 descendant, the explicit exit seam removes the Settings process and descendants while Engine remains running.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/tests/p03_engine_process.rs",
+      "evidence_name": "settings_exit_seam_removes_webview_and_keeps_engine_running"
+    },
+    {
+      "id": "P05A-SETTINGS-004",
+      "obligation": "Two concurrent cold Settings launches converge on exactly one live Settings process and at most one content window while Engine remains alive.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/tests/p03_engine_process.rs",
+      "evidence_name": "concurrent_cold_settings_launches_converge_on_one_process_and_window"
+    },
+    {
+      "id": "P05A-SETTINGS-005",
+      "obligation": "The launch gate remains held across a delayed Engine-unavailable setup until Ready, so concurrent cold launches still converge on one Settings process.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/tests/p03_engine_process.rs",
+      "evidence_name": "concurrent_cold_settings_launches_converge_while_engine_is_unavailable"
+    },
+    {
+      "id": "P05A-TRAY-001",
+      "obligation": "Repeated tray open requests spawn the current executable with exactly the Settings process-mode argument.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/tray.rs",
+      "evidence_name": "repeated_tray_open_requests_use_settings_mode"
+    },
+    {
+      "id": "P05A-LIFECYCLE-001",
+      "obligation": "The Engine Quit leaf requests worker shutdown before process exit.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/tray.rs",
+      "evidence_name": "engine_quit_stops_workers_before_process_exit"
+    },
+    {
+      "id": "P05A-LIFECYCLE-002",
+      "obligation": "The production Engine Quit seam has shutdown and exit capabilities only, so it cannot mutate login autostart registration.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/tray.rs",
+      "evidence_name": "engine_quit_effect_inventory_excludes_autostart_mutation"
+    }
+  ]
+}

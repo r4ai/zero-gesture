@@ -78,6 +78,13 @@ const MANIFESTS = [
     idDescription:
       "P04B3B-TAG-NNN, P04B3B-ACTION-NNN, P04B3B-ORDER-NNN, P04B3B-OVERLOAD-NNN, P04B3B-FAILURE-NNN, P04B3B-CONTEXT-NNN, or P04B3B-LIFECYCLE-NNN",
   },
+  {
+    label: "P05a",
+    path: "contracts/p05a-windows-runtime-shell.json",
+    idPattern: /^P05A-(?:AUTOSTART|PROCESS|SETTINGS|TRAY|LIFECYCLE)-\d{3}$/,
+    idDescription:
+      "P05A-AUTOSTART-NNN, P05A-PROCESS-NNN, P05A-SETTINGS-NNN, P05A-TRAY-NNN, or P05A-LIFECYCLE-NNN",
+  },
 ]
 const REPO_ROOT = path.resolve(fileURLToPath(new URL("../..", import.meta.url)))
 

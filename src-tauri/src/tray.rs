@@ -73,10 +73,15 @@ pub fn setup<R: Runtime>(app: &mut App<R>, enabled: bool) -> tauri::Result<()> {
             }
             MENU_QUIT => {
                 let runtime = app.state::<crate::ThreadRuntime>();
-                if let Err(error) = runtime.shutdown() {
+                if let Err(error) = quit_engine_with(|effect| match effect {
+                    EngineQuitEffect::StopWorkers => runtime.shutdown(),
+                    EngineQuitEffect::Exit => {
+                        app.exit(0);
+                        Ok(())
+                    }
+                }) {
                     warn!("failed to stop Engine workers: {error}");
                 }
-                app.exit(0);
             }
             _ => {}
         })
@@ -123,10 +128,15 @@ pub fn setup_macos_packaging_spike<R: Runtime>(app: &mut App<R>) -> tauri::Resul
             }
             MENU_QUIT => {
                 let runtime = app.state::<crate::ThreadRuntime>();
-                if let Err(error) = runtime.shutdown() {
+                if let Err(error) = quit_engine_with(|effect| match effect {
+                    EngineQuitEffect::StopWorkers => runtime.shutdown(),
+                    EngineQuitEffect::Exit => {
+                        app.exit(0);
+                        Ok(())
+                    }
+                }) {
                     warn!("failed to stop macOS packaging-spike Engine: {error}");
                 }
-                app.exit(0);
             }
             _ => {}
         })
@@ -151,10 +161,44 @@ pub fn setup_macos_packaging_spike<R: Runtime>(app: &mut App<R>) -> tauri::Resul
 }
 
 fn launch_settings_process() -> std::io::Result<()> {
-    std::process::Command::new(std::env::current_exe()?)
-        .arg("--settings")
-        .spawn()
-        .map(|_| ())
+    let executable = std::env::current_exe()?;
+    spawn_settings_process_with(&executable, |path, argument| {
+        std::process::Command::new(path)
+            .arg(argument)
+            .spawn()
+            .map(|_| ())
+    })
+}
+
+fn spawn_settings_process_with<E>(
+    executable: &std::path::Path,
+    spawn: impl FnOnce(&std::path::Path, &str) -> Result<(), E>,
+) -> Result<(), E> {
+    spawn(executable, "--settings")
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EngineQuitEffect {
+    StopWorkers,
+    Exit,
+}
+
+const ENGINE_QUIT_EFFECTS: [EngineQuitEffect; 2] =
+    [EngineQuitEffect::StopWorkers, EngineQuitEffect::Exit];
+
+fn quit_engine_with<E>(mut apply: impl FnMut(EngineQuitEffect) -> Result<(), E>) -> Result<(), E> {
+    let shutdown = apply(ENGINE_QUIT_EFFECTS[0]);
+    let exit = apply(ENGINE_QUIT_EFFECTS[1]);
+    match shutdown {
+        Ok(()) => exit,
+        Err(error) => Err(error),
+    }
+}
+
+fn exit_settings_if_requested(close_requested: bool, exit: impl FnOnce()) {
+    if close_requested {
+        exit();
+    }
 }
 
 /// Handles the "Toggle Gestures" menu action.
@@ -241,10 +285,21 @@ pub fn show_settings_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()>
         return Ok(());
     }
 
-    let window = tauri::WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
+    let builder = tauri::WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
         .title("Zero Gesture")
-        .inner_size(800.0, 600.0)
-        .build()?;
+        .inner_size(800.0, 600.0);
+    let window = builder.build()?;
+
+    #[cfg(windows)]
+    {
+        let settings = app.clone();
+        window.on_window_event(move |event| {
+            exit_settings_if_requested(
+                matches!(event, tauri::WindowEvent::CloseRequested { .. }),
+                || settings.exit(0),
+            );
+        });
+    }
 
     window.show()?;
     window.set_focus()?;
@@ -255,6 +310,7 @@ pub fn show_settings_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()>
 mod tests {
     use super::*;
     use crate::config::{self, ConfigOwner};
+    use std::path::Path;
     use std::sync::{mpsc, Arc, Mutex};
     use std::thread;
     use std::time::{Duration, Instant};
@@ -326,5 +382,64 @@ mod tests {
         assert_eq!(*label.lock().unwrap(), toggle_label(false));
         task_rx.recv_timeout(Duration::from_millis(500)).unwrap()();
         assert_eq!(*label.lock().unwrap(), toggle_label(true));
+    }
+
+    #[test]
+    fn repeated_tray_open_requests_use_settings_mode() {
+        let executable = Path::new(r"C:\Program Files\Zero Gesture\zero-gesture.exe");
+        let requests = Arc::new(Mutex::new(Vec::new()));
+
+        for _ in 0..2 {
+            let requests = Arc::clone(&requests);
+            spawn_settings_process_with(executable, move |path, argument| {
+                requests
+                    .lock()
+                    .unwrap()
+                    .push((path.to_path_buf(), argument.to_string()));
+                Ok::<(), ()>(())
+            })
+            .unwrap();
+        }
+
+        assert_eq!(
+            *requests.lock().unwrap(),
+            vec![
+                (executable.to_path_buf(), "--settings".to_string()),
+                (executable.to_path_buf(), "--settings".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn engine_quit_stops_workers_before_process_exit() {
+        let mut effects = Vec::new();
+
+        quit_engine_with(|effect| {
+            effects.push(effect);
+            Ok::<(), ()>(())
+        })
+        .unwrap();
+
+        assert_eq!(
+            effects,
+            vec![EngineQuitEffect::StopWorkers, EngineQuitEffect::Exit]
+        );
+    }
+
+    #[test]
+    fn engine_quit_effect_inventory_excludes_autostart_mutation() {
+        assert_eq!(
+            ENGINE_QUIT_EFFECTS,
+            [EngineQuitEffect::StopWorkers, EngineQuitEffect::Exit]
+        );
+    }
+
+    #[test]
+    fn settings_close_request_exits_the_process() {
+        let exited = std::cell::Cell::new(false);
+
+        exit_settings_if_requested(true, || exited.set(true));
+
+        assert!(exited.get());
     }
 }

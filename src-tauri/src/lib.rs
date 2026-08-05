@@ -9,6 +9,7 @@ mod ipc;
 mod log_config;
 pub mod overlay;
 mod process;
+mod runtime_shell;
 mod tray;
 pub mod window_info;
 
@@ -393,7 +394,12 @@ fn run_engine() -> Result<(), String> {
             tauri_plugin_log::Builder::new().level(log_level)
         };
     #[cfg(not(debug_assertions))]
-    let log_builder = tauri_plugin_log::Builder::new().level(log_level);
+    let log_builder = tauri_plugin_log::Builder::new().level(log_level).targets([
+        tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+        tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+            file_name: Some("engine".to_string()),
+        }),
+    ]);
 
     let app = tauri::Builder::default()
         .plugin(log_builder.build())
@@ -612,16 +618,80 @@ fn start_engine_ipc(
 }
 
 fn run_settings() -> Result<(), String> {
+    let context = tauri_context();
+    #[cfg(windows)]
+    let autostart_registration_name =
+        runtime_shell::engine_autostart_registration_name(&context.package_info().name).to_string();
     let log_level = log_config::resolve_log_level();
-    let app = tauri::Builder::default()
+    #[cfg(debug_assertions)]
+    let log_builder =
+        if let Some(config_dir) = std::env::var_os("ZG_P03_TEST_CONFIG_DIR") {
+            tauri_plugin_log::Builder::new().level(log_level).targets([
+                tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Folder {
+                    path: PathBuf::from(config_dir).join("logs"),
+                    file_name: Some("settings-test".to_string()),
+                }),
+            ])
+        } else {
+            tauri_plugin_log::Builder::new().level(log_level).targets([
+                tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+                tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                    file_name: Some("settings".to_string()),
+                }),
+            ])
+        };
+    #[cfg(not(debug_assertions))]
+    let log_builder = tauri_plugin_log::Builder::new().level(log_level).targets([
+        tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+        tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+            file_name: Some("settings".to_string()),
+        }),
+    ]);
+    #[cfg(windows)]
+    let settings_launch_gate = runtime_shell::acquire_settings_launch_gate()?;
+    #[cfg(windows)]
+    if runtime_shell::forward_to_existing_settings(&context.config().identifier)? {
+        return Ok(());
+    }
+    let builder = tauri::Builder::default();
+    #[cfg(windows)]
+    let builder = builder
+        .plugin(runtime_shell::single_instance_plugin())
+        .plugin(runtime_shell::autostart_plugin(
+            &autostart_registration_name,
+        ));
+    let app = builder
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_log::Builder::new().level(log_level).build())
+        .plugin(log_builder.build())
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
+            #[cfg(windows)]
+            runtime_shell::ensure_engine_autostart(app, &autostart_registration_name).map_err(
+                |error| {
+                    tauri::Error::Setup(
+                        (Box::new(io::Error::other(error)) as Box<dyn std::error::Error>).into(),
+                    )
+                },
+            )?;
+            #[cfg(any(windows, target_os = "macos"))]
+            let config_dir_path = engine_config_dir(app.path().app_config_dir()?);
+            #[cfg(not(any(windows, target_os = "macos")))]
             let config_dir_path = app.path().app_config_dir()?;
+            #[cfg(all(windows, debug_assertions))]
+            let unavailable_delay = std::env::var("ZG_P05A_TEST_ENGINE_UNAVAILABLE_DELAY_MS")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok());
+            #[cfg(all(windows, debug_assertions))]
+            if let Some(delay) = unavailable_delay {
+                std::thread::sleep(std::time::Duration::from_millis(delay));
+            }
             let engine_result = std::env::current_exe()
                 .map_err(|error| error.to_string())
                 .and_then(|executable| {
+                    #[cfg(all(windows, debug_assertions))]
+                    if unavailable_delay.is_some() {
+                        return Err("Engine unavailable in process test".to_string());
+                    }
                     ipc::EngineControl::connect_or_start(&executable, &config_dir_path)
                         .map_err(|error| error.to_string())
                 });
@@ -643,7 +713,15 @@ fn run_settings() -> Result<(), String> {
             app.manage(ConfigDir(config_dir_path));
             app.manage(ThreadRuntime::settings());
             app.manage(commands::CaptureState(std::sync::Mutex::new(None)));
-            tray::show_settings_window(app.handle())?;
+            #[cfg(all(windows, debug_assertions))]
+            let skip_window = std::env::var_os("ZG_P05A_TEST_SKIP_SETTINGS_WINDOW").is_some();
+            #[cfg(not(all(windows, debug_assertions)))]
+            let skip_window = false;
+            #[cfg(all(windows, debug_assertions))]
+            schedule_settings_test_exit()?;
+            if !skip_window {
+                tray::show_settings_window(app.handle())?;
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -659,16 +737,46 @@ fn run_settings() -> Result<(), String> {
             commands::start_window_capture,
             commands::stop_window_capture
         ])
-        .build(tauri_context())
+        .build(context)
         .map_err(|error| format!("failed to build Settings: {error}"))?;
 
-    app.run(|app, event| {
+    #[cfg(windows)]
+    let mut settings_launch_gate = Some(settings_launch_gate);
+    app.run(move |app, event| {
+        #[cfg(windows)]
+        if matches!(event, tauri::RunEvent::Ready)
+            && settings_launch_gate
+                .take()
+                .is_some_and(|gate| gate.signal_release().is_err())
+        {
+            app.exit(1);
+        }
         if let tauri::RunEvent::ExitRequested { .. } = event {
             if let Some(runtime) = app.try_state::<ThreadRuntime>() {
                 let _ = runtime.shutdown();
             }
         }
     });
+    Ok(())
+}
+
+#[cfg(all(windows, debug_assertions))]
+fn schedule_settings_test_exit() -> std::io::Result<()> {
+    let Some(trigger) = std::env::var_os("ZG_P05A_TEST_EXIT_SETTINGS_TRIGGER") else {
+        return Ok(());
+    };
+    std::thread::Builder::new()
+        .name("settings-test-exit".to_string())
+        .spawn(move || {
+            let trigger = PathBuf::from(trigger);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+            while !trigger.exists() && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            if trigger.exists() {
+                std::process::exit(0);
+            }
+        })?;
     Ok(())
 }
 

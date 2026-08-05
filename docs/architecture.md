@@ -1,7 +1,7 @@
 # Zero Gesture Architecture Design Document
 
 > [!NOTE]
-> この文書はP03cのWindows実装とP04b3bまでのmacOS入力・context/action境界を説明する。
+> この文書はP05aのWindows runtime shellとP04b3bまでのmacOS入力・context/action境界を説明する。
 > マルチプラットフォーム目標設計と後続移行ゲートは
 > [ADR index](./adr/README.md) を正とする。
 
@@ -74,6 +74,38 @@ Tauri main threadがアプリケーションのライフサイクルを管理し
   - immutable compiled configを二つの固定slotへ保持し、generation/indexをatomic publishする。Windows native input ownerはidle時にproven reader protocolでsnapshotを取得し、active gesture/action/replayの終了までgenerationをpinする。
   - durable commit/publication後もHook threadを再起動しない。Applied observerはnative ownerの生存だけを確認し、次のidle inputが新generationを読む。owner failureはdiskをrollbackせずEngine全体を終了し、次のbounded restartでcommitted truthを再読込する。
   - Tray labelはApplied後にTauri main threadへ非同期enqueueする。IPC owner threadは同期menu APIを呼ばず、tray自身の変更はApplied受信後にmain thread上でもlabelを整合する。
+
+#### Windows runtime shell
+
+P05aでは同一executableを二つの独立process modeとして維持する。Engineは
+current-user singleton、tray、IPC、native input ownerだけを保持し、content
+window/WebView2を作らない。SettingsはEngineと共存し、必要時だけ一つのWebViewを
+持つ。
+
+Settings builderだけがTauriのautostart pluginとsingle-instance pluginを登録する。
+Settingsの成功したsetupは同一exeの`--engine` login起動をenableし、current-user
+Run valueを`"absolute executable path" --engine`へ補正してexact readbackする。
+pluginと補正backendは同じpackage-derived value nameを使い、変更前のRun/
+StartupApprovedをquery/set-value権限だけでsnapshotする。enable/rewrite/read/
+mismatch失敗は両valueを元へ戻す。同時cold launchはSettings専用の短命owner
+threadがTauri build前から`RunEvent::Ready`まで保持するbounded current-user
+launch mutexで直列化する。mainとの同期は容量1のacquired/release channelだけで、
+Ready callbackはrelease signal後すぐreturnし、mutexは同じowner threadが
+releaseする。二つ目のSettings起動はTauri/WebView2を作る前に既存receiverへ
+bounded転送して終了し、既存windowを
+show/unminimize/focusする。
+close中にplugin mutexだけが残る場合は新規Settingsを作らずfail closedする。
+Settings windowを閉じるとSettings
+processとWebView2は終了するが、Engine、hook、IPCは継続する。Engine trayの
+left-click/Open Settingsは同一exeを`--settings`で起動し、反復起動も一つの
+Settingsへ収束する。QuitはEngine workerを停止してprocessを終了するが、login
+autostartを操作するcapabilityを持たない。CIの明示的exit seamはwindowとWebView2
+観測後にSettings processを直接終了してOS cleanupとEngine生存を確認する。
+
+実HKCU、installed bundle、Explorer、既存windowのminimize/focus、実close、
+installer/upgrade/reinstall/uninstall、署名はP05cの実機gateであり、debug/CI
+process testはautostart登録を明示的に迂回する。
+順序と非対象は[ADR 0019](./adr/0019-windows-first-runtime-shell.md)を正とする。
 
 ### 3.2. Hook Thread (The "Sensor")
 
