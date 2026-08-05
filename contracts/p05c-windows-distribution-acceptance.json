@@ -15,6 +15,13 @@
       "evidence_name": "package_identity_and_version_are_fixed_across_manifests"
     },
     {
+      "id": "P05C-BUNDLE-002",
+      "obligation": "The NSIS pre-uninstall hook can cancel without deleting autostart, while owned registry deletion is ordered only in the post-uninstall hook.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/tests/p05c_windows_distribution.rs",
+      "evidence_name": "uninstall_hook_removes_autostart_only_after_successful_uninstall"
+    },
+    {
       "id": "P05C-CONTROL-001",
       "obligation": "The installed production executable exposes a typed status command with an explicit artifact path and a distinct quit command.",
       "runner": "cargo-test",
@@ -36,6 +43,13 @@
       "evidence_name": "installed_acceptance_requires_the_disposable_runner_token"
     },
     {
+      "id": "P05C-SECURITY-002",
+      "obligation": "Installed release status and quit modes reject unset and wrong tokens without artifacts, Engine termination, or autostart mutation.",
+      "runner": "windows-installed-acceptance",
+      "evidence_file": "src-tauri/tests/p05c_windows_installed.rs",
+      "evidence_name": "installed_release_rejects_unset_and_wrong_acceptance_tokens_without_state_change"
+    },
+    {
       "id": "P05C-INSTALL-001",
       "obligation": "A disposable runner validates self-signed Authenticode, silent current-user installation to a spaced path, exact Run quoting, StartupApproved, and uninstall registration cleanup.",
       "runner": "windows-installed-acceptance",
@@ -50,25 +64,32 @@
       "evidence_name": "installed_settings_and_engine_lifecycle_uses_production_processes"
     },
     {
+      "id": "P05C-INSTALL-002",
+      "obligation": "A running installed Engine survives a deliberately cancelled production uninstall with its executable and both autostart values intact.",
+      "runner": "windows-installed-acceptance",
+      "evidence_file": "src-tauri/tests/p05c_windows_installed.rs",
+      "evidence_name": "cancelled_production_uninstall_keeps_install_and_autostart_registration"
+    },
+    {
       "id": "P05C-RETENTION-001",
-      "obligation": "Silent reinstall and uninstall preserve exact config bytes and existing local log files.",
+      "obligation": "Stopped-Engine log snapshots retain every relative path and exact byte hash across reinstall and uninstall, clean shutdown removes its live secret, and an installer-unowned config sentinel remains byte-exact.",
       "runner": "windows-installed-acceptance",
       "evidence_file": "src-tauri/tests/p05c_windows_installed.rs",
       "evidence_name": "reinstall_and_uninstall_retain_config_and_logs"
     },
     {
       "id": "P05C-KPI-001",
-      "obligation": "Installed release Engine resources, WebView absence, Settings footprint, startup, close, and quit remain within recorded Windows KPI gates.",
+      "obligation": "Installed release Engine resources and actual process descendants, Settings footprint, startup, close, and quit remain within recorded Windows KPI gates with no Engine WebView2 descendant.",
       "runner": "windows-installed-acceptance",
       "evidence_file": "src-tauri/tests/p05c_windows_installed.rs",
       "evidence_name": "installed_release_resources_and_lifecycle_meet_kpi_gates"
     },
     {
       "id": "P05C-HOT-001",
-      "obligation": "A sustained non-capture callback workload remains bounded and fail open without entering capture state.",
+      "obligation": "The production Windows callback core composes capture, native owner, and wakeup disposition with zero allocation, fixed lane bounds, and fail-open behavior under saturation.",
       "runner": "cargo-test",
-      "evidence_file": "src-tauri/src/capture.rs",
-      "evidence_name": "callback_stress_remains_bounded_and_fail_open_without_capture"
+      "evidence_file": "src-tauri/src/hook/win32.rs",
+      "evidence_name": "production_callback_core_is_allocation_free_bounded_and_fail_open_under_saturation"
     }
   ]
 }

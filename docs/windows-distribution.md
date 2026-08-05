@@ -18,11 +18,15 @@ Downgrades are rejected.
 Reinstall and uninstall preserve the application config directory, IPC secret
 location, and local log directory.
 The live IPC secret is process-owned and is removed by normal Engine shutdown;
-the installer never deletes the directory that may contain it.
+the installer never deletes the directory that may contain an abnormal-exit
+secret or another installer-unowned file.
+Acceptance uses a byte-exact sentinel in that directory and verifies the real
+secret exists while Engine runs and disappears after normal typed shutdown.
 Only an explicit future reset or uninstall-data command may delete user data.
 
 Uninstall removes the `Zero Gesture` values from current-user `Run` and
-`StartupApproved\Run`, preventing a dangling login command after removal.
+`StartupApproved\Run` only after a successful uninstall, preventing a dangling
+login command after removal without corrupting a cancelled uninstall.
 Quit is different: it stops Engine workers and the process without changing
 either autostart value.
 
@@ -44,17 +48,24 @@ work; it is not publisher identity or SmartScreen reputation evidence.
 The CI test builds a release NSIS installer and performs:
 
 1. silent install to a path containing a space;
-2. signature verification on installer and installed executable;
+2. exact ephemeral-signer thumbprint and `Valid` signature verification on the
+   installer and installed/reinstalled executable;
 3. Settings launch, Engine readiness, exact quoted HKCU Run and
    StartupApproved observation;
-4. production process single-instance, WebView tree, Settings close, Engine
-   survival, and authenticated Engine status/Quit;
-5. same-version reinstall as the upgrade/reinstall compatibility case;
-6. exact config and log retention after reinstall and uninstall;
-7. uninstall of program files and autostart values followed by disposable
-   runner data cleanup; and
-8. a local JSON KPI artifact for startup, close, quit, working set, threads,
-   handles, and WebView count.
+4. missing/wrong-token status and Quit rejection by installed production
+   processes without status artifacts or state mutation;
+5. production process single-instance, WebView tree, Settings close, Engine
+   survival, authenticated Engine status/Quit, and zero observed Engine
+   WebView2 descendants;
+6. a guarded running-app uninstall cancellation that preserves executable and
+   autostart registration;
+7. same-version reinstall as the upgrade/reinstall compatibility case;
+8. exact config/sentinel bytes plus per-relative-path stopped-Engine log
+   byte/hash retention after reinstall and uninstall;
+9. successful uninstall of program files and autostart values followed by
+   disposable runner data cleanup; and
+10. a local JSON KPI artifact for startup, close, quit, working set, threads,
+    handles, actual descendants, signatures, and retention hashes.
 
 The production acceptance control is disabled unless
 `ZG_P05C_INSTALLED_ACCEPTANCE=disposable-runner` is exact.
@@ -98,3 +109,6 @@ The harness never calls `SendInput` and never labels injected input as
 physical.
 If an external injection tool is used, select `-InputSource injected`; that run
 cannot close the physical-hardware gate.
+Selecting `physical` is also only a declaration: every check requires a
+non-empty evidence note and the artifact always leaves the physical-hardware
+release gate open for explicit release review.

@@ -63,10 +63,13 @@ $results = foreach ($check in $checks) {
     do {
         $outcome = (Read-Host "Result (pass/fail/blocked)").Trim().ToLowerInvariant()
     } while ($outcome -notin @("pass", "fail", "blocked"))
+    do {
+        $evidence = (Read-Host "Evidence note").Trim()
+    } while ([string]::IsNullOrWhiteSpace($evidence))
     [ordered]@{
         id = $check.id
         outcome = $outcome
-        note = Read-Host "Evidence note"
+        evidence = $evidence
     }
 }
 
@@ -75,9 +78,9 @@ $artifact = [ordered]@{
     executable_version = (Get-Item -LiteralPath $executable).VersionInfo.FileVersion
     authenticode_status = $signature.Status.ToString()
     signer_subject = $signature.SignerCertificate.Subject
-    input_source = $InputSource
+    declared_input_source = $InputSource
     input_was_synthesized_by_harness = $false
-    physical_hardware_proven = $InputSource -eq "physical"
+    physical_hardware_release_gate_closed = $false
     settings_process_id = $settings.Id
     recorded_at = [DateTimeOffset]::Now.ToString("O")
     checks = $results

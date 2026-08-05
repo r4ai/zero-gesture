@@ -7,8 +7,8 @@ use crate::domain::input::{
 };
 use crate::domain::{ActionId, BindingSetId, Disposition, MouseEvent, Point, TriggerButton};
 
-const ACTION_CAPACITY: usize = 16;
-const RENDER_CAPACITY: usize = 64;
+pub(super) const ACTION_CAPACITY: usize = 16;
+pub(super) const RENDER_CAPACITY: usize = 64;
 pub(super) const CONTEXT_MAX_AGE_MS: u32 = 100;
 
 #[derive(Clone, Copy)]

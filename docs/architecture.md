@@ -105,8 +105,13 @@ autostartを操作するcapabilityを持たない。CIの明示的exit seamはwi
 P05cはcurrent-user NSISだけを配布対象にし、disposable Windows runnerでrelease
 installerをsilent installする。実HKCU Run/StartupApproved、single-instance、
 Settingsの実WM_CLOSEとWebView2 tree終了、Engine生存/typed Quit、
-reinstall/uninstall後のconfig/log保持、installed release resource KPIを検証する。
-uninstallはuser dataを保持し、dangling Run/StartupApprovedだけを削除する。
+Engine PIDの実descendant WebView2不在、missing/wrong acceptance tokenの拒否、
+stopped-Engine logのrelative path/byte/hash保持、正常shutdown時のcontrol secret削除、
+config sentinel保持、installed release resource KPIを検証する。
+running-app uninstallのguarded cancellationはprogram/autostartを保持し、成功した
+uninstallのpost hookだけがdangling Run/StartupApprovedを削除する。
+production Windows callback core（capture判定→NativeInputOwner→wakeup disposition）
+は100,000 eventのallocation 0、固定lane上限、fail-openをwall-clock非依存でgateする。
 CI署名はdisposable self-signedであり、実publisher Authenticodeと
 Explorer/physical inputはrelease blockerとしてtruthfulに残す。
 順序とruntime境界は[ADR 0019](./adr/0019-windows-first-runtime-shell.md)、

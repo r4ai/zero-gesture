@@ -551,12 +551,14 @@ unsafe extern "system" fn low_level_mouse_proc(
         };
         let event = to_mouse_event(w_param as u32, info.mouseData);
         let point = Point::new(info.pt.x, info.pt.y);
-        if super::record_window_capture(&state.capture, event, point) {
-            return Disposition::Suppress;
-        }
-        let disposition = state.owner.callback(event, point, info.time);
-        signal_work(&mut state.owner, state.owner_tid);
-        disposition
+        let outcome =
+            process_native_callback(&state.capture, &mut state.owner, event, point, info.time);
+        signal_wakeups(
+            outcome.action_wakeup,
+            outcome.render_wakeup,
+            state.owner_tid,
+        );
+        outcome.disposition
     });
     if disposition == Disposition::Suppress {
         1
@@ -565,8 +567,47 @@ unsafe extern "system" fn low_level_mouse_proc(
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CallbackOutcome {
+    disposition: Disposition,
+    action_wakeup: bool,
+    render_wakeup: bool,
+}
+
+/// Synchronous Windows callback core.
+///
+/// Its concrete inputs expose only the atomic capture gate and fixed-capacity
+/// native owner. OS queries, IPC, file I/O, logging, blocking sends, and
+/// unbounded work remain outside this structural boundary.
+fn process_native_callback(
+    capture: &crate::capture::WindowCapture,
+    owner: &mut NativeInputOwner,
+    event: MouseEvent,
+    point: Point,
+    tick: u32,
+) -> CallbackOutcome {
+    if super::record_window_capture(capture, event, point) {
+        return CallbackOutcome {
+            disposition: Disposition::Suppress,
+            action_wakeup: false,
+            render_wakeup: false,
+        };
+    }
+    let disposition = owner.callback(event, point, tick);
+    let (action_wakeup, render_wakeup) = owner.take_wakeups();
+    CallbackOutcome {
+        disposition,
+        action_wakeup,
+        render_wakeup,
+    }
+}
+
 fn signal_work(owner: &mut NativeInputOwner, owner_tid: u32) {
     let (actions, renderer) = owner.take_wakeups();
+    signal_wakeups(actions, renderer, owner_tid);
+}
+
+fn signal_wakeups(actions: bool, renderer: bool, owner_tid: u32) {
     if actions {
         unsafe {
             PostThreadMessageW(owner_tid, WM_ACTION_READY, 0, 0);
@@ -916,7 +957,11 @@ fn unpack_point(point: u64) -> Point {
 
 #[cfg(test)]
 mod tests {
+    use super::super::owner::{ACTION_CAPACITY, RENDER_CAPACITY};
     use super::*;
+    use crate::config::{self, ConfigDocument, ConfigOwner};
+    use crate::domain::input::tests::count_allocations;
+    use crate::domain::input::TargetToken;
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
         MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP,
         MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP,
@@ -1078,5 +1123,77 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn production_callback_core_is_allocation_free_bounded_and_fail_open_under_saturation() {
+        let directory = tempfile::tempdir().unwrap();
+        config::save_atomic(
+            &config::ActiveConfig::from_document(ConfigDocument::default()).unwrap(),
+            directory.path(),
+        )
+        .unwrap();
+        let (writer, _) = ConfigOwner::startup(directory.path());
+        let mut owner = NativeInputOwner::new(writer.reader());
+        owner.set_context(Some(ContextView {
+            generation: 1,
+            binding_set: BindingSetId::from_index(0).unwrap(),
+            target: TargetToken(17),
+            point: Point::new(0, 0),
+            updated_tick: 1,
+        }));
+        let capture = crate::capture::WindowCapture::new();
+        let capturing = crate::capture::WindowCapture::new();
+        let capture_deadline = std::time::Instant::now() + Duration::from_secs(1);
+        let capture_epoch = capturing.begin(41, capture_deadline).unwrap();
+        let captured = process_native_callback(
+            &capturing,
+            &mut owner,
+            MouseEvent::ButtonDown(TriggerButton::Left),
+            Point::new(12, 34),
+            1,
+        );
+        assert_eq!(
+            captured,
+            CallbackOutcome {
+                disposition: Disposition::Suppress,
+                action_wakeup: false,
+                render_wakeup: false,
+            }
+        );
+        assert_eq!(
+            capturing.poll(41, capture_epoch, capture_deadline),
+            Ok(crate::capture::CapturePoll::Captured(Point::new(12, 34)))
+        );
+
+        let started = process_native_callback(
+            &capture,
+            &mut owner,
+            MouseEvent::ButtonDown(TriggerButton::Right),
+            Point::new(0, 0),
+            1,
+        );
+        assert_eq!(started.disposition, Disposition::Suppress);
+        assert!(started.action_wakeup);
+        assert!(started.render_wakeup);
+
+        let (pass_count, allocations) = count_allocations(|| {
+            let mut pass_count = 0;
+            for tick in 2..100_002 {
+                let outcome = process_native_callback(
+                    &capture,
+                    &mut owner,
+                    MouseEvent::MouseMove,
+                    Point::new(tick as i32, -(tick as i32)),
+                    tick,
+                );
+                pass_count += usize::from(outcome.disposition == Disposition::Pass);
+            }
+            pass_count
+        });
+        assert_eq!(pass_count, 100_000);
+        assert_eq!(allocations, 0);
+        assert!(std::iter::from_fn(|| owner.pop_action()).count() <= ACTION_CAPACITY);
+        assert!(std::iter::from_fn(|| owner.pop_render()).count() <= RENDER_CAPACITY);
     }
 }

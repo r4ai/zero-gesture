@@ -41,3 +41,18 @@ fn package_identity_and_version_are_fixed_across_manifests() {
     assert_eq!(env!("CARGO_PKG_NAME"), "zero-gesture");
     assert_eq!(env!("CARGO_PKG_VERSION"), "0.1.0");
 }
+
+#[test]
+fn uninstall_hook_removes_autostart_only_after_successful_uninstall() {
+    let hooks = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("windows/hooks.nsh"),
+    )
+    .unwrap();
+    let pre = hooks.find("!macro NSIS_HOOK_PREUNINSTALL").unwrap();
+    let post = hooks.find("!macro NSIS_HOOK_POSTUNINSTALL").unwrap();
+    let delete = hooks.find("DeleteRegValue").unwrap();
+    assert!(pre < post);
+    assert!(post < delete);
+    assert!(hooks[pre..post].contains("Abort"));
+    assert!(!hooks[pre..post].contains("DeleteRegValue"));
+}
