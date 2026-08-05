@@ -1123,7 +1123,13 @@ mod tests {
         let (owner, _) = ConfigOwner::startup(&directory);
         assert_eq!(
             server
-                .run(Arc::new(AtomicBool::new(false)), owner, |_, _| Ok(()))
+                .run(
+                    Arc::new(AtomicBool::new(false)),
+                    owner,
+                    Arc::new(crate::capture::WindowCapture::new()),
+                    crate::window_info::get_window_info_at_point,
+                    |_, _| Ok(()),
+                )
                 .unwrap(),
             ServerExit::Shutdown
         );
