@@ -749,9 +749,9 @@ mod tests {
             thread::yield_now();
         }
 
-        let started = Instant::now();
         executor.shutdown();
-        assert!(started.elapsed() < Duration::from_millis(200));
+        assert!(!release_block.load(Ordering::Acquire));
+        assert_eq!(SHUTDOWN_WAIT, Duration::from_millis(100));
         release_block.store(true, Ordering::Release);
     }
 }

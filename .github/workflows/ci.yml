@@ -202,9 +202,11 @@ jobs:
             -NotAfter (Get-Date).AddDays(1)
           $certificatePath = Join-Path $env:RUNNER_TEMP "p05c-disposable.cer"
           Export-Certificate -Cert $certificate -FilePath $certificatePath | Out-Null
-          certutil.exe -user -addstore -f Root $certificatePath
-          if ($LASTEXITCODE -ne 0) {
-            throw "certutil failed to trust the disposable certificate."
+          $trusted = Import-Certificate `
+            -FilePath $certificatePath `
+            -CertStoreLocation "Cert:\CurrentUser\Root"
+          if ($trusted.Thumbprint -ne $certificate.Thumbprint) {
+            throw "Disposable certificate trust import returned the wrong identity."
           }
           $config = @{
             bundle = @{
