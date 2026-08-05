@@ -618,6 +618,7 @@ fn start_engine_ipc(
 }
 
 fn run_settings() -> Result<(), String> {
+    let context = tauri_context();
     let log_level = log_config::resolve_log_level();
     #[cfg(debug_assertions)]
     let log_builder =
@@ -643,6 +644,12 @@ fn run_settings() -> Result<(), String> {
             file_name: Some("settings".to_string()),
         }),
     ]);
+    #[cfg(windows)]
+    let settings_launch_lock = runtime_shell::acquire_settings_launch_lock()?;
+    #[cfg(windows)]
+    if runtime_shell::forward_to_existing_settings(&context.config().identifier)? {
+        return Ok(());
+    }
     let builder = tauri::Builder::default();
     #[cfg(windows)]
     let builder = builder
@@ -653,6 +660,8 @@ fn run_settings() -> Result<(), String> {
         .plugin(log_builder.build())
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
+            #[cfg(windows)]
+            drop(settings_launch_lock);
             #[cfg(windows)]
             runtime_shell::ensure_engine_autostart(app).map_err(|error| {
                 tauri::Error::Setup(
@@ -690,7 +699,11 @@ fn run_settings() -> Result<(), String> {
             tray::show_settings_window(app.handle())?;
             #[cfg(all(windows, debug_assertions))]
             if std::env::var_os("ZG_P05A_TEST_EXIT_SETTINGS_AFTER_READY").is_some() {
-                app.handle().exit(0);
+                let app = app.handle().clone();
+                std::thread::spawn(move || {
+                    let exit_app = app.clone();
+                    let _ = app.run_on_main_thread(move || exit_app.exit(0));
+                });
             }
             Ok(())
         })
@@ -707,7 +720,7 @@ fn run_settings() -> Result<(), String> {
             commands::start_window_capture,
             commands::stop_window_capture
         ])
-        .build(tauri_context())
+        .build(context)
         .map_err(|error| format!("failed to build Settings: {error}"))?;
 
     app.run(|app, event| {

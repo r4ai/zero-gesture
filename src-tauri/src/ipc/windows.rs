@@ -54,6 +54,7 @@ const PIPE_POLL_INTERVAL: Duration = ACCEPT_POLL_INTERVAL;
 const PIPE_BUFFER_BYTES: u32 = 64 * 1024;
 const PIPE_MODE: u32 =
     PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_NOWAIT | PIPE_REJECT_REMOTE_CLIENTS;
+const SETTINGS_LAUNCH_MUTEX_PREFIX: &str = "Local\\dev.r4ai.zero-gesture.settings-launch";
 #[cfg(debug_assertions)]
 const TEST_FAIL_FIRST_PIPE_ENV: &str = "ZG_P03_TEST_FAIL_FIRST_PIPE";
 #[derive(Clone)]
@@ -266,6 +267,20 @@ impl Singleton {
 
 pub(super) struct LaunchLock {
     handle: OwnedHandle,
+}
+
+pub(crate) struct SettingsLaunchLock {
+    _lock: LaunchLock,
+}
+
+pub(crate) fn acquire_settings_launch_lock(
+    timeout: Duration,
+) -> Result<SettingsLaunchLock, ControlError> {
+    let sid = current_user_sid()?;
+    let security = SecurityDescriptor::for_sid(&sid)?;
+    let name = wide(format!("{SETTINGS_LAUNCH_MUTEX_PREFIX}.{sid}"));
+    let lock = LaunchLock::acquire(&name, &security, Instant::now() + timeout)?;
+    Ok(SettingsLaunchLock { _lock: lock })
 }
 
 impl LaunchLock {

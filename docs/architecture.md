@@ -83,12 +83,17 @@ window/WebView2を作らない。SettingsはEngineと共存し、必要時だけ
 持つ。
 
 Settings builderだけがTauriのautostart pluginとsingle-instance pluginを登録する。
-Settingsの成功したsetupは同一exeの`--engine` login起動をenableして検証する。
-二つ目のSettings起動は既存processへ転送して終了し、既存windowを
-show/unminimize/focusする。Settings windowを閉じるとSettings processとWebView2は
-終了するが、Engine、hook、IPCは継続する。Engine trayのleft-click/Open Settingsは
-同一exeを`--settings`で起動し、反復起動も一つのSettingsへ収束する。QuitはEngine
-workerを停止してprocessを終了するが、login autostartを解除しない。
+Settingsの成功したsetupは同一exeの`--engine` login起動をenableし、current-user
+Run valueを`"absolute executable path" --engine`へ補正してexact readbackする。
+同時cold launchはTauri build前のbounded current-user launch mutexで直列化し、
+plugin receiver作成前の競合を防ぐ。二つ目のSettings起動はTauri/WebView2を作る前に
+既存receiverへbounded転送して終了し、既存windowをshow/unminimize/focusする。
+close中にplugin mutexだけが残る場合は新規Settingsを作らずfail closedする。
+Settings windowを閉じるとSettings
+processとWebView2は終了するが、Engine、hook、IPCは継続する。Engine trayの
+left-click/Open Settingsは同一exeを`--settings`で起動し、反復起動も一つの
+Settingsへ収束する。QuitはEngine workerを停止してprocessを終了するが、login
+autostartを操作するcapabilityを持たない。
 
 実HKCU、installed bundle、Explorer、installer/upgrade/reinstall/uninstall、署名は
 P05cの実機gateであり、debug/CI process testはautostart登録を明示的に迂回する。

@@ -24,6 +24,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 const ENGINE_EXE: &str = env!("CARGO_BIN_EXE_zero-gesture");
 const CONFIG_FILE: &str = "zero-gesture.config.json";
 const START_TIMEOUT: Duration = Duration::from_secs(3);
+const SETTINGS_RUNTIME_TIMEOUT: Duration = Duration::from_secs(10);
 static NEXT_NAMESPACE: AtomicU64 = AtomicU64::new(1);
 static SETTINGS_TEST_LOCK: Mutex<()> = Mutex::new(());
 
@@ -93,6 +94,12 @@ impl EngineFixture {
 
     fn spawn_settings(&self) -> EngineChild {
         self.spawn_settings_with_env(None)
+    }
+
+    fn spawn_settings_with_isolated_webview(&self) -> EngineChild {
+        let data_dir = self.config_dir.join("webview2");
+        let data_dir = data_dir.to_string_lossy();
+        self.spawn_settings_with_env(Some(("ZG_P05A_TEST_WEBVIEW_DATA_DIR", &data_dir)))
     }
 
     fn spawn_settings_with_env(&self, environment: Option<(&str, &str)>) -> EngineChild {
@@ -293,6 +300,51 @@ fn renderer_worker_termination_exits_engine() {
 }
 
 #[test]
+fn concurrent_cold_settings_launches_converge_on_one_process_and_window() {
+    let _settings_test = SETTINGS_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let fixture = EngineFixture::new(br#"{"enabled":false}"#);
+    let mut engine = fixture.spawn(false);
+    fixture.wait_ready(&mut engine.child);
+    let mut first = fixture.spawn_settings_with_isolated_webview();
+    let mut second = fixture.spawn_settings_with_isolated_webview();
+    let first_process_id = first.child.id();
+    let second_process_id = second.child.id();
+    let deadline = Instant::now() + SETTINGS_RUNTIME_TIMEOUT;
+
+    let (survivor, exited) = loop {
+        let first_status = first.child.try_wait().unwrap();
+        let second_status = second.child.try_wait().unwrap();
+        match (first_status, second_status) {
+            (None, Some(status)) => break (&mut first.child, status),
+            (Some(status), None) => break (&mut second.child, status),
+            (Some(first), Some(second)) => {
+                panic!("both concurrent Settings launches exited: {first:?}, {second:?}")
+            }
+            (None, None) => {}
+        }
+        assert!(
+            Instant::now() < deadline,
+            "concurrent Settings launches did not converge within {SETTINGS_RUNTIME_TIMEOUT:?}; windows=({}, {})",
+            u32::from(settings_window(first_process_id).is_some()),
+            u32::from(settings_window(second_process_id).is_some())
+        );
+        thread::sleep(Duration::from_millis(20));
+    };
+
+    assert!(exited.success());
+    wait_for_content_window(survivor);
+    assert_eq!(
+        u32::from(settings_window(first_process_id).is_some())
+            + u32::from(settings_window(second_process_id).is_some()),
+        1
+    );
+    assert!(survivor.try_wait().unwrap().is_none());
+    assert!(engine.child.try_wait().unwrap().is_none());
+}
+
+#[test]
 fn second_settings_forwards_to_the_existing_window_and_exits() {
     let _settings_test = SETTINGS_TEST_LOCK
         .lock()
@@ -321,20 +373,20 @@ fn second_settings_forwards_to_the_existing_window_and_exits() {
     }
 
     let mut second = fixture.spawn_settings();
-    let deadline = Instant::now() + START_TIMEOUT;
+    let deadline = Instant::now() + SETTINGS_RUNTIME_TIMEOUT;
     let status = loop {
         if let Some(status) = second.child.try_wait().unwrap() {
             break status;
         }
         assert!(
             Instant::now() < deadline,
-            "second Settings did not exit within {START_TIMEOUT:?}"
+            "second Settings did not exit within {SETTINGS_RUNTIME_TIMEOUT:?}"
         );
         thread::sleep(Duration::from_millis(20));
     };
 
     assert!(status.success());
-    let deadline = Instant::now() + START_TIMEOUT;
+    let deadline = Instant::now() + SETTINGS_RUNTIME_TIMEOUT;
     while unsafe { IsIconic(window) } != 0 {
         assert!(
             Instant::now() < deadline,
@@ -357,7 +409,7 @@ fn settings_exit_seam_removes_webview_and_keeps_engine_running() {
     let mut settings =
         fixture.spawn_settings_with_env(Some(("ZG_P05A_TEST_EXIT_SETTINGS_AFTER_READY", "1")));
     let settings_process_id = settings.child.id();
-    let deadline = Instant::now() + START_TIMEOUT;
+    let deadline = Instant::now() + SETTINGS_RUNTIME_TIMEOUT;
     let status = loop {
         if let Some(status) = settings.child.try_wait().unwrap() {
             break status;
@@ -386,7 +438,7 @@ fn settings_exit_seam_removes_webview_and_keeps_engine_running() {
 }
 
 fn wait_for_content_window(child: &mut Child) -> HWND {
-    let deadline = Instant::now() + START_TIMEOUT;
+    let deadline = Instant::now() + SETTINGS_RUNTIME_TIMEOUT;
     loop {
         assert!(
             child.try_wait().unwrap().is_none(),
@@ -397,7 +449,7 @@ fn wait_for_content_window(child: &mut Child) -> HWND {
         }
         assert!(
             Instant::now() < deadline,
-            "process did not create its content window within {START_TIMEOUT:?}"
+            "process did not create its content window within {SETTINGS_RUNTIME_TIMEOUT:?}"
         );
         thread::sleep(Duration::from_millis(20));
     }

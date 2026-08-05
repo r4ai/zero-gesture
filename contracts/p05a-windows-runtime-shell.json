@@ -9,10 +9,10 @@
     },
     {
       "id": "P05A-AUTOSTART-002",
-      "obligation": "Repeated autostart setup performs the same enable-and-verify operation without creating additional logical registrations.",
+      "obligation": "Repeated autostart setup overwrites one named logical registration with the same exact command and preserves cardinality one.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/runtime_shell.rs",
-      "evidence_name": "autostart_registration_is_idempotent"
+      "evidence_name": "autostart_registration_is_idempotent_for_one_named_command"
     },
     {
       "id": "P05A-AUTOSTART-003",
@@ -23,10 +23,10 @@
     },
     {
       "id": "P05A-AUTOSTART-004",
-      "obligation": "An autostart registration that remains disabled after enable is returned as a failure.",
+      "obligation": "An autostart registration whose stored command does not exactly match the requested command is returned as a failure.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/runtime_shell.rs",
-      "evidence_name": "autostart_verification_failure_is_not_reported_as_success"
+      "evidence_name": "autostart_command_mismatch_is_not_reported_as_success"
     },
     {
       "id": "P05A-AUTOSTART-005",
@@ -34,6 +34,13 @@
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/runtime_shell.rs",
       "evidence_name": "autostart_verification_error_is_not_reported_as_success"
+    },
+    {
+      "id": "P05A-AUTOSTART-006",
+      "obligation": "The production Windows autostart serializer quotes a spaced executable path and appends exactly the Engine mode argument.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/runtime_shell.rs",
+      "evidence_name": "autostart_command_quotes_a_spaced_windows_executable_path"
     },
     {
       "id": "P05A-PROCESS-001",
@@ -71,6 +78,13 @@
       "evidence_name": "settings_exit_seam_removes_webview_and_keeps_engine_running"
     },
     {
+      "id": "P05A-SETTINGS-004",
+      "obligation": "Two concurrent cold Settings launches converge on exactly one live Settings process and one content window while Engine remains alive.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/tests/p03_engine_process.rs",
+      "evidence_name": "concurrent_cold_settings_launches_converge_on_one_process_and_window"
+    },
+    {
       "id": "P05A-TRAY-001",
       "obligation": "Repeated tray open requests spawn the current executable with exactly the Settings process-mode argument.",
       "runner": "cargo-test",
@@ -83,6 +97,13 @@
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/tray.rs",
       "evidence_name": "engine_quit_stops_workers_before_process_exit"
+    },
+    {
+      "id": "P05A-LIFECYCLE-002",
+      "obligation": "The production Engine Quit seam has shutdown and exit capabilities only, so it cannot mutate login autostart registration.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/tray.rs",
+      "evidence_name": "engine_quit_has_no_autostart_mutation_capability"
     }
   ]
 }

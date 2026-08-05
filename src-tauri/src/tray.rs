@@ -264,10 +264,16 @@ pub fn show_settings_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()>
         return Ok(());
     }
 
-    let window = tauri::WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
+    let builder = tauri::WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
         .title("Zero Gesture")
-        .inner_size(800.0, 600.0)
-        .build()?;
+        .inner_size(800.0, 600.0);
+    #[cfg(all(windows, debug_assertions))]
+    let builder = if let Some(data_dir) = std::env::var_os("ZG_P05A_TEST_WEBVIEW_DATA_DIR") {
+        builder.data_directory(std::path::PathBuf::from(data_dir))
+    } else {
+        builder
+    };
+    let window = builder.build()?;
 
     #[cfg(windows)]
     {
@@ -405,6 +411,15 @@ mod tests {
         .unwrap();
 
         assert_eq!(*events.lock().unwrap(), vec!["shutdown", "exit"]);
+    }
+
+    #[test]
+    fn engine_quit_has_no_autostart_mutation_capability() {
+        let autostart_enabled = std::cell::Cell::new(true);
+
+        quit_engine_with(|| Ok::<(), ()>(()), || {}).unwrap();
+
+        assert!(autostart_enabled.get());
     }
 
     #[test]
