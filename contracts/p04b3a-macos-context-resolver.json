@@ -9,17 +9,17 @@
     },
     {
       "id": "P04B3A-ISOLATION-001",
-      "obligation": "The Event Tap callback stops at the normalized queue and only the run-loop owner drains captured input.",
+      "obligation": "The actual Event Tap callback returns a real self-tagged CGEvent without queueing it and normalizes a real foreign-tagged CGEvent into the queue.",
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/hook/macos.rs",
-      "evidence_name": "callback_capture_stops_at_the_queue_before_context_resolution"
+      "evidence_name": "actual_callback_filters_self_and_enqueues_a_real_foreign_event"
     },
     {
       "id": "P04B3A-ISOLATION-002",
-      "obligation": "Before the P04b3b consumer exists, the macOS bootstrap releases its config reader and neither bootstrap nor resident owner starts or submits to the context resolver.",
+      "obligation": "The actual Event Tap callback only enqueues foreign input; the shared production run-loop drain leaf later invokes the context and action consumer from that same TapState queue.",
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/hook/macos.rs",
-      "evidence_name": "resident_owner_keeps_context_queries_disconnected_until_consumer_phase"
+      "evidence_name": "actual_callback_only_enqueues_and_actual_drain_later_invokes_consumer"
     },
     {
       "id": "P04B3A-REQUEST-001",
@@ -30,10 +30,10 @@
     },
     {
       "id": "P04B3A-REQUEST-002",
-      "obligation": "The dormant request seam accepts button-down immediately, rate-limits only mouse movement, and rejects button-up, wheel, and other events.",
+      "obligation": "The request cadence seam accepts button-down immediately, rate-limits only mouse movement, and rejects button-up, wheel, and other events.",
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/hook/macos_context.rs",
-      "evidence_name": "only_mouse_move_and_button_down_submit_context_requests"
+      "evidence_name": "mouse_move_is_rate_limited_button_down_is_immediate_and_other_events_are_rejected"
     },
     {
       "id": "P04B3A-REQUEST-003",

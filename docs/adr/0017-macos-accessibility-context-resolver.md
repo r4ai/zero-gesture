@@ -11,6 +11,10 @@ process/window resolver required by the existing application and `ContextView`
 contracts, but P04b3b has not connected a snapshot consumer yet. Running AX
 queries before that consumer exists would be permanent dead work.
 
+P04b3b subsequently connected that consumer under ADR 0018. Statements below
+that describe the worker as dormant record the P04b3a delivery boundary; the
+current production connection and its failure rules are defined by ADR 0018.
+
 Accessibility calls may block, fail because trust is absent, race a target or
 focus change, or return malformed values. A process identifier can also be
 reused. None of those conditions may delay the Event Tap callback or cause

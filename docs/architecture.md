@@ -1,7 +1,7 @@
 # Zero Gesture Architecture Design Document
 
 > [!NOTE]
-> この文書はP03cのWindows実装とP04b3aまでのmacOS入力・context境界を説明する。
+> この文書はP03cのWindows実装とP04b3bまでのmacOS入力・context/action境界を説明する。
 > マルチプラットフォーム目標設計と後続移行ゲートは
 > [ADR index](./adr/README.md) を正とする。
 
@@ -112,6 +112,35 @@ nullable CF値、denied/error/timeout、focus/target変更、不正文字列はU
 `ForegroundWindowInfo`の既存Windows payloadは変更せず、P04b2同様の
 listen-only通過を維持する。
 
+P04b3bではrun-loop consumerが初めて`ConfigSnapshotReader`を保持し、
+`ContextWorker`をproduction起動する。Event Tap callbackはresolverやexecutorを
+呼ばず、foreign inputを固定queueへenqueueする。actual run-loopとbehavior testは
+同じcrate-private drain leafを使い、そのleaf側だけが既存owner/runtimeから
+context必要性を判定してconsumerを呼ぶ。
+enabledかつbindingありの場合に限りMouseMoveを25 ms rate limitでobserveし、
+ButtonDownは該当trigger bindingがある場合だけ即時observeする。ButtonUp、
+wheel、無関係なButtonDownはqueryを起こさずcacheだけを保持する。disabled、
+bindingless、config unavailableへの遷移ではsnapshotをUnknownへinvalidateする。
+requestはownerが発行する単調`u64` idをmailbox、resolver、snapshotへ保持し、
+不要遷移時の最終idより新しい結果だけを再受理するため、同一tickの遅延結果や
+`u32` tick wrapでは再有効化後のUnknownを解除できない。
+exact pointかつ100 ms以内のsnapshotだけを`NativeInputOwner`へ渡し、
+Unknown/stale/wrong generationではgesture/actionを開始しない。
+
+同じrun-loopは既存`InputKernel`のactivation-before-dispatchとgeneration pinを
+再利用し、actionを8件bounded FIFOで専用`macos-action` workerへnonblocking
+送信する。workerは明確なmacOS key codeを持つ`Action::Keyboard`だけを、
+configured key-down順・逆key-up順でCGEvent生成し、全eventへprocess-instance
+markerを設定して`CGEventPost`する。callbackはraw event field読取の前に
+`kCGEventSourceUserData`の単一整数比較を行い、同markerをqueueへ入れない。
+markerはtap install前に生成し、restartごとに変わる。
+
+Event Tapはlisten-onlyのままで、kernelのSuppress結果、Replay、renderer effectは
+P04b3bではOSへ適用しない。mailbox満杯、context/permission喪失、unsupported
+key、NULL生成、worker停止はactionをdrop/fail-openし、物理inputを待たせない。
+active suppression、mouse replay、target再検証/activation、native overlayは
+P04b3cへdeferする。
+
 ### 3.3. Overlay Thread (The "Visuals")
 
 TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成・制御します。
@@ -185,9 +214,13 @@ TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成
 │   │   ├── lib.rs              // WorkerThreads管理、スレッド起動
 │   │   ├── config/             // schema v2、legacy migration、immutable compile
 │   │   ├── commands.rs         // Tauri IPC コマンドハンドラ
-│   │   ├── executor.rs         // アクション実行 (SendInput等)
+│   │   ├── executor.rs         // Windowsアクション実行 (SendInput)
+│   │   ├── executor/
+│   │   │   └── macos.rs       // bounded tagged CGEvent keyboard worker
 │   │   ├── hook/
 │   │   │   ├── owner.rs       // InputKernel、config pin、固定action/renderer lane
+│   │   │   ├── macos.rs       // listen-only CGEventTapとrun-loop consumer
+│   │   │   ├── macos_context.rs // bounded AX context worker/cache
 │   │   │   └── win32.rs       // WH_MOUSE_LL、context worker、owner message loop
 │   │   ├── domain/
 │   │   │   ├── mod.rs         // portable gesture module interface
@@ -215,6 +248,6 @@ TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成
 ## 7. Performance Considerations
 
 - **Blocking:** 現行Hook callbackはnormalize/evaluate、fixed atomic snapshot/context read、fixed-capacity lane reserve、coalesced nonblocking wakeup、pass/suppress returnに限定する。OS context query、activation/action実行、renderer lifecycle/joinはcallbackとHook pumpの外へ分離済みである。
-- **macOS fail-open:** Event Tap callbackはevent fieldの正規化、固定SPSC enqueue、atomic KPIだけを行う。context queryはowner drain後の専用workerだけが行い、permission/timeout/cache失敗でも入力はlisten-onlyで通過する。
+- **macOS fail-open:** Event Tap callbackはself markerの単一整数比較、event fieldの正規化、固定SPSC enqueue、atomic KPIだけを行う。context queryとaction postingはowner drain後の各専用workerだけが行い、permission/timeout/cache/mailbox/生成/worker失敗でも入力はlisten-onlyで通過する。
 - **Memory Safety:** `unsafe` ブロックを多用するWin32 API部分は、Rustのラッパー関数で適切に抽象化し、メモリリークや未定義動作を防ぐ。
 - **Drawing:** 現在とWindows移行中はGDI（`Polyline` + バックバッファ）を使用する。`direct2d.rs`は未実装stubであり、性能契約の未達を測定した場合だけ別ADR/PRでrenderer変更を検討する。macOSのAppKit/Core Animation adapterはこのWindows判断と分離する。

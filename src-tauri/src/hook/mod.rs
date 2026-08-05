@@ -80,9 +80,8 @@ pub fn spawn(reader: ConfigSnapshotReader) -> io::Result<HookSpawn> {
             };
             #[cfg(target_os = "macos")]
             let result = {
-                drop(reader);
                 panic::catch_unwind(AssertUnwindSafe(|| {
-                    macos::run_loop_macos(thread_stop, event_tx.clone())
+                    macos::run_loop_macos(reader, thread_stop, event_tx.clone())
                 }))
                 .unwrap_or_else(|_| Err(HookFailure::new("event tap", "panicked")))
             };
