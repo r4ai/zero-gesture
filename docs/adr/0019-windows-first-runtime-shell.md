@@ -76,12 +76,13 @@ short-lived Settings-only gate-owner thread therefore acquires the bounded
 current-user launch mutex before main proceeds. It reports acquisition through
 a capacity-one channel and remains the mutex owner through Tauri build and
 setup. At `RunEvent::Ready`, main sends a capacity-one release signal; that
-same owner thread calls `ReleaseMutex` and exits. A later launch then acquires
-the gate, uses the plugin's bounded `WM_COPYDATA` receiver protocol, and exits
-before constructing Tauri or WebView2. Build/setup failure drops the gate or
-terminates its process, so a waiter recovers normally or through
-`WAIT_ABANDONED`. Timeouts and channel failures fail closed. The gate is absent
-from Engine and introduces no generic coordinator.
+callback returns immediately while the same owner thread calls `ReleaseMutex`
+and exits. A later launch then acquires the gate, uses the plugin's bounded
+`WM_COPYDATA` receiver protocol, and exits before constructing Tauri or
+WebView2. Build/setup failure drops the gate or terminates its process, so a
+waiter recovers normally or through `WAIT_ABANDONED`. Timeouts and channel
+failures fail closed. The gate is absent from Engine and introduces no generic
+coordinator.
 If the plugin mutex exists without a receiver during close, the new launch
 fails closed instead of constructing a second Settings process.
 

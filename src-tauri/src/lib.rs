@@ -747,7 +747,7 @@ fn run_settings() -> Result<(), String> {
         if matches!(event, tauri::RunEvent::Ready)
             && settings_launch_gate
                 .take()
-                .is_some_and(|gate| gate.release().is_err())
+                .is_some_and(|gate| gate.signal_release().is_err())
         {
             app.exit(1);
         }

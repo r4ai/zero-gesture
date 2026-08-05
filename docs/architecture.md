@@ -90,8 +90,9 @@ StartupApprovedをquery/set-value権限だけでsnapshotする。enable/rewrite/
 mismatch失敗は両valueを元へ戻す。同時cold launchはSettings専用の短命owner
 threadがTauri build前から`RunEvent::Ready`まで保持するbounded current-user
 launch mutexで直列化する。mainとの同期は容量1のacquired/release channelだけで、
-mutexは同じowner threadがreleaseする。二つ目のSettings起動はTauri/WebView2を
-作る前に既存receiverへbounded転送して終了し、既存windowを
+Ready callbackはrelease signal後すぐreturnし、mutexは同じowner threadが
+releaseする。二つ目のSettings起動はTauri/WebView2を作る前に既存receiverへ
+bounded転送して終了し、既存windowを
 show/unminimize/focusする。
 close中にplugin mutexだけが残る場合は新規Settingsを作らずfail closedする。
 Settings windowを閉じるとSettings

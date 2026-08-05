@@ -321,7 +321,7 @@ pub(crate) fn acquire_settings_launch_gate(
 }
 
 impl SettingsLaunchGate {
-    pub(crate) fn release(mut self) -> Result<(), ControlError> {
+    pub(crate) fn signal_release(mut self) -> Result<(), ControlError> {
         let release = self.release.take().ok_or_else(|| {
             ControlError::Io(io::Error::new(
                 io::ErrorKind::BrokenPipe,
@@ -334,11 +334,7 @@ impl SettingsLaunchGate {
                 format!("Settings launch gate owner stopped: {error}"),
             ))
         })?;
-        if let Some(owner) = self.owner.take() {
-            owner.join().map_err(|_| {
-                ControlError::Io(io::Error::other("Settings launch gate owner panicked"))
-            })?;
-        }
+        drop(self.owner.take());
         Ok(())
     }
 }
