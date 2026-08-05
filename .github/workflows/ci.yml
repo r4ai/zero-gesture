@@ -200,13 +200,20 @@ jobs:
             -KeyExportPolicy Exportable `
             -HashAlgorithm SHA256 `
             -NotAfter (Get-Date).AddDays(1)
-          $certificatePath = Join-Path $env:RUNNER_TEMP "p05c-disposable.cer"
-          Export-Certificate -Cert $certificate -FilePath $certificatePath | Out-Null
-          $trusted = Import-Certificate `
-            -FilePath $certificatePath `
-            -CertStoreLocation "Cert:\CurrentUser\Root"
-          if ($trusted.Thumbprint -ne $certificate.Thumbprint) {
-            throw "Disposable certificate trust import returned the wrong identity."
+          $rootStore = [Security.Cryptography.X509Certificates.X509Store]::new(
+            [Security.Cryptography.X509Certificates.StoreName]::Root,
+            [Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser
+          )
+          try {
+            $rootStore.Open(
+              [Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite
+            )
+            $rootStore.Add($certificate)
+          } finally {
+            $rootStore.Close()
+          }
+          if (-not (Test-Path "Cert:\CurrentUser\Root\$($certificate.Thumbprint)")) {
+            throw "Disposable certificate was not added to the current-user trust store."
           }
           $config = @{
             bundle = @{
