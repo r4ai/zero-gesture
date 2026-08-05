@@ -65,7 +65,7 @@
     },
     {
       "id": "P05A-SETTINGS-001",
-      "obligation": "A second actual Settings launch exits successfully and reactivates the existing minimized Settings window while Engine remains alive.",
+      "obligation": "A second actual Settings launch exits successfully and activates one content window in the existing Settings process while Engine remains alive.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/tests/p03_engine_process.rs",
       "evidence_name": "second_settings_forwards_to_the_existing_window_and_exits"

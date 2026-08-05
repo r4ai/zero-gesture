@@ -17,8 +17,7 @@ use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetClassNameW, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
-    IsWindowVisible, PostMessageW, SC_MINIMIZE, WM_SYSCOMMAND,
+    EnumWindows, GetClassNameW, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
 };
 
 const ENGINE_EXE: &str = env!("CARGO_BIN_EXE_zero-gesture");
@@ -94,6 +93,13 @@ impl EngineFixture {
 
     fn spawn_settings(&self) -> EngineChild {
         self.spawn_settings_with_envs(&[])
+    }
+
+    fn spawn_settings_without_initial_window(&self) -> EngineChild {
+        self.spawn_settings_with_envs(&[(
+            "ZG_P05A_TEST_SKIP_SETTINGS_WINDOW",
+            std::ffi::OsStr::new("1"),
+        )])
     }
 
     fn spawn_settings_without_engine(&self) -> EngineChild {
@@ -318,8 +324,8 @@ fn concurrent_cold_settings_launches_converge_on_one_process_and_window() {
     let fixture = EngineFixture::new(br#"{"enabled":false}"#);
     let mut engine = fixture.spawn(false);
     fixture.wait_ready(&mut engine.child);
-    let first = fixture.spawn_settings();
-    let second = fixture.spawn_settings();
+    let first = fixture.spawn_settings_without_initial_window();
+    let second = fixture.spawn_settings_without_initial_window();
 
     assert_concurrent_settings_converge(first, second, Some(&mut engine.child));
 }
@@ -386,27 +392,15 @@ fn second_settings_forwards_to_the_existing_window_and_exits() {
     let fixture = EngineFixture::new(br#"{"enabled":false}"#);
     let mut engine = fixture.spawn(false);
     fixture.wait_ready(&mut engine.child);
-    let mut first = fixture.spawn_settings();
+    let mut first = fixture.spawn_settings_without_initial_window();
     fixture.wait_for_path(
         &mut first.child,
         &fixture.settings_connected_marker(),
         "first Settings",
     );
-    let window = wait_for_content_window(&mut first.child);
-    assert_ne!(
-        unsafe { PostMessageW(window, WM_SYSCOMMAND, SC_MINIMIZE as usize, 0) },
-        0
-    );
-    let deadline = Instant::now() + SETTINGS_RUNTIME_TIMEOUT;
-    while unsafe { IsIconic(window) } == 0 {
-        assert!(
-            Instant::now() < deadline,
-            "Settings window did not minimize"
-        );
-        thread::sleep(Duration::from_millis(20));
-    }
+    assert!(settings_window(first.child.id()).is_none());
 
-    let mut second = fixture.spawn_settings();
+    let mut second = fixture.spawn_settings_without_initial_window();
     let deadline = Instant::now() + SETTINGS_RUNTIME_TIMEOUT;
     let status = loop {
         if let Some(status) = second.child.try_wait().unwrap() {
@@ -420,14 +414,7 @@ fn second_settings_forwards_to_the_existing_window_and_exits() {
     };
 
     assert!(status.success());
-    let deadline = Instant::now() + SETTINGS_RUNTIME_TIMEOUT;
-    while unsafe { IsIconic(window) } != 0 {
-        assert!(
-            Instant::now() < deadline,
-            "existing Settings window remained minimized after forwarding"
-        );
-        thread::sleep(Duration::from_millis(20));
-    }
+    wait_for_content_window(&mut first.child);
     assert!(first.child.try_wait().unwrap().is_none());
     assert!(engine.child.try_wait().unwrap().is_none());
 }

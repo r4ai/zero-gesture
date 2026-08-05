@@ -721,7 +721,7 @@ fn run_settings() -> Result<(), String> {
                 tray::show_settings_window(app.handle())?;
             }
             #[cfg(all(windows, debug_assertions))]
-            schedule_settings_test_exit(app.handle())?;
+            schedule_settings_test_exit()?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -761,13 +761,10 @@ fn run_settings() -> Result<(), String> {
 }
 
 #[cfg(all(windows, debug_assertions))]
-fn schedule_settings_test_exit<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-) -> std::io::Result<()> {
+fn schedule_settings_test_exit() -> std::io::Result<()> {
     let Some(trigger) = std::env::var_os("ZG_P05A_TEST_EXIT_SETTINGS_TRIGGER") else {
         return Ok(());
     };
-    let app = app.clone();
     std::thread::Builder::new()
         .name("settings-test-exit".to_string())
         .spawn(move || {
@@ -777,8 +774,7 @@ fn schedule_settings_test_exit<R: tauri::Runtime>(
                 std::thread::sleep(std::time::Duration::from_millis(20));
             }
             if trigger.exists() {
-                let exit_app = app.clone();
-                let _ = app.run_on_main_thread(move || exit_app.exit(0));
+                std::process::exit(0);
             }
         })?;
     Ok(())

@@ -99,10 +99,12 @@ Settings windowを閉じるとSettings
 processとWebView2は終了するが、Engine、hook、IPCは継続する。Engine trayの
 left-click/Open Settingsは同一exeを`--settings`で起動し、反復起動も一つの
 Settingsへ収束する。QuitはEngine workerを停止してprocessを終了するが、login
-autostartを操作するcapabilityを持たない。
+autostartを操作するcapabilityを持たない。CIの明示的exit seamはwindowとWebView2
+観測後にSettings processを直接終了してOS cleanupとEngine生存を確認する。
 
-実HKCU、installed bundle、Explorer、installer/upgrade/reinstall/uninstall、署名は
-P05cの実機gateであり、debug/CI process testはautostart登録を明示的に迂回する。
+実HKCU、installed bundle、Explorer、既存windowのminimize/focus、実close、
+installer/upgrade/reinstall/uninstall、署名はP05cの実機gateであり、debug/CI
+process testはautostart登録を明示的に迂回する。
 順序と非対象は[ADR 0019](./adr/0019-windows-first-runtime-shell.md)を正とする。
 
 ### 3.2. Hook Thread (The "Sensor")
