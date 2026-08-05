@@ -1,6 +1,7 @@
 mod protocol;
 
 pub use protocol::EngineStatus;
+pub(crate) use protocol::ErrorCode;
 
 #[cfg(any(windows, target_os = "macos"))]
 mod core;
@@ -13,7 +14,10 @@ pub(crate) use windows::{acquire_settings_launch_gate, SettingsLaunchGate};
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(any(windows, target_os = "macos"))]
-pub(crate) use core::{ConfigApplyResult, ConfigObservation};
+pub(crate) use core::{
+    ConfigApplyError, ConfigApplyPhase, ConfigApplyResult, ConfigObservation,
+    WindowCaptureObservation, WindowCaptureStarted,
+};
 #[cfg(any(windows, target_os = "macos"))]
 pub use core::{ControlError, EngineControl, EngineServer, ServerExit};
 #[cfg(target_os = "macos")]
@@ -59,6 +63,19 @@ mod unsupported {
         pub(crate) durability_warning: bool,
     }
 
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub(crate) enum ConfigApplyPhase {
+        Prepare,
+        Commit,
+        Query,
+    }
+
+    #[derive(Debug)]
+    pub(crate) struct ConfigApplyError {
+        pub(crate) phase: ConfigApplyPhase,
+        pub(crate) source: ControlError,
+    }
+
     impl EngineControl {
         pub(crate) fn connect_or_start(
             _executable: &Path,
@@ -87,16 +104,22 @@ mod unsupported {
             &self,
             _document: ConfigDocument,
             _expected_revision: u64,
-        ) -> Result<ConfigApplyResult, ControlError> {
-            Err(ControlError)
+        ) -> Result<ConfigApplyResult, ConfigApplyError> {
+            Err(ConfigApplyError {
+                phase: ConfigApplyPhase::Prepare,
+                source: ControlError,
+            })
         }
 
         pub(crate) fn apply_config_bytes(
             &self,
             _bytes: Vec<u8>,
             _expected_revision: u64,
-        ) -> Result<ConfigApplyResult, ControlError> {
-            Err(ControlError)
+        ) -> Result<ConfigApplyResult, ConfigApplyError> {
+            Err(ConfigApplyError {
+                phase: ConfigApplyPhase::Prepare,
+                source: ControlError,
+            })
         }
     }
 }

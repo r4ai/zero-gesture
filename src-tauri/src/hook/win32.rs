@@ -45,6 +45,7 @@ const RENDERER_QUEUE_CAPACITY: usize = 64;
 
 struct HookThreadState {
     owner: NativeInputOwner,
+    capture: Arc<crate::capture::WindowCapture>,
     owner_tid: u32,
     context: Arc<ContextMailbox>,
     context_stop: Arc<AtomicBool>,
@@ -385,6 +386,7 @@ fn run_renderer_owner(requests: Receiver<RendererRequest>, status: Sender<Render
 
 pub(super) fn run_loop_win32(
     reader: ConfigSnapshotReader,
+    capture: Arc<crate::capture::WindowCapture>,
     events: Sender<HookEvent>,
 ) -> Result<(), HookFailure> {
     unsafe {
@@ -403,6 +405,7 @@ pub(super) fn run_loop_win32(
         HOOK_STATE.with(|cell| {
             *cell.borrow_mut() = Some(HookThreadState {
                 owner: NativeInputOwner::new(reader),
+                capture,
                 owner_tid: tid,
                 context,
                 context_stop,
@@ -546,11 +549,12 @@ unsafe extern "system" fn low_level_mouse_proc(
         let Some(state) = state.as_mut() else {
             return Disposition::Pass;
         };
-        let disposition = state.owner.callback(
-            to_mouse_event(w_param as u32, info.mouseData),
-            Point::new(info.pt.x, info.pt.y),
-            info.time,
-        );
+        let event = to_mouse_event(w_param as u32, info.mouseData);
+        let point = Point::new(info.pt.x, info.pt.y);
+        if super::record_window_capture(&state.capture, event, point) {
+            return Disposition::Suppress;
+        }
+        let disposition = state.owner.callback(event, point, info.time);
         signal_work(&mut state.owner, state.owner_tid);
         disposition
     });

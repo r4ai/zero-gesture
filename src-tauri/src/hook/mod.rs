@@ -27,6 +27,15 @@ use log::info;
 use log::warn;
 
 use crate::config::ConfigSnapshotReader;
+use crate::domain::{MouseEvent, Point};
+
+pub(crate) fn record_window_capture(
+    capture: &crate::capture::WindowCapture,
+    event: MouseEvent,
+    point: Point,
+) -> bool {
+    capture.try_record(event, point)
+}
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct HookFailure {
@@ -59,7 +68,10 @@ type HookSpawn = (
 );
 
 /// Spawns the native input owner with the Engine publication reader.
-pub fn spawn(reader: ConfigSnapshotReader) -> io::Result<HookSpawn> {
+pub fn spawn(
+    reader: ConfigSnapshotReader,
+    capture: Arc<crate::capture::WindowCapture>,
+) -> io::Result<HookSpawn> {
     info!("starting hook thread");
     let tid = Arc::new(AtomicU32::new(0));
     let stop = Arc::new(AtomicBool::new(false));
@@ -74,12 +86,13 @@ pub fn spawn(reader: ConfigSnapshotReader) -> io::Result<HookSpawn> {
             #[cfg(windows)]
             let result = {
                 panic::catch_unwind(AssertUnwindSafe(|| {
-                    win32::run_loop_win32(reader, event_tx.clone())
+                    win32::run_loop_win32(reader, capture, event_tx.clone())
                 }))
                 .unwrap_or_else(|_| Err(HookFailure::new("hook", "panicked")))
             };
             #[cfg(target_os = "macos")]
             let result = {
+                let _ = capture;
                 panic::catch_unwind(AssertUnwindSafe(|| {
                     macos::run_loop_macos(reader, thread_stop, event_tx.clone())
                 }))
@@ -88,6 +101,7 @@ pub fn spawn(reader: ConfigSnapshotReader) -> io::Result<HookSpawn> {
             #[cfg(not(any(windows, target_os = "macos")))]
             let result = {
                 let _ = reader;
+                let _ = capture;
                 let _ = thread_stop;
                 warn!("Mouse hook is only supported on Windows");
                 let _ = event_tx.send(HookEvent::Ready(1));

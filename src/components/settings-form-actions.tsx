@@ -16,10 +16,15 @@ import { useConfigDraft } from "@/contexts/config-draft"
  * ```
  */
 export function SettingsFormActions() {
-  const { isDirty, isSaving, save, reset } = useConfigDraft()
+  const { isDirty, isSaving, save, reset, saveError } = useConfigDraft()
 
   return (
     <PanelFooter>
+      {saveError ? (
+        <p className="mr-auto text-red-600 text-xs" role="alert">
+          {saveError}
+        </p>
+      ) : null}
       <Button variant="outline" onPress={reset} isDisabled={!isDirty}>
         Cancel
       </Button>

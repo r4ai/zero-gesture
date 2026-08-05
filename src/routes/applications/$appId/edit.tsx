@@ -4,7 +4,6 @@ import {
   useNavigate,
   useParams,
 } from "@tanstack/react-router"
-import { listen } from "@tauri-apps/api/event"
 import {
   ArrowLeft,
   Check,
@@ -15,6 +14,7 @@ import {
   X,
 } from "lucide-react"
 import { useEffect, useState } from "react"
+import { toast } from "sonner"
 import { SettingsFormActions } from "@/components/settings-form-actions"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -33,9 +33,12 @@ import { TextField } from "@/components/ui/textfield"
 import { useConfigDraft } from "@/contexts/config-draft"
 import {
   type ForegroundWindowInfo,
+  pollWindowCapture,
   startWindowCapture,
   stopWindowCapture,
 } from "@/lib/api"
+import { settingsErrorMessage } from "@/lib/settings-error"
+import { acceptedWindowCapture } from "@/lib/window-capture"
 import {
   getWindowsApplication,
   type MatchMethod,
@@ -174,24 +177,27 @@ function usePickDialog() {
   useEffect(() => {
     if (!isPickDialogOpen) return
 
-    let unlisten: (() => void) | undefined
+    let active = true
+    let token: Awaited<ReturnType<typeof startWindowCapture>> | undefined
 
     const setup = async () => {
-      // Listen for the window-captured event BEFORE starting the hook so we
-      // don't miss the event in case the hook fires very quickly.
-      unlisten = await listen<ForegroundWindowInfo>(
-        "window-captured",
-        (event) => {
-          const info = event.payload
+      token = await startWindowCapture()
+      if (!active) {
+        await stopWindowCapture(token).catch(() => {})
+        return
+      }
+      while (active) {
+        const result = await pollWindowCapture(token)
+        const info = acceptedWindowCapture(token, result)
+        if (info) {
           setWindowInfo(info)
-          // Pre-select the first populated field.
-          if (info.process_name) {
-            setSelectedDetectKey("process_name")
-          } else if (info.window_class) {
-            setSelectedDetectKey("window_class")
-          } else {
-            setSelectedDetectKey("window_title")
-          }
+          setSelectedDetectKey(
+            info.process_name
+              ? "process_name"
+              : info.window_class
+                ? "window_class"
+                : "window_title",
+          )
           navigate({
             to: "/applications/$appId/edit",
             params: { appId },
@@ -201,16 +207,22 @@ function usePickDialog() {
             },
             replace: true,
           })
-        },
-      )
-      await startWindowCapture()
+          return
+        }
+        await new Promise((resolve) => setTimeout(resolve, 200))
+      }
     }
 
-    setup().catch(console.error)
+    setup().catch((error) => {
+      if (active) {
+        console.error("Window capture failed:", error)
+        toast.error(settingsErrorMessage(error, "Window capture"))
+      }
+    })
 
     return () => {
-      stopWindowCapture().catch(console.error)
-      unlisten?.()
+      active = false
+      if (token) stopWindowCapture(token).catch(() => {})
     }
   }, [isPickDialogOpen, appId, navigate, activeConditionId])
 

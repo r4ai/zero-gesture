@@ -1,7 +1,7 @@
 # Zero Gesture Architecture Design Document
 
 > [!NOTE]
-> この文書はP05aのWindows runtime shellとP04b3bまでのmacOS入力・context/action境界を説明する。
+> この文書はP05bのWindows Settings controlとP04b3bまでのmacOS入力・context/action境界を説明する。
 > マルチプラットフォーム目標設計と後続移行ゲートは
 > [ADR index](./adr/README.md) を正とする。
 
@@ -107,6 +107,24 @@ installer/upgrade/reinstall/uninstall、署名はP05cの実機gateであり、de
 process testはautostart登録を明示的に迂回する。
 順序と非対象は[ADR 0019](./adr/0019-windows-first-runtime-shell.md)を正とする。
 
+#### Windows Settings control
+
+P05bではSettings command failureを`code`、`operation`、`retryable`、
+任意の`current` observationを持つ内部typed objectへ統一する。UIはmessageを
+parseせずcodeでrevision conflict、Engine unavailable/disconnected、validation、
+rejected input、filesystem、platform、backend failureを表示する。conflict時は
+Engineのcurrent revision/configをquery cacheへ反映するがdirty draftは保持し、
+retryだけが新revisionを使う。Applied成功とschema v2は変更せず、
+`durability_warning`も成功結果として表示する。
+
+window captureはSettings processの別hook/eventを持たない。protocol v3の
+Begin/Poll/Cancelは`capture_id`とEngineの単調`epoch`を必須にし、一つの
+authenticated Named Pipe sessionが一つのactive captureを所有する。既存Engine
+callbackはreal left-downでatomic phase CASとraw point格納だけを行う。window/app/
+class/title解決、IPC、ログはcallback外で行い、replace/cancel/disconnect/shutdown
+後のstale epochを返さない。詳細は
+[ADR 0020](./adr/0020-engine-owned-windows-settings-control.md)を正とする。
+
 ### 3.2. Hook Thread (The "Sensor")
 
 UIスレッドのブロックを防ぐため、独立したスレッドでマウス入力を監視します。
@@ -194,6 +212,8 @@ TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成
   - 軌跡の色・太さの設定。
   - Tauri Commandを経由してRust側の設定ファイルを更新。
   - edit/import開始時にEngineから観測したrevisionを保持し、Prepareへ渡す。Applied後は返されたconfig/revisionでquery cacheを置換し、Windows metadata durability warningを表示する。
+  - typed command errorをcodeで表示する。revision conflictではcurrent observationだけを更新し、dirty draftを上書きせずretry可能にする。
+  - window captureはEngineのcapture id/epoch付きBegin/Poll/Cancelを使い、active identityと一致するresultだけをdraftへ適用する。
   - **Performance Note:** この画面が開いていない時、Webviewプロセスは存在しないか、サスペンド状態になるように管理する。
 
 ---

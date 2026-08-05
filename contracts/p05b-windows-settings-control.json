@@ -1,0 +1,74 @@
+{
+  "cases": [
+    {
+      "id": "P05B-ERROR-001",
+      "obligation": "A revision conflict is serialized as a retryable typed Settings error carrying the current Engine observation.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/commands.rs",
+      "evidence_name": "revision_conflict_is_a_typed_retryable_error_with_current_observation"
+    },
+    {
+      "id": "P05B-ERROR-002",
+      "obligation": "Engine disconnect, validation, rejected input, and backend failures remain distinct without message parsing.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/commands.rs",
+      "evidence_name": "control_failures_keep_unavailable_disconnected_and_rejected_distinct"
+    },
+    {
+      "id": "P05B-ERROR-003",
+      "obligation": "A persistence failure identifies the Commit operation and is not reported as validation or filesystem input failure.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/commands.rs",
+      "evidence_name": "persistence_failure_identifies_the_commit_phase"
+    },
+    {
+      "id": "P05B-ERROR-004",
+      "obligation": "Enable-disable conflicts preserve their typed operation identity.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/commands.rs",
+      "evidence_name": "enable_disable_conflict_keeps_its_typed_operation"
+    },
+    {
+      "id": "P05B-IPC-001",
+      "obligation": "The closed internal codec round-trips capture id, epoch, polling identity, and window metadata result.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/protocol.rs",
+      "evidence_name": "codec_roundtrips_window_capture_identity_and_result"
+    },
+    {
+      "id": "P05B-CAPTURE-001",
+      "obligation": "A new capture replaces the prior epoch and the prior result is stale.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/capture.rs",
+      "evidence_name": "begin_replaces_the_active_epoch_and_stale_results_never_apply"
+    },
+    {
+      "id": "P05B-LIFECYCLE-001",
+      "obligation": "Cancel and Settings connection cleanup invalidate only the matching capture owner.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/capture.rs",
+      "evidence_name": "cancel_and_disconnect_invalidate_only_the_matching_owner"
+    },
+    {
+      "id": "P05B-HOT-001",
+      "obligation": "Non-capture input and a second callback result fail open after one bounded atomic capture acceptance.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/capture.rs",
+      "evidence_name": "overload_or_non_capture_input_remains_fail_open"
+    },
+    {
+      "id": "P05B-LIFECYCLE-002",
+      "obligation": "Engine shutdown invalidates the active capture, rejects new begin, and keeps callback input fail open.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/capture.rs",
+      "evidence_name": "engine_shutdown_invalidates_capture_and_rejects_new_begin"
+    },
+    {
+      "id": "P05B-IPC-002",
+      "obligation": "The production native capture seam flows through Engine-owned state, an authenticated persistent session, the resolver boundary, and the typed IPC result.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "native_capture_result_flows_through_engine_session_and_protocol"
+    }
+  ]
+}

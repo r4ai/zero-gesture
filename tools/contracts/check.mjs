@@ -85,6 +85,13 @@ const MANIFESTS = [
     idDescription:
       "P05A-AUTOSTART-NNN, P05A-PROCESS-NNN, P05A-SETTINGS-NNN, P05A-TRAY-NNN, or P05A-LIFECYCLE-NNN",
   },
+  {
+    label: "P05b",
+    path: "contracts/p05b-windows-settings-control.json",
+    idPattern: /^P05B-(?:ERROR|IPC|CAPTURE|HOT|LIFECYCLE)-\d{3}$/,
+    idDescription:
+      "P05B-ERROR-NNN, P05B-IPC-NNN, P05B-CAPTURE-NNN, P05B-HOT-NNN, or P05B-LIFECYCLE-NNN",
+  },
 ]
 const REPO_ROOT = path.resolve(fileURLToPath(new URL("../..", import.meta.url)))
 

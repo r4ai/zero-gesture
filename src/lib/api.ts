@@ -22,6 +22,20 @@ export type ConfigApplyResult = {
   durability_warning: boolean
 }
 
+export type WindowCaptureToken = {
+  capture_id: number
+  epoch: number
+}
+
+type WindowCaptureBackendObservation =
+  | { state: "pending" }
+  | { state: "captured"; info: ForegroundWindowInfo }
+
+export type WindowCapturePoll = WindowCaptureToken &
+  WindowCaptureBackendObservation
+
+let nextCaptureId = 1
+
 export const getConfig = (): Promise<ConfigObservation> => invoke("get_config")
 
 export const updateConfig = (
@@ -29,6 +43,12 @@ export const updateConfig = (
   expectedRevision: number,
 ): Promise<ConfigApplyResult> =>
   invoke("update_config", { newConfig, expectedRevision })
+
+export const setEnabled = (
+  enabled: boolean,
+  expectedRevision: number,
+): Promise<ConfigApplyResult> =>
+  invoke("set_enabled", { enabled, expectedRevision })
 
 export const importConfig = (
   filePath: string,
@@ -50,21 +70,28 @@ export const openConfigDir = (): Promise<void> => invoke("open_config_dir")
 export const getForegroundWindowInfo = (): Promise<ForegroundWindowInfo> =>
   invoke("get_foreground_window_info")
 
-/**
- * Starts a one-shot window capture via a global mouse hook.
- *
- * The backend installs `WH_MOUSE_LL` and waits for the user to click.
- * When clicked, a `window-captured` Tauri event is emitted carrying
- * {@link ForegroundWindowInfo} for the window under the cursor.
- *
- * Use {@link stopWindowCapture} to cancel before the user clicks.
- */
-export const startWindowCapture = (): Promise<void> =>
-  invoke("start_window_capture")
+export const startWindowCapture = (): Promise<WindowCaptureToken> => {
+  const captureId = nextCaptureId
+  nextCaptureId =
+    nextCaptureId === Number.MAX_SAFE_INTEGER ? 1 : nextCaptureId + 1
+  return invoke("start_window_capture", { captureId })
+}
 
-/**
- * Cancels an in-progress window capture started by {@link startWindowCapture}.
- * No-op if no capture is active.
- */
-export const stopWindowCapture = (): Promise<void> =>
-  invoke("stop_window_capture")
+export const pollWindowCapture = async (
+  token: WindowCaptureToken,
+): Promise<WindowCapturePoll> => {
+  const observation = await invoke<WindowCaptureBackendObservation>(
+    "poll_window_capture",
+    {
+      captureId: token.capture_id,
+      epoch: token.epoch,
+    },
+  )
+  return { ...token, ...observation }
+}
+
+export const stopWindowCapture = (token: WindowCaptureToken): Promise<void> =>
+  invoke("stop_window_capture", {
+    captureId: token.capture_id,
+    epoch: token.epoch,
+  })

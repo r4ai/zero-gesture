@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react"
+import { expect, fn, userEvent, within } from "storybook/test"
 import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel"
 import { ConfigDraftContextProvider } from "@/contexts/config-draft"
 import { DEFAULTS } from "@/types/config"
@@ -7,6 +8,7 @@ import { SettingsFormActions } from "./settings-form-actions"
 type StoryArgs = {
   isDirty: boolean
   isSaving: boolean
+  saveError: string | null
   onSave: () => void
   onCancel: () => void
 }
@@ -40,6 +42,7 @@ const meta = {
           reset: args.onCancel,
           save: args.onSave,
           isSaving: args.isSaving,
+          saveError: args.saveError,
         }}
       >
         <div className="w-[600px]">
@@ -68,8 +71,9 @@ const meta = {
   args: {
     isDirty: false,
     isSaving: false,
-    onSave: () => {},
-    onCancel: () => {},
+    saveError: null,
+    onSave: fn(),
+    onCancel: fn(),
   },
 } satisfies Meta<StoryArgs>
 
@@ -97,5 +101,19 @@ export const Saving: Story = {
   args: {
     isDirty: true,
     isSaving: true,
+  },
+}
+
+export const RetryableFailure: Story = {
+  args: {
+    isDirty: true,
+    saveError:
+      "Save was not applied because newer settings are available. Your draft was kept; review it and retry.",
+  },
+  play: async ({ canvasElement, args }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.getByRole("alert")).toHaveTextContent("draft was kept")
+    await userEvent.click(canvas.getByRole("button", { name: "Save Changes" }))
+    await expect(args.onSave).toHaveBeenCalledOnce()
   },
 }

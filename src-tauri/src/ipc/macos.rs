@@ -1038,8 +1038,17 @@ mod tests {
             let (owner, _) = ConfigOwner::startup(directory.path());
             let stop = Arc::new(AtomicBool::new(false));
             let server_stop = Arc::clone(&stop);
-            let handle =
-                thread::spawn(move || server.run(server_stop, owner, |_, _| Ok(())).unwrap());
+            let handle = thread::spawn(move || {
+                server
+                    .run(
+                        server_stop,
+                        owner,
+                        Arc::new(crate::capture::WindowCapture::new()),
+                        crate::window_info::get_window_info_at_point,
+                        |_, _| Ok(()),
+                    )
+                    .unwrap()
+            });
             Self {
                 control,
                 stop,

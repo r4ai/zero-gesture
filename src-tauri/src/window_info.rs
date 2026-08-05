@@ -4,7 +4,7 @@
 //! Win32 window class, and title — for use in per-application gesture bindings.
 
 /// Information about the current foreground window.
-#[derive(Debug, Clone, Default, serde::Serialize)]
+#[derive(Debug, Clone, Default, Eq, PartialEq, serde::Serialize)]
 pub struct ForegroundWindowInfo {
     /// Executable file name (e.g., "chrome.exe"), lowercased. `None` if unavailable.
     pub process_name: Option<String>,
@@ -12,6 +12,30 @@ pub struct ForegroundWindowInfo {
     pub window_class: Option<String>,
     /// Window title text. `None` if unavailable.
     pub title: Option<String>,
+}
+
+#[cfg(windows)]
+pub(crate) fn get_window_info_at_point(
+    point: crate::domain::Point,
+) -> Result<ForegroundWindowInfo, ()> {
+    let hwnd = unsafe {
+        windows_sys::Win32::UI::WindowsAndMessaging::WindowFromPoint(
+            windows_sys::Win32::Foundation::POINT {
+                x: point.x,
+                y: point.y,
+            },
+        )
+    };
+    (!hwnd.is_null())
+        .then(|| get_window_info_by_hwnd(hwnd))
+        .ok_or(())
+}
+
+#[cfg(not(windows))]
+pub(crate) fn get_window_info_at_point(
+    _point: crate::domain::Point,
+) -> Result<ForegroundWindowInfo, ()> {
+    Err(())
 }
 
 /// Retrieves information about the current foreground window.
