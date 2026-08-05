@@ -18,13 +18,27 @@ pub const CAPABILITY_SHUTDOWN: u64 = 1 << 2;
 pub const CAPABILITY_CONFIG_READ: u64 = 1 << 3;
 pub const CAPABILITY_CONFIG_TRANSACTION: u64 = 1 << 4;
 pub const CAPABILITY_WINDOW_CAPTURE: u64 = 1 << 5;
-pub const CAPABILITIES: u64 = CAPABILITY_PING
+const BASE_CAPABILITIES: u64 = CAPABILITY_PING
     | CAPABILITY_STATUS
     | CAPABILITY_SHUTDOWN
     | CAPABILITY_CONFIG_READ
-    | CAPABILITY_CONFIG_TRANSACTION
-    | CAPABILITY_WINDOW_CAPTURE;
+    | CAPABILITY_CONFIG_TRANSACTION;
+#[cfg(windows)]
+pub const CAPABILITIES: u64 = BASE_CAPABILITIES | CAPABILITY_WINDOW_CAPTURE;
+#[cfg(not(windows))]
+pub const CAPABILITIES: u64 = BASE_CAPABILITIES;
 const MAX_CAPTURE_TEXT_BYTES: usize = 4 * 1024;
+
+pub(crate) fn capture_info_within_limits(info: &WindowCaptureInfo) -> bool {
+    [
+        info.process_name.as_deref(),
+        info.window_class.as_deref(),
+        info.title.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .all(|value| value.len() <= MAX_CAPTURE_TEXT_BYTES)
+}
 
 const HEADER_BYTES: usize = size_of::<u16>() + size_of::<u8>() + size_of::<u8>() + size_of::<u64>();
 
@@ -1134,6 +1148,41 @@ mod tests {
             decode_response(&encode_response(&response).unwrap(), 31).unwrap(),
             response
         );
+    }
+
+    #[test]
+    fn capture_metadata_codec_accepts_utf8_boundary_and_rejects_overflow() {
+        let boundary = "é".repeat(MAX_CAPTURE_TEXT_BYTES / "é".len());
+        let accepted = Envelope::current(
+            32,
+            Response::WindowCapture {
+                capture_id: 1,
+                epoch: 2,
+                result: WindowCaptureResult::Captured(WindowCaptureInfo {
+                    process_name: Some(boundary.clone()),
+                    window_class: Some(boundary.clone()),
+                    title: Some(boundary),
+                }),
+            },
+        );
+        assert!(encode_response(&accepted).is_ok());
+
+        let overflow = Envelope::current(
+            33,
+            Response::WindowCapture {
+                capture_id: 1,
+                epoch: 2,
+                result: WindowCaptureResult::Captured(WindowCaptureInfo {
+                    process_name: None,
+                    window_class: None,
+                    title: Some("é".repeat(MAX_CAPTURE_TEXT_BYTES / "é".len() + 1)),
+                }),
+            },
+        );
+        assert!(matches!(
+            encode_response(&overflow),
+            Err(ProtocolError::InvalidMessage)
+        ));
     }
 
     #[test]

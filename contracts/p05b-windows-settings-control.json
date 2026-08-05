@@ -69,6 +69,34 @@
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/ipc/windows.rs",
       "evidence_name": "native_capture_result_flows_through_engine_session_and_protocol"
+    },
+    {
+      "id": "P05B-LIFECYCLE-003",
+      "obligation": "A stale cancel does not drop the authenticated session or invalidate the replacement capture.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "stale_cancel_keeps_the_replacement_capture_session_alive"
+    },
+    {
+      "id": "P05B-IPC-003",
+      "obligation": "Capture metadata accepts the exact 4 KiB UTF-8 boundary and rejects an overflow before transport.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/protocol.rs",
+      "evidence_name": "capture_metadata_codec_accepts_utf8_boundary_and_rejects_overflow"
+    },
+    {
+      "id": "P05B-IPC-004",
+      "obligation": "Oversized native window metadata returns a typed capture backend failure without disconnecting the pipe.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "oversized_capture_metadata_returns_typed_backend_failure"
+    },
+    {
+      "id": "P05B-MACOS-001",
+      "obligation": "macOS omits the deferred Windows capture capability and rejects BeginWindowCapture as unavailable.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "macos_hello_omits_capture_capability_and_begin_is_rejected"
     }
   ]
 }

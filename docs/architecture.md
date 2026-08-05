@@ -122,7 +122,8 @@ Begin/Poll/Cancelは`capture_id`とEngineの単調`epoch`を必須にし、一�
 authenticated Named Pipe sessionが一つのactive captureを所有する。既存Engine
 callbackはreal left-downでatomic phase CASとraw point格納だけを行う。window/app/
 class/title解決、IPC、ログはcallback外で行い、replace/cancel/disconnect/shutdown
-後のstale epochを返さない。詳細は
+後のstale epochを返さない。metadataはfieldごとに4 KiB UTF-8境界で検証し、
+macOSは共有protocolをcompileするだけでcapture capabilityを広告しない。詳細は
 [ADR 0020](./adr/0020-engine-owned-windows-settings-control.md)を正とする。
 
 ### 3.2. Hook Thread (The "Sensor")

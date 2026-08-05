@@ -978,7 +978,10 @@ fn endpoint_io(operation: &'static str, error: io::Error) -> ControlError {
 #[cfg(test)]
 mod tests {
     use super::super::core::{
-        EngineControl, EngineServer, ServerExit, CONNECT_TIMEOUT, IO_TIMEOUT,
+        EngineControl, EngineServer, ServerExit, Session, CONNECT_TIMEOUT, IO_TIMEOUT,
+    };
+    use super::super::protocol::{
+        ErrorCode, Request, Response, CAPABILITIES, CAPABILITY_WINDOW_CAPTURE,
     };
     use super::*;
     use crate::config::{self, ConfigDocument, ConfigOwner};
@@ -1065,6 +1068,19 @@ mod tests {
                 handle.join().unwrap();
             }
         }
+    }
+
+    #[test]
+    fn macos_hello_omits_capture_capability_and_begin_is_rejected() {
+        assert_eq!(CAPABILITIES & CAPABILITY_WINDOW_CAPTURE, 0);
+        let server = RunningServer::start();
+        let mut session = Session::connect(&server.control.endpoint).unwrap();
+        assert_eq!(
+            session
+                .exchange(Request::BeginWindowCapture { capture_id: 1 })
+                .unwrap(),
+            Response::Error(ErrorCode::CaptureUnavailable)
+        );
     }
 
     struct ChildGuard(Child);

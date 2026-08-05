@@ -379,14 +379,17 @@ impl EngineControl {
             .capture_session
             .lock()
             .map_err(|_| ControlError::Protocol(ProtocolError::InvalidMessage))?;
-        let mut session = sessions
-            .take()
+        let session = sessions
+            .as_mut()
             .ok_or(ControlError::Rejected(ErrorCode::CaptureStale))?;
         match session.exchange(Request::CancelWindowCapture { capture_id, epoch })? {
             Response::WindowCaptureCancelled {
                 capture_id: actual_id,
                 epoch: actual_epoch,
-            } if actual_id == capture_id && actual_epoch == epoch => Ok(()),
+            } if actual_id == capture_id && actual_epoch == epoch => {
+                sessions.take();
+                Ok(())
+            }
             Response::Error(code) => Err(ControlError::Rejected(code)),
             _ => Err(ControlError::Protocol(ProtocolError::InvalidMessage)),
         }
@@ -693,6 +696,13 @@ fn dispatch_request(
         {
             Response::Error(ErrorCode::ExecutableVersionMismatch)
         }
+        Request::BeginWindowCapture { .. }
+        | Request::PollWindowCapture { .. }
+        | Request::CancelWindowCapture { .. }
+            if CAPABILITIES & protocol::CAPABILITY_WINDOW_CAPTURE == 0 =>
+        {
+            Response::Error(ErrorCode::CaptureUnavailable)
+        }
         Request::PrepareConfig {
             expected_revision,
             config_bytes,
@@ -759,15 +769,24 @@ fn dispatch_request(
                 },
                 Ok(CapturePoll::Captured(point)) => match (context.resolve_capture)(point) {
                     Ok(info) => {
-                        debug!("window capture id={capture_id} epoch={epoch} phase=captured");
-                        Response::WindowCapture {
-                            capture_id,
-                            epoch,
-                            result: WindowCaptureResult::Captured(WindowCaptureInfo {
-                                process_name: info.process_name,
-                                window_class: info.window_class,
-                                title: info.title,
-                            }),
+                        let info = WindowCaptureInfo {
+                            process_name: info.process_name,
+                            window_class: info.window_class,
+                            title: info.title,
+                        };
+                        if protocol::capture_info_within_limits(&info) {
+                            debug!("window capture id={capture_id} epoch={epoch} phase=captured");
+                            Response::WindowCapture {
+                                capture_id,
+                                epoch,
+                                result: WindowCaptureResult::Captured(info),
+                            }
+                        } else {
+                            warn!(
+                                "window capture id={capture_id} epoch={epoch} phase=resolve error={:?}",
+                                ErrorCode::CaptureBackendFailed
+                            );
+                            Response::Error(ErrorCode::CaptureBackendFailed)
                         }
                     }
                     Err(()) => {

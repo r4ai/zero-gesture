@@ -66,9 +66,10 @@ typed stale/unavailable error and cannot update the UI.
 Settings keeps one authenticated capture pipe session open from begin through
 poll/cancel. Closing Settings closes that session; the existing connection
 cleanup invalidates its capture within the bounded pipe timeout. New begin on
-the same session replaces the prior epoch. Engine shutdown invalidates the
-mailbox before worker teardown. No transport, secret, endpoint, singleton, or
-external API is added.
+the same session replaces the prior epoch. A stale cancel keeps that session
+and replacement alive; only the matching successful cancel drops it. Engine
+shutdown invalidates the mailbox before worker teardown. No transport, secret,
+endpoint, singleton, or external API is added.
 
 The existing Engine `WH_MOUSE_LL` callback is the only Windows capture input
 source. On a real left-button down it performs one fixed state load/CAS, stores
@@ -82,13 +83,21 @@ config contents, or IPC secret.
 
 The old Settings-owned hook, mutex handle, and `window-captured` Tauri event are
 removed. React polls the typed command and applies a captured value only when
-the active id and epoch match.
+the effect is still active and a production ref still names the requested id
+and epoch. Cleanup or replacement therefore rejects a captured poll that
+finishes later. Each metadata field is checked at the 4 KiB UTF-8 byte
+boundary before response encoding; overflow returns typed
+`capture-backend-failed` without disconnecting the pipe.
+
+Only Windows advertises the capture capability. macOS compiles the shared
+protocol but omits the capability and returns `capture-unavailable` for
+begin/poll/cancel until its native input owner is connected in a later phase.
 
 ## Verification
 
-`contracts/p05b-windows-settings-control.json` maps ten independent Rust
-obligations to ten unique tests: `O = 10`, `O_v = 10`, `U = 0`, `T = 10`,
-`T_u = 9`, `T_i = 1`, and `T_e = 0`.
+`contracts/p05b-windows-settings-control.json` maps fourteen independent Rust
+obligations to fourteen unique tests: `O = 14`, `O_v = 14`, `U = 0`, `T = 14`,
+`T_u = 10`, `T_i = 4`, and `T_e = 0`.
 
 The integration case drives the same crate-private native capture function
 called by the production callback, the Engine atomic state, authenticated
@@ -96,9 +105,11 @@ persistent Named Pipe session, injected Win32 metadata system boundary, closed
 codec, and client observation. Unit cases cover replace/stale, cancel,
 disconnect, shutdown, duplicate/overload fail-open, capture codec identity,
 typed error categories, conflict current revision, Commit persistence, and
-enable-disable operation identity. Frontend unit tests additionally cover
+enable-disable operation identity. Regression cases cover stale cancel versus
+replacement, the exact/overflow metadata boundary and typed server rejection,
+plus macOS capability omission. Frontend unit tests additionally cover
 code-only error presentation, conflict cache adoption, dirty-draft
-preservation, and stale result rejection. The Settings actions Storybook
+preservation, and post-cleanup stale result rejection. The Settings actions Storybook
 interaction verifies that a retryable failure is visible and Save remains
 retryable.
 

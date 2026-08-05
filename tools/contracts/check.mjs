@@ -88,9 +88,9 @@ const MANIFESTS = [
   {
     label: "P05b",
     path: "contracts/p05b-windows-settings-control.json",
-    idPattern: /^P05B-(?:ERROR|IPC|CAPTURE|HOT|LIFECYCLE)-\d{3}$/,
+    idPattern: /^P05B-(?:ERROR|IPC|CAPTURE|HOT|LIFECYCLE|MACOS)-\d{3}$/,
     idDescription:
-      "P05B-ERROR-NNN, P05B-IPC-NNN, P05B-CAPTURE-NNN, P05B-HOT-NNN, or P05B-LIFECYCLE-NNN",
+      "P05B-ERROR-NNN, P05B-IPC-NNN, P05B-CAPTURE-NNN, P05B-HOT-NNN, P05B-LIFECYCLE-NNN, or P05B-MACOS-NNN",
   },
 ]
 const REPO_ROOT = path.resolve(fileURLToPath(new URL("../..", import.meta.url)))

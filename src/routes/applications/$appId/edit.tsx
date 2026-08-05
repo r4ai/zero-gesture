@@ -13,7 +13,7 @@ import {
   Trash2,
   X,
 } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import { SettingsFormActions } from "@/components/settings-form-actions"
 import { Badge } from "@/components/ui/badge"
@@ -38,7 +38,10 @@ import {
   stopWindowCapture,
 } from "@/lib/api"
 import { settingsErrorMessage } from "@/lib/settings-error"
-import { acceptedWindowCapture } from "@/lib/window-capture"
+import {
+  acceptedCurrentWindowCapture,
+  isCurrentWindowCapture,
+} from "@/lib/window-capture"
 import {
   getWindowsApplication,
   type MatchMethod,
@@ -169,6 +172,9 @@ function usePickDialog() {
   const [windowInfo, setWindowInfo] = useState<ForegroundWindowInfo | null>(
     null,
   )
+  const activeCapture = useRef<Awaited<
+    ReturnType<typeof startWindowCapture>
+  > | null>(null)
 
   const isPickDialogOpen = search.pickStep === "pick"
   const isSelectDialogOpen = search.pickStep === "select"
@@ -186,10 +192,18 @@ function usePickDialog() {
         await stopWindowCapture(token).catch(() => {})
         return
       }
+      activeCapture.current = token
       while (active) {
         const result = await pollWindowCapture(token)
-        const info = acceptedWindowCapture(token, result)
+        const info = acceptedCurrentWindowCapture(
+          active,
+          activeCapture.current,
+          token,
+          result,
+        )
         if (info) {
+          if (!isCurrentWindowCapture(active, activeCapture.current, token))
+            return
           setWindowInfo(info)
           setSelectedDetectKey(
             info.process_name
@@ -222,6 +236,13 @@ function usePickDialog() {
 
     return () => {
       active = false
+      if (
+        token &&
+        activeCapture.current?.capture_id === token.capture_id &&
+        activeCapture.current.epoch === token.epoch
+      ) {
+        activeCapture.current = null
+      }
       if (token) stopWindowCapture(token).catch(() => {})
     }
   }, [isPickDialogOpen, appId, navigate, activeConditionId])

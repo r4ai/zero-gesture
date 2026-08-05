@@ -17,3 +17,27 @@ export function acceptedWindowCapture(
   }
   return received.info
 }
+
+export function acceptedCurrentWindowCapture(
+  active: boolean,
+  current: WindowCaptureToken | null,
+  requested: WindowCaptureToken,
+  received: WindowCapturePoll,
+): ForegroundWindowInfo | null {
+  if (!isCurrentWindowCapture(active, current, requested)) {
+    return null
+  }
+  return acceptedWindowCapture(requested, received)
+}
+
+export function isCurrentWindowCapture(
+  active: boolean,
+  current: WindowCaptureToken | null,
+  requested: WindowCaptureToken,
+): boolean {
+  return (
+    active &&
+    current?.capture_id === requested.capture_id &&
+    current.epoch === requested.epoch
+  )
+}

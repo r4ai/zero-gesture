@@ -38,7 +38,8 @@ command errorは`code`、`operation`、`message`、`retryable`、任意の`curre
 `current`をquery cacheへ反映するがdirty draftは保持し、次のretryで新revisionを
 使う。Save/Import/Export/Open Folder/window captureはcodeごとの再試行案を表示する。
 window captureはTauri eventをlistenせず、Engineが返す`capture_id`/`epoch`付き
-Begin/Poll/Cancelを使い、active identityと一致するCapturedだけを適用する。
+Begin/Poll/Cancelを使う。poll await後もeffect active flagとproduction refの
+current identityを再確認し、cleanup/replacement後に完了したCapturedは適用しない。
 
 ## コマンド
 

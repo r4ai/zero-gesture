@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest"
-import { acceptedWindowCapture } from "@/lib/window-capture"
+import {
+  acceptedCurrentWindowCapture,
+  acceptedWindowCapture,
+} from "@/lib/window-capture"
 
 describe("window capture UI identity", () => {
   const info = {
@@ -36,6 +39,27 @@ describe("window capture UI identity", () => {
         epoch: 9,
         state: "pending",
       }),
+    ).toBeNull()
+  })
+
+  it("rejects an old captured poll that resolves after cleanup or replacement", () => {
+    const requested = { capture_id: 5, epoch: 9 }
+    const captured = {
+      ...requested,
+      state: "captured" as const,
+      info,
+    }
+
+    expect(
+      acceptedCurrentWindowCapture(false, requested, requested, captured),
+    ).toBeNull()
+    expect(
+      acceptedCurrentWindowCapture(
+        true,
+        { capture_id: 6, epoch: 10 },
+        requested,
+        captured,
+      ),
     ).toBeNull()
   })
 })
