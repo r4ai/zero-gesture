@@ -717,11 +717,11 @@ fn run_settings() -> Result<(), String> {
             let skip_window = std::env::var_os("ZG_P05A_TEST_SKIP_SETTINGS_WINDOW").is_some();
             #[cfg(not(all(windows, debug_assertions)))]
             let skip_window = false;
+            #[cfg(all(windows, debug_assertions))]
+            schedule_settings_test_exit()?;
             if !skip_window {
                 tray::show_settings_window(app.handle())?;
             }
-            #[cfg(all(windows, debug_assertions))]
-            schedule_settings_test_exit()?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
