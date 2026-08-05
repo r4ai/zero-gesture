@@ -6,7 +6,6 @@
 //! input owner, bounded context worker, and bounded action executor.
 
 use std::cell::UnsafeCell;
-#[cfg(target_os = "macos")]
 use std::ffi::c_void;
 use std::mem::MaybeUninit;
 #[cfg(target_os = "macos")]
@@ -14,19 +13,15 @@ use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
-#[cfg(target_os = "macos")]
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::Sender;
 #[cfg(target_os = "macos")]
 use log::warn;
 
-#[cfg(any(target_os = "macos", test))]
-use super::macos_context::observes_event;
 #[cfg(target_os = "macos")]
 use super::macos_context::ContextWorker;
-use super::owner::{ActionWork, ContextView, NativeInputOwner};
+use super::owner::{ActionWork, ContextRoute, ContextView, NativeInputOwner};
 use super::{HookEvent, HookFailure};
 use crate::config::ConfigSnapshotReader;
 use crate::domain::input::SessionId;
@@ -62,7 +57,6 @@ const EVENT_TAP_DISABLED_BY_USER_INPUT: u32 = u32::MAX;
 const EVENT_FIELD_MOUSE_BUTTON_NUMBER: u32 = 3;
 #[cfg(target_os = "macos")]
 const EVENT_FIELD_SCROLL_DELTA_AXIS_1: u32 = 11;
-#[cfg(target_os = "macos")]
 const EVENT_FIELD_SOURCE_USER_DATA: u32 = 55;
 const MIDDLE_MOUSE_BUTTON: i64 = 2;
 
@@ -77,7 +71,6 @@ extern "C" {
     fn arc4random_buf(buffer: *mut c_void, length: usize);
 }
 
-#[cfg(target_os = "macos")]
 type CGEventRef = *mut c_void;
 #[cfg(target_os = "macos")]
 type CFMachPortRef = *mut c_void;
@@ -269,12 +262,6 @@ impl TapState {
         }
     }
 
-    fn capture_tagged_raw(&self, marker: i64, raw: RawInput) {
-        if marker != self.marker {
-            self.capture_raw(raw);
-        }
-    }
-
     fn note_disabled(&self) {
         self.disabled.fetch_add(1, Ordering::Relaxed);
         self.reenable_requested.store(true, Ordering::Release);
@@ -317,13 +304,11 @@ impl TapState {
     }
 }
 
-#[cfg(target_os = "macos")]
 struct OwnerClock {
     tick: u32,
     observed_at: Instant,
 }
 
-#[cfg(target_os = "macos")]
 impl OwnerClock {
     fn new() -> Self {
         Self {
@@ -338,6 +323,7 @@ impl OwnerClock {
         self.tick
     }
 
+    #[cfg(target_os = "macos")]
     fn current(&self) -> u32 {
         self.tick
             .wrapping_add(self.observed_at.elapsed().as_millis() as u32)
@@ -368,6 +354,11 @@ impl MacosInputConsumer {
         self.owner.set_context(context);
         let _ = self.owner.callback(input.event, input.point, tick);
         self.drain_owner_work(tick);
+    }
+
+    #[cfg(target_os = "macos")]
+    fn context_route(&mut self, event: MouseEvent) -> ContextRoute {
+        self.owner.context_route(event)
     }
 
     fn safety_timer(&mut self, tick: u32) {
@@ -514,12 +505,9 @@ pub(super) fn run_loop_macos(
     events: Sender<HookEvent>,
 ) -> Result<(), HookFailure> {
     let marker = unsafe { process_instance_marker() };
-    let state = Box::new(TapState::with_marker(marker));
-    let mode = unsafe { start_event_tap(state.as_ref()) };
+    let (state, mode) = prepare_marked_state(marker, |state| unsafe { start_event_tap(state) });
     match mode {
-        StartupMode::Active(resources) => {
-            run_active(reader, stop, events, marker, state, resources)
-        }
+        StartupMode::Active(resources) => run_active(reader, stop, events, state, resources),
         StartupMode::PermissionDenied => {
             dispatch_startup_failure(StartupFailure::PermissionDenied, stop, events)
         }
@@ -527,6 +515,19 @@ pub(super) fn run_loop_macos(
             dispatch_startup_failure(StartupFailure::CreationFailed, stop, events)
         }
     }
+}
+
+fn prepare_marked_state<T>(
+    marker: i64,
+    install_tap: impl FnOnce(&TapState) -> T,
+) -> (Box<TapState>, T) {
+    let state = Box::new(TapState::with_marker(marker));
+    let tap = install_tap(state.as_ref());
+    (state, tap)
+}
+
+fn executor_marker(state: &TapState) -> i64 {
+    state.marker
 }
 
 fn dispatch_startup_failure(
@@ -570,12 +571,11 @@ fn run_active(
     reader: ConfigSnapshotReader,
     stop: Arc<AtomicBool>,
     events: Sender<HookEvent>,
-    marker: i64,
     state: Box<TapState>,
     resources: TapResources,
 ) -> Result<(), HookFailure> {
     let mut context = ContextWorker::spawn(reader.clone())?;
-    let executor = MacosActionExecutor::spawn(marker)
+    let executor = MacosActionExecutor::spawn(executor_marker(&state))
         .map_err(|_| HookFailure::new("macOS action", "failed to start"))?;
     let mut consumer = MacosInputConsumer::new(reader, executor);
     let mut clock = OwnerClock::new();
@@ -609,13 +609,48 @@ fn drain_input(
     clock: &mut OwnerClock,
 ) {
     state.drain(|input| {
-        let tick = clock.observe(input.timestamp_ns);
-        if observes_event(input.event) {
-            context.observe(input.event, input.point, input.timestamp_ns);
-        }
-        let current = context.latest(input.point, tick);
-        consumer.consume(input, current, tick);
+        process_input_step(
+            input,
+            clock,
+            context,
+            consumer,
+            InputStepFunctions {
+                route: MacosInputConsumer::context_route,
+                set_needed: ContextWorker::set_needed,
+                observe: ContextWorker::observe,
+                latest: ContextWorker::latest,
+                consume: MacosInputConsumer::consume,
+            },
+        );
     });
+}
+
+struct InputStepFunctions<C, W> {
+    route: fn(&mut C, MouseEvent) -> ContextRoute,
+    set_needed: fn(&mut W, bool),
+    observe: fn(&mut W, MouseEvent, Point, u64),
+    latest: fn(&mut W, Point, u32) -> Option<ContextView>,
+    consume: fn(&mut C, NormalizedInput, Option<ContextView>, u32),
+}
+
+fn process_input_step<C, W>(
+    input: NormalizedInput,
+    clock: &mut OwnerClock,
+    context: &mut W,
+    consumer: &mut C,
+    functions: InputStepFunctions<C, W>,
+) {
+    let tick = clock.observe(input.timestamp_ns);
+    let route = (functions.route)(consumer, input.event);
+    let needed = route != ContextRoute::Inactive;
+    (functions.set_needed)(context, needed);
+    if route == ContextRoute::Observe {
+        (functions.observe)(context, input.event, input.point, input.timestamp_ns);
+    }
+    let current = needed
+        .then(|| (functions.latest)(context, input.point, tick))
+        .flatten();
+    (functions.consume)(consumer, input, current, tick);
 }
 
 #[cfg(target_os = "macos")]
@@ -702,10 +737,35 @@ unsafe extern "C" fn event_tap_callback(
         return event;
     }
 
-    let marker = CGEventGetIntegerValueField(event, EVENT_FIELD_SOURCE_USER_DATA);
+    capture_callback_event(
+        state,
+        event_type,
+        event,
+        CGEventGetIntegerValueField,
+        read_raw_event,
+    );
+    event
+}
+
+type IntegerFieldReader = unsafe extern "C" fn(CGEventRef, u32) -> i64;
+type RawEventReader = unsafe fn(u32, CGEventRef) -> RawInput;
+
+unsafe fn capture_callback_event(
+    state: &TapState,
+    event_type: u32,
+    event: CGEventRef,
+    read_integer: IntegerFieldReader,
+    read_raw: RawEventReader,
+) {
+    let marker = read_integer(event, EVENT_FIELD_SOURCE_USER_DATA);
     if marker == state.marker {
-        return event;
+        return;
     }
+    state.capture_raw(read_raw(event_type, event));
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn read_raw_event(event_type: u32, event: CGEventRef) -> RawInput {
     let location = CGEventGetLocation(event);
     let button = if matches!(event_type, EVENT_OTHER_MOUSE_DOWN | EVENT_OTHER_MOUSE_UP) {
         CGEventGetIntegerValueField(event, EVENT_FIELD_MOUSE_BUTTON_NUMBER)
@@ -717,15 +777,14 @@ unsafe extern "C" fn event_tap_callback(
     } else {
         0
     };
-    state.capture_raw(RawInput {
+    RawInput {
         event_type,
         button,
         scroll,
         x: location.x,
         y: location.y,
         timestamp_ns: CGEventGetTimestamp(event),
-    });
-    event
+    }
 }
 
 fn normalize_event(event_type: u32, button: i64, scroll: i64) -> Option<MouseEvent> {
@@ -779,6 +838,9 @@ const fn event_mask(event_type: u32) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::{Cell, RefCell};
+    use std::ffi::c_void;
+    use std::rc::Rc;
     use std::sync::atomic::AtomicUsize;
     use std::time::Instant;
 
@@ -789,6 +851,114 @@ mod tests {
     };
     use crate::domain::input::tests::count_allocations;
     use crate::domain::{BindingSetId, TriggerButton as DomainTriggerButton};
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum InputStepCall {
+        Route,
+        Needed(bool),
+        Observe,
+        Latest,
+        Consume(bool),
+    }
+
+    struct FakeInputConsumer {
+        route: ContextRoute,
+        calls: Rc<RefCell<Vec<InputStepCall>>>,
+    }
+
+    struct FakeContextWorker {
+        calls: Rc<RefCell<Vec<InputStepCall>>>,
+    }
+
+    fn fake_context_route(consumer: &mut FakeInputConsumer, _: MouseEvent) -> ContextRoute {
+        consumer.calls.borrow_mut().push(InputStepCall::Route);
+        consumer.route
+    }
+
+    fn fake_set_needed(context: &mut FakeContextWorker, needed: bool) {
+        context
+            .calls
+            .borrow_mut()
+            .push(InputStepCall::Needed(needed));
+    }
+
+    fn fake_observe(context: &mut FakeContextWorker, _: MouseEvent, _: Point, _: u64) {
+        context.calls.borrow_mut().push(InputStepCall::Observe);
+    }
+
+    fn fake_latest(
+        context: &mut FakeContextWorker,
+        point: Point,
+        tick: u32,
+    ) -> Option<ContextView> {
+        context.calls.borrow_mut().push(InputStepCall::Latest);
+        Some(ContextView {
+            generation: 1,
+            binding_set: BindingSetId::from_index(0).unwrap(),
+            target: crate::domain::input::TargetToken(1),
+            point,
+            updated_tick: tick,
+        })
+    }
+
+    fn fake_consume(
+        consumer: &mut FakeInputConsumer,
+        _: NormalizedInput,
+        context: Option<ContextView>,
+        _: u32,
+    ) {
+        consumer
+            .calls
+            .borrow_mut()
+            .push(InputStepCall::Consume(context.is_some()));
+    }
+
+    fn fake_input_step_functions() -> InputStepFunctions<FakeInputConsumer, FakeContextWorker> {
+        InputStepFunctions {
+            route: fake_context_route,
+            set_needed: fake_set_needed,
+            observe: fake_observe,
+            latest: fake_latest,
+            consume: fake_consume,
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum CallbackRead {
+        Integer(u32),
+        Raw(u32),
+    }
+
+    thread_local! {
+        static CALLBACK_MARKER: Cell<i64> = const { Cell::new(0) };
+        static CALLBACK_READS: RefCell<Vec<CallbackRead>> = const { RefCell::new(Vec::new()) };
+    }
+
+    unsafe extern "C" fn record_callback_marker(_: *mut c_void, field: u32) -> i64 {
+        CALLBACK_READS.with(|reads| reads.borrow_mut().push(CallbackRead::Integer(field)));
+        CALLBACK_MARKER.get()
+    }
+
+    unsafe fn record_callback_raw(event_type: u32, _: *mut c_void) -> RawInput {
+        CALLBACK_READS.with(|reads| reads.borrow_mut().push(CallbackRead::Raw(event_type)));
+        RawInput {
+            event_type,
+            button: 0,
+            scroll: 0,
+            x: 1.0,
+            y: 2.0,
+            timestamp_ns: 3,
+        }
+    }
+
+    fn reset_callback_reads(marker: i64) {
+        CALLBACK_MARKER.set(marker);
+        CALLBACK_READS.with(|reads| {
+            let mut reads = reads.borrow_mut();
+            reads.clear();
+            reads.reserve(2);
+        });
+    }
 
     struct DropRecorder(Sender<()>);
 
@@ -906,22 +1076,23 @@ mod tests {
     #[test]
     fn self_tagged_callback_event_is_filtered_before_input_queue() {
         let state = TapState::with_marker(41);
+        reset_callback_reads(41);
 
-        let (_, allocations) = count_allocations(|| {
-            state.capture_tagged_raw(
-                41,
-                RawInput {
-                    event_type: EVENT_MOUSE_MOVED,
-                    button: 0,
-                    scroll: 0,
-                    x: 1.0,
-                    y: 2.0,
-                    timestamp_ns: 3,
-                },
+        let (_, allocations) = count_allocations(|| unsafe {
+            capture_callback_event(
+                &state,
+                EVENT_MOUSE_MOVED,
+                std::ptr::null_mut(),
+                record_callback_marker,
+                record_callback_raw,
             );
         });
 
         assert_eq!(allocations, 0);
+        assert_eq!(
+            CALLBACK_READS.with(|reads| reads.borrow().clone()),
+            vec![CallbackRead::Integer(EVENT_FIELD_SOURCE_USER_DATA)]
+        );
         assert!(state.queue.pop().is_none());
         assert_eq!(state.snapshot().received, 0);
     }
@@ -929,19 +1100,25 @@ mod tests {
     #[test]
     fn foreign_tagged_callback_event_reaches_input_queue() {
         let state = TapState::with_marker(41);
+        reset_callback_reads(42);
 
-        state.capture_tagged_raw(
-            42,
-            RawInput {
-                event_type: EVENT_MOUSE_MOVED,
-                button: 0,
-                scroll: 0,
-                x: 1.0,
-                y: 2.0,
-                timestamp_ns: 3,
-            },
+        unsafe {
+            capture_callback_event(
+                &state,
+                EVENT_MOUSE_MOVED,
+                std::ptr::null_mut(),
+                record_callback_marker,
+                record_callback_raw,
+            );
+        }
+
+        assert_eq!(
+            CALLBACK_READS.with(|reads| reads.borrow().clone()),
+            vec![
+                CallbackRead::Integer(EVENT_FIELD_SOURCE_USER_DATA),
+                CallbackRead::Raw(EVENT_MOUSE_MOVED),
+            ]
         );
-
         assert_eq!(
             state.queue.pop(),
             Some(NormalizedInput {
@@ -949,6 +1126,107 @@ mod tests {
                 point: Point::new(1, 2),
                 timestamp_ns: 3,
             })
+        );
+    }
+
+    #[test]
+    fn production_input_step_orders_and_gates_context_before_consumer() {
+        let cases = [
+            (
+                ContextRoute::Observe,
+                vec![
+                    InputStepCall::Route,
+                    InputStepCall::Needed(true),
+                    InputStepCall::Observe,
+                    InputStepCall::Latest,
+                    InputStepCall::Consume(true),
+                ],
+            ),
+            (
+                ContextRoute::Cached,
+                vec![
+                    InputStepCall::Route,
+                    InputStepCall::Needed(true),
+                    InputStepCall::Latest,
+                    InputStepCall::Consume(true),
+                ],
+            ),
+            (
+                ContextRoute::Inactive,
+                vec![
+                    InputStepCall::Route,
+                    InputStepCall::Needed(false),
+                    InputStepCall::Consume(false),
+                ],
+            ),
+        ];
+
+        for (route, expected) in cases {
+            let calls = Rc::new(RefCell::new(Vec::new()));
+            let mut context = FakeContextWorker {
+                calls: Rc::clone(&calls),
+            };
+            let mut consumer = FakeInputConsumer {
+                route,
+                calls: Rc::clone(&calls),
+            };
+            let mut clock = OwnerClock::new();
+
+            process_input_step(
+                input(MouseEvent::MouseMove, Point::new(4, 5), 6),
+                &mut clock,
+                &mut context,
+                &mut consumer,
+                fake_input_step_functions(),
+            );
+
+            assert_eq!(*calls.borrow(), expected);
+        }
+    }
+
+    #[test]
+    fn callback_queue_is_the_only_bridge_to_context_and_action_workers() {
+        let state = TapState::with_marker(41);
+        reset_callback_reads(42);
+        let worker_calls = Rc::new(RefCell::new(Vec::new()));
+        let mut context = FakeContextWorker {
+            calls: Rc::clone(&worker_calls),
+        };
+        let mut consumer = FakeInputConsumer {
+            route: ContextRoute::Observe,
+            calls: Rc::clone(&worker_calls),
+        };
+        let mut clock = OwnerClock::new();
+
+        unsafe {
+            capture_callback_event(
+                &state,
+                EVENT_MOUSE_MOVED,
+                std::ptr::null_mut(),
+                record_callback_marker,
+                record_callback_raw,
+            );
+        }
+        assert!(worker_calls.borrow().is_empty());
+
+        state.drain(|input| {
+            process_input_step(
+                input,
+                &mut clock,
+                &mut context,
+                &mut consumer,
+                fake_input_step_functions(),
+            );
+        });
+        assert_eq!(
+            *worker_calls.borrow(),
+            [
+                InputStepCall::Route,
+                InputStepCall::Needed(true),
+                InputStepCall::Observe,
+                InputStepCall::Latest,
+                InputStepCall::Consume(true),
+            ]
         );
     }
 
@@ -1114,75 +1392,17 @@ mod tests {
     }
 
     #[test]
-    fn resident_owner_connects_context_only_after_callback_queue() {
-        let macos_source = include_str!("macos.rs")
-            .split("mod tests {")
-            .next()
-            .unwrap();
-        let bootstrap_source = include_str!("mod.rs");
-
-        assert!(macos_source.contains("ContextWorker::spawn(reader.clone())"));
-        assert!(macos_source.contains("MacosActionExecutor::spawn(marker)"));
-        assert!(macos_source.contains("context.observe(input.event"));
-        assert!(macos_source.contains("context.latest(input.point, tick)"));
-        assert!(bootstrap_source.contains("run_loop_macos(reader"));
-    }
-
-    #[test]
-    fn callback_remains_isolated_from_context_and_action_workers() {
-        let source = include_str!("macos.rs");
-        let callback_source = source
-            .split("unsafe extern \"C\" fn event_tap_callback")
-            .nth(1)
-            .unwrap()
-            .split("fn normalize_event")
-            .next()
-            .unwrap();
-
-        assert!(!callback_source.contains("ContextWorker"));
-        assert!(!callback_source.contains("context.observe"));
-        assert!(!callback_source.contains("MacosActionExecutor"));
-    }
-
-    #[test]
-    fn production_context_observation_is_limited_to_action_routing_events() {
-        assert!(observes_event(MouseEvent::MouseMove));
-        assert!(observes_event(MouseEvent::ButtonDown(
-            DomainTriggerButton::Right
-        )));
-        assert!(!observes_event(MouseEvent::ButtonUp(
-            DomainTriggerButton::Right
-        )));
-        assert!(!observes_event(MouseEvent::WheelUp(1)));
-        assert!(!observes_event(MouseEvent::WheelDown(1)));
-        assert!(!observes_event(MouseEvent::Other));
-
-        let source = include_str!("macos.rs");
-        let drain = source
-            .split("fn drain_input(")
-            .nth(1)
-            .unwrap()
-            .split("#[cfg(target_os = \"macos\")]")
-            .next()
-            .unwrap();
-        assert!(drain.contains("if observes_event(input.event)"));
-        assert!(drain.contains("context.observe(input.event"));
-    }
-
-    #[test]
     fn process_marker_is_copied_before_tap_install_and_executor_spawn() {
-        let source = include_str!("macos.rs")
-            .split("mod tests {")
-            .next()
-            .unwrap();
-        let marker = source.find("process_instance_marker()").unwrap();
-        let callback_state = source.find("TapState::with_marker(marker)").unwrap();
-        let tap_install = source.find("start_event_tap(state.as_ref())").unwrap();
-        let executor = source.find("MacosActionExecutor::spawn(marker)").unwrap();
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        let tap_calls = Rc::clone(&calls);
+        let (state, ()) = prepare_marked_state(41, move |state| {
+            tap_calls.borrow_mut().push(("tap", state.marker));
+        });
+        calls
+            .borrow_mut()
+            .push(("executor", executor_marker(&state)));
 
-        assert!(marker < callback_state);
-        assert!(callback_state < tap_install);
-        assert!(tap_install < executor);
+        assert_eq!(*calls.borrow(), [("tap", 41), ("executor", 41)]);
     }
 
     #[test]

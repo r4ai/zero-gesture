@@ -21,6 +21,14 @@ pub(super) struct ContextView {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(any(target_os = "macos", test))]
+pub(super) enum ContextRoute {
+    Inactive,
+    Cached,
+    Observe,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ActionWork {
     Activate {
         session: SessionId,
@@ -175,6 +183,33 @@ impl NativeInputOwner {
 
     pub(super) fn set_context(&mut self, context: Option<ContextView>) {
         self.context = context;
+    }
+
+    #[cfg(any(target_os = "macos", test))]
+    pub(super) fn context_route(&mut self, event: MouseEvent) -> ContextRoute {
+        let active = self
+            .kernel
+            .as_ref()
+            .and_then(InputKernel::pinned_generation)
+            .is_some();
+        if !active {
+            self.refresh_config();
+        }
+        let Some(runtime) = self.current_runtime.as_ref() else {
+            return ContextRoute::Inactive;
+        };
+        if !runtime.enabled || !runtime.gesture.has_any_binding() {
+            return ContextRoute::Inactive;
+        }
+        match event {
+            MouseEvent::MouseMove => ContextRoute::Observe,
+            MouseEvent::ButtonDown(trigger)
+                if runtime.gesture.has_any_binding_for_trigger(trigger) =>
+            {
+                ContextRoute::Observe
+            }
+            _ => ContextRoute::Cached,
+        }
     }
 
     pub(super) fn callback(&mut self, event: MouseEvent, point: Point, tick: u32) -> Disposition {
@@ -539,6 +574,44 @@ mod tests {
             )
             .unwrap()
             .generation
+    }
+
+    #[test]
+    fn context_route_observes_only_enabled_relevant_bindings() {
+        let (_directory, mut writer, mut owner) = setup();
+
+        assert_eq!(
+            owner.context_route(MouseEvent::MouseMove),
+            ContextRoute::Observe
+        );
+        assert_eq!(
+            owner.context_route(MouseEvent::ButtonDown(TriggerButton::Right)),
+            ContextRoute::Observe
+        );
+        assert_eq!(
+            owner.context_route(MouseEvent::ButtonDown(TriggerButton::Left)),
+            ContextRoute::Cached
+        );
+        assert_eq!(
+            owner.context_route(MouseEvent::ButtonUp(TriggerButton::Right)),
+            ContextRoute::Cached
+        );
+
+        let mut disabled = ConfigDocument::default();
+        disabled.shared.enabled = false;
+        publish(&mut writer, 1, &disabled);
+        assert_eq!(
+            owner.context_route(MouseEvent::MouseMove),
+            ContextRoute::Inactive
+        );
+
+        let mut bindingless = ConfigDocument::default();
+        bindingless.bindings.clear();
+        publish(&mut writer, 2, &bindingless);
+        assert_eq!(
+            owner.context_route(MouseEvent::MouseMove),
+            ContextRoute::Inactive
+        );
     }
 
     #[test]

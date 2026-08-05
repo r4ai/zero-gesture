@@ -525,23 +525,52 @@ mod tests {
         );
 
         let calls = CALLS.with(|calls| calls.borrow().clone());
+        let posts = calls
+            .iter()
+            .enumerate()
+            .filter_map(|(index, call)| match call {
+                RecordedCall::Post(SESSION_EVENT_TAP, event_id) => Some((index, *event_id)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(posts.len(), 4);
         assert_eq!(
+            posts
+                .iter()
+                .map(|(_, event_id)| *event_id)
+                .collect::<Vec<_>>(),
             calls
                 .iter()
-                .filter(|call| matches!(
-                    call,
-                    RecordedCall::Tag(_, EVENT_FIELD_SOURCE_USER_DATA, 0x1234)
-                ))
-                .count(),
-            4
+                .filter_map(|call| match call {
+                    RecordedCall::Create(_, _, event_id) => Some(*event_id),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
         );
-        assert_eq!(
-            calls
+
+        for (post_index, event_id) in posts {
+            let tags = calls
                 .iter()
-                .filter(|call| matches!(call, RecordedCall::Post(SESSION_EVENT_TAP, _)))
-                .count(),
-            4
-        );
+                .enumerate()
+                .filter_map(|(index, call)| match call {
+                    RecordedCall::Tag(tagged_event_id, EVENT_FIELD_SOURCE_USER_DATA, 0x1234)
+                        if *tagged_event_id == event_id =>
+                    {
+                        Some(index)
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                tags.len(),
+                1,
+                "event {event_id} must be tagged exactly once"
+            );
+            assert!(
+                tags[0] < post_index,
+                "event {event_id} must be tagged before it is posted"
+            );
+        }
     }
 
     #[test]

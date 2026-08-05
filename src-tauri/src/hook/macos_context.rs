@@ -283,6 +283,8 @@ pub(super) struct ContextWorker {
     preflight_complete: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
     last_request_tick: Option<u32>,
+    needed: bool,
+    awaiting_snapshot: bool,
 }
 
 impl ContextWorker {
@@ -339,10 +341,24 @@ impl ContextWorker {
             preflight_complete,
             handle: Some(handle),
             last_request_tick: None,
+            needed: true,
+            awaiting_snapshot: false,
         })
     }
 
+    pub(super) fn set_needed(&mut self, needed: bool) {
+        if self.needed == needed {
+            return;
+        }
+        self.needed = needed;
+        self.last_request_tick = None;
+        self.awaiting_snapshot = true;
+    }
+
     pub(super) fn observe(&mut self, event: MouseEvent, point: Point, timestamp_ns: u64) {
+        if !self.needed {
+            return;
+        }
         let tick = (timestamp_ns / 1_000_000) as u32;
         if request_due(self.last_request_tick, event, tick) {
             self.requests.publish(ContextRequest { point, tick });
@@ -350,10 +366,22 @@ impl ContextWorker {
         }
     }
 
-    pub(super) fn latest(&self, point: Point, tick: u32) -> Option<ContextView> {
-        self.snapshots
+    pub(super) fn latest(&mut self, point: Point, tick: u32) -> Option<ContextView> {
+        if !self.needed {
+            return None;
+        }
+        let current = self
+            .snapshots
             .latest(point, tick)
-            .map(|context| context.view)
+            .map(|context| context.view);
+        if self.awaiting_snapshot {
+            let current =
+                current.filter(|context| self.last_request_tick == Some(context.updated_tick));
+            self.awaiting_snapshot = current.is_none();
+            current
+        } else {
+            current
+        }
     }
 
     pub(super) fn shutdown(self) {}
@@ -449,10 +477,6 @@ fn request_due(last_tick: Option<u32>, event: MouseEvent, tick: u32) -> bool {
         | MouseEvent::WheelDown(_)
         | MouseEvent::Other => false,
     }
-}
-
-pub(super) fn observes_event(event: MouseEvent) -> bool {
-    matches!(event, MouseEvent::ButtonDown(_) | MouseEvent::MouseMove)
 }
 
 fn pack_point(point: Point) -> u64 {
@@ -1352,13 +1376,7 @@ mod tests {
     }
 
     #[test]
-    fn only_mouse_move_and_button_down_submit_context_requests() {
-        assert!(observes_event(MouseEvent::MouseMove));
-        assert!(observes_event(MouseEvent::ButtonDown(TriggerButton::Right)));
-        assert!(!observes_event(MouseEvent::ButtonUp(TriggerButton::Right)));
-        assert!(!observes_event(MouseEvent::WheelUp(1)));
-        assert!(!observes_event(MouseEvent::WheelDown(1)));
-        assert!(!observes_event(MouseEvent::Other));
+    fn mouse_move_is_rate_limited_button_down_is_immediate_and_other_events_are_rejected() {
         assert!(request_due(None, MouseEvent::MouseMove, 1_000));
         assert!(!request_due(Some(1_000), MouseEvent::MouseMove, 1_024));
         assert!(request_due(Some(1_000), MouseEvent::MouseMove, 1_025));
@@ -1423,6 +1441,29 @@ mod tests {
         );
 
         assert!(mailbox.latest(Point::new(1, 2), 20).is_none());
+    }
+
+    #[test]
+    fn context_need_transition_invalidates_the_latest_snapshot() {
+        let (_directory, reader) = reader();
+        let mut worker = ContextWorker::spawn_with(reader, allowed, fake_resolver).unwrap();
+        let point = Point::new(12, 34);
+        worker.observe(MouseEvent::MouseMove, point, 25_000_000);
+        assert!(wait_until(Duration::from_millis(200), || {
+            worker.latest(point, 25).is_some()
+        }));
+
+        worker.set_needed(false);
+        assert!(worker.latest(point, 25).is_none());
+        worker.set_needed(true);
+        assert!(worker.latest(point, 25).is_none());
+
+        let next_point = Point::new(13, 35);
+        worker.observe(MouseEvent::MouseMove, next_point, 26_000_000);
+        assert!(wait_until(Duration::from_millis(200), || {
+            worker.latest(next_point, 26).is_some()
+        }));
+        worker.shutdown();
     }
 
     #[test]

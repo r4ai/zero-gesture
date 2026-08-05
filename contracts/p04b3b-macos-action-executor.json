@@ -86,17 +86,17 @@
     },
     {
       "id": "P04B3B-CONTEXT-001",
-      "obligation": "The resident run-loop starts the context and action workers and consumes context only after the callback queue.",
+      "obligation": "The production input step evaluates context need, conditionally observes and reads context, then invokes the existing consumer in that order.",
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/hook/macos.rs",
-      "evidence_name": "resident_owner_connects_context_only_after_callback_queue"
+      "evidence_name": "production_input_step_orders_and_gates_context_before_consumer"
     },
     {
       "id": "P04B3B-CONTEXT-002",
-      "obligation": "Production context observation submits only mouse movement and button-down events needed for action routing.",
+      "obligation": "Production context observation is inactive for disabled or bindingless configuration and submits mouse movement or only a button-down with a relevant binding.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos.rs",
-      "evidence_name": "production_context_observation_is_limited_to_action_routing_events"
+      "evidence_file": "src-tauri/src/hook/owner.rs",
+      "evidence_name": "context_route_observes_only_enabled_relevant_bindings"
     },
     {
       "id": "P04B3B-CONTEXT-003",
@@ -111,6 +111,13 @@
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/hook/macos.rs",
       "evidence_name": "unknown_or_stale_context_never_dispatches_a_macos_action"
+    },
+    {
+      "id": "P04B3B-CONTEXT-005",
+      "obligation": "A transition to context-not-needed invalidates the latest snapshot, and re-enabling begins from Unknown.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_name": "context_need_transition_invalidates_the_latest_snapshot"
     }
   ]
 }

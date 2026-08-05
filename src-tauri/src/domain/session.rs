@@ -112,8 +112,15 @@ pub(crate) struct GestureConfig {
 }
 
 impl GestureConfig {
-    #[cfg(test)]
-    fn has_any_binding_for_trigger(&self, trigger: TriggerButton) -> bool {
+    #[cfg(any(target_os = "macos", test))]
+    pub(crate) fn has_any_binding(&self) -> bool {
+        self.binding_sets
+            .iter()
+            .any(|set| !set.release_bindings.is_empty() || !set.hold_bindings.is_empty())
+    }
+
+    #[cfg(any(target_os = "macos", test))]
+    pub(crate) fn has_any_binding_for_trigger(&self, trigger: TriggerButton) -> bool {
         self.binding_sets.iter().any(|set| {
             set.release_bindings
                 .iter()

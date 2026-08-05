@@ -16,10 +16,10 @@
     },
     {
       "id": "P04B3A-ISOLATION-002",
-      "obligation": "The Event Tap callback has no direct context or action-worker reference after the P04b3b run-loop consumer is connected.",
+      "obligation": "The Event Tap callback reaches context and action workers only after foreign input crosses the normalized queue into the production owner step.",
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/hook/macos.rs",
-      "evidence_name": "callback_remains_isolated_from_context_and_action_workers"
+      "evidence_name": "callback_queue_is_the_only_bridge_to_context_and_action_workers"
     },
     {
       "id": "P04B3A-REQUEST-001",
@@ -30,10 +30,10 @@
     },
     {
       "id": "P04B3A-REQUEST-002",
-      "obligation": "The dormant request seam accepts button-down immediately, rate-limits only mouse movement, and rejects button-up, wheel, and other events.",
+      "obligation": "The request cadence seam accepts button-down immediately, rate-limits only mouse movement, and rejects button-up, wheel, and other events.",
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/hook/macos_context.rs",
-      "evidence_name": "only_mouse_move_and_button_down_submit_context_requests"
+      "evidence_name": "mouse_move_is_rate_limited_button_down_is_immediate_and_other_events_are_rejected"
     },
     {
       "id": "P04B3A-REQUEST-003",

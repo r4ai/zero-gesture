@@ -114,9 +114,13 @@ listen-only通過を維持する。
 
 P04b3bではrun-loop consumerが初めて`ConfigSnapshotReader`を保持し、
 `ContextWorker`をproduction起動する。Event Tap callbackはresolverやexecutorを
-参照せず、run-loop側だけがMouseMoveを25 ms rate limit、ButtonDownを即時で
-contextへobserveし、exact pointかつ100 ms以内のsnapshotを`NativeInputOwner`
-へ渡す。Unknown/stale/wrong generationではgesture/actionを開始しない。
+参照せず、run-loop側だけが既存owner/runtimeからcontext必要性を判定する。
+enabledかつbindingありの場合に限りMouseMoveを25 ms rate limitでobserveし、
+ButtonDownは該当trigger bindingがある場合だけ即時observeする。ButtonUp、
+wheel、無関係なButtonDownはqueryを起こさずcacheだけを保持する。disabled、
+bindingless、config unavailableへの遷移ではsnapshotをUnknownへinvalidateする。
+exact pointかつ100 ms以内のsnapshotだけを`NativeInputOwner`へ渡し、
+Unknown/stale/wrong generationではgesture/actionを開始しない。
 
 同じrun-loopは既存`InputKernel`のactivation-before-dispatchとgeneration pinを
 再利用し、actionを8件bounded FIFOで専用`macos-action` workerへnonblocking
