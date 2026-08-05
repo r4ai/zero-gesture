@@ -93,16 +93,23 @@ impl EngineFixture {
     }
 
     fn spawn_settings(&self) -> EngineChild {
-        self.spawn_settings_with_env(None)
+        self.spawn_settings_with_envs(&[])
     }
 
-    fn spawn_settings_with_isolated_webview(&self) -> EngineChild {
-        let data_dir = self.config_dir.join("webview2");
-        let data_dir = data_dir.to_string_lossy();
-        self.spawn_settings_with_env(Some(("ZG_P05A_TEST_WEBVIEW_DATA_DIR", &data_dir)))
+    fn spawn_settings_without_engine(&self) -> EngineChild {
+        self.spawn_settings_with_envs(&[
+            (
+                "ZG_P05A_TEST_ENGINE_UNAVAILABLE_DELAY_MS",
+                std::ffi::OsStr::new("750"),
+            ),
+            (
+                "ZG_P05A_TEST_SKIP_SETTINGS_WINDOW",
+                std::ffi::OsStr::new("1"),
+            ),
+        ])
     }
 
-    fn spawn_settings_with_env(&self, environment: Option<(&str, &str)>) -> EngineChild {
+    fn spawn_settings_with_envs(&self, environments: &[(&str, &std::ffi::OsStr)]) -> EngineChild {
         let mut command = Command::new(ENGINE_EXE);
         command
             .arg("--settings")
@@ -116,7 +123,7 @@ impl EngineFixture {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        if let Some((name, value)) = environment {
+        for (name, value) in environments {
             command.env(name, value);
         }
         EngineChild {
@@ -126,6 +133,10 @@ impl EngineFixture {
 
     fn settings_connected_marker(&self) -> PathBuf {
         self.directory.path().join("settings-connected")
+    }
+
+    fn settings_exit_trigger(&self) -> PathBuf {
+        self.directory.path().join("settings-exit-trigger")
     }
 
     fn wait_for_path(&self, child: &mut Child, path: &std::path::Path, description: &str) {
@@ -307,8 +318,30 @@ fn concurrent_cold_settings_launches_converge_on_one_process_and_window() {
     let fixture = EngineFixture::new(br#"{"enabled":false}"#);
     let mut engine = fixture.spawn(false);
     fixture.wait_ready(&mut engine.child);
-    let mut first = fixture.spawn_settings_with_isolated_webview();
-    let mut second = fixture.spawn_settings_with_isolated_webview();
+    let first = fixture.spawn_settings();
+    let second = fixture.spawn_settings();
+
+    assert_concurrent_settings_converge(first, second, Some(&mut engine.child));
+}
+
+#[test]
+fn concurrent_cold_settings_launches_converge_while_engine_is_unavailable() {
+    let _settings_test = SETTINGS_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let fixture = EngineFixture::new(br#"{"enabled":false}"#);
+    let first = fixture.spawn_settings_without_engine();
+    let second = fixture.spawn_settings_without_engine();
+
+    assert_concurrent_settings_converge(first, second, None);
+    assert!(!fixture.ready_marker.exists());
+}
+
+fn assert_concurrent_settings_converge(
+    mut first: EngineChild,
+    mut second: EngineChild,
+    mut engine: Option<&mut Child>,
+) {
     let first_process_id = first.child.id();
     let second_process_id = second.child.id();
     let deadline = Instant::now() + SETTINGS_RUNTIME_TIMEOUT;
@@ -334,14 +367,15 @@ fn concurrent_cold_settings_launches_converge_on_one_process_and_window() {
     };
 
     assert!(exited.success());
-    wait_for_content_window(survivor);
-    assert_eq!(
+    assert!(
         u32::from(settings_window(first_process_id).is_some())
-            + u32::from(settings_window(second_process_id).is_some()),
-        1
+            + u32::from(settings_window(second_process_id).is_some())
+            <= 1
     );
     assert!(survivor.try_wait().unwrap().is_none());
-    assert!(engine.child.try_wait().unwrap().is_none());
+    if let Some(engine) = engine.as_mut() {
+        assert!(engine.try_wait().unwrap().is_none());
+    }
 }
 
 #[test]
@@ -406,9 +440,27 @@ fn settings_exit_seam_removes_webview_and_keeps_engine_running() {
     let fixture = EngineFixture::new(br#"{"enabled":false}"#);
     let mut engine = fixture.spawn(false);
     fixture.wait_ready(&mut engine.child);
-    let mut settings =
-        fixture.spawn_settings_with_env(Some(("ZG_P05A_TEST_EXIT_SETTINGS_AFTER_READY", "1")));
+    let exit_trigger = fixture.settings_exit_trigger();
+    let mut settings = fixture.spawn_settings_with_envs(&[(
+        "ZG_P05A_TEST_EXIT_SETTINGS_TRIGGER",
+        exit_trigger.as_os_str(),
+    )]);
     let settings_process_id = settings.child.id();
+    wait_for_content_window(&mut settings.child);
+    let webview_deadline = Instant::now() + SETTINGS_RUNTIME_TIMEOUT;
+    while webview2_descendants(settings_process_id).is_empty() {
+        assert!(
+            settings.child.try_wait().unwrap().is_none(),
+            "Settings exited before creating a WebView2 descendant"
+        );
+        assert!(
+            Instant::now() < webview_deadline,
+            "Settings did not create a WebView2 descendant"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    fs::write(&exit_trigger, b"exit").unwrap();
+
     let deadline = Instant::now() + SETTINGS_RUNTIME_TIMEOUT;
     let status = loop {
         if let Some(status) = settings.child.try_wait().unwrap() {

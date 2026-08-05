@@ -269,18 +269,89 @@ pub(super) struct LaunchLock {
     handle: OwnedHandle,
 }
 
-pub(crate) struct SettingsLaunchLock {
-    _lock: LaunchLock,
+pub(crate) struct SettingsLaunchGate {
+    release: Option<std::sync::mpsc::SyncSender<()>>,
+    owner: Option<std::thread::JoinHandle<()>>,
 }
 
-pub(crate) fn acquire_settings_launch_lock(
+pub(crate) fn acquire_settings_launch_gate(
     timeout: Duration,
-) -> Result<SettingsLaunchLock, ControlError> {
-    let sid = current_user_sid()?;
-    let security = SecurityDescriptor::for_sid(&sid)?;
-    let name = wide(format!("{SETTINGS_LAUNCH_MUTEX_PREFIX}.{sid}"));
-    let lock = LaunchLock::acquire(&name, &security, Instant::now() + timeout)?;
-    Ok(SettingsLaunchLock { _lock: lock })
+) -> Result<SettingsLaunchGate, ControlError> {
+    let (acquired_tx, acquired_rx) = std::sync::mpsc::sync_channel(1);
+    let (release_tx, release_rx) = std::sync::mpsc::sync_channel(1);
+    let owner = std::thread::Builder::new()
+        .name("settings-launch-gate".to_string())
+        .spawn(move || {
+            let acquired = current_user_sid().and_then(|sid| {
+                let security = SecurityDescriptor::for_sid(&sid)?;
+                let name = wide(format!("{SETTINGS_LAUNCH_MUTEX_PREFIX}.{sid}"));
+                LaunchLock::acquire(&name, &security, Instant::now() + timeout)
+            });
+            match acquired {
+                Ok(lock) => {
+                    if acquired_tx.send(Ok(())).is_ok() {
+                        let _ = release_rx.recv();
+                    }
+                    drop(lock);
+                }
+                Err(error) => {
+                    let _ = acquired_tx.send(Err(error));
+                }
+            }
+        })
+        .map_err(ControlError::Io)?;
+    match acquired_rx.recv_timeout(timeout + Duration::from_secs(1)) {
+        Ok(Ok(())) => Ok(SettingsLaunchGate {
+            release: Some(release_tx),
+            owner: Some(owner),
+        }),
+        Ok(Err(error)) => {
+            let _ = owner.join();
+            Err(error)
+        }
+        Err(error) => {
+            drop(release_tx);
+            let _ = owner.join();
+            Err(ControlError::Io(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("Settings launch gate acquisition failed: {error}"),
+            )))
+        }
+    }
+}
+
+impl SettingsLaunchGate {
+    pub(crate) fn release(mut self) -> Result<(), ControlError> {
+        let release = self.release.take().ok_or_else(|| {
+            ControlError::Io(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "Settings launch gate release channel is unavailable",
+            ))
+        })?;
+        release.send(()).map_err(|error| {
+            ControlError::Io(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                format!("Settings launch gate owner stopped: {error}"),
+            ))
+        })?;
+        if let Some(owner) = self.owner.take() {
+            owner.join().map_err(|_| {
+                ControlError::Io(io::Error::other("Settings launch gate owner panicked"))
+            })?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for SettingsLaunchGate {
+    fn drop(&mut self) {
+        if let Some(release) = self.release.take() {
+            let _ = release.try_send(());
+        }
+        if let Some(owner) = self.owner.take() {
+            let _ = owner.join();
+        }
+    }
 }
 
 impl LaunchLock {

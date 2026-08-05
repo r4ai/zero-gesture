@@ -9,7 +9,7 @@ mod windows;
 #[cfg(windows)]
 use windows as platform;
 #[cfg(windows)]
-pub(crate) use windows::{acquire_settings_launch_lock, SettingsLaunchLock};
+pub(crate) use windows::{acquire_settings_launch_gate, SettingsLaunchGate};
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(any(windows, target_os = "macos"))]

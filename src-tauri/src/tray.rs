@@ -73,7 +73,13 @@ pub fn setup<R: Runtime>(app: &mut App<R>, enabled: bool) -> tauri::Result<()> {
             }
             MENU_QUIT => {
                 let runtime = app.state::<crate::ThreadRuntime>();
-                if let Err(error) = quit_engine_with(|| runtime.shutdown(), || app.exit(0)) {
+                if let Err(error) = quit_engine_with(|effect| match effect {
+                    EngineQuitEffect::StopWorkers => runtime.shutdown(),
+                    EngineQuitEffect::Exit => {
+                        app.exit(0);
+                        Ok(())
+                    }
+                }) {
                     warn!("failed to stop Engine workers: {error}");
                 }
             }
@@ -122,7 +128,13 @@ pub fn setup_macos_packaging_spike<R: Runtime>(app: &mut App<R>) -> tauri::Resul
             }
             MENU_QUIT => {
                 let runtime = app.state::<crate::ThreadRuntime>();
-                if let Err(error) = quit_engine_with(|| runtime.shutdown(), || app.exit(0)) {
+                if let Err(error) = quit_engine_with(|effect| match effect {
+                    EngineQuitEffect::StopWorkers => runtime.shutdown(),
+                    EngineQuitEffect::Exit => {
+                        app.exit(0);
+                        Ok(())
+                    }
+                }) {
                     warn!("failed to stop macOS packaging-spike Engine: {error}");
                 }
             }
@@ -165,13 +177,22 @@ fn spawn_settings_process_with<E>(
     spawn(executable, "--settings")
 }
 
-fn quit_engine_with<E>(
-    shutdown: impl FnOnce() -> Result<(), E>,
-    exit: impl FnOnce(),
-) -> Result<(), E> {
-    let result = shutdown();
-    exit();
-    result
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EngineQuitEffect {
+    StopWorkers,
+    Exit,
+}
+
+const ENGINE_QUIT_EFFECTS: [EngineQuitEffect; 2] =
+    [EngineQuitEffect::StopWorkers, EngineQuitEffect::Exit];
+
+fn quit_engine_with<E>(mut apply: impl FnMut(EngineQuitEffect) -> Result<(), E>) -> Result<(), E> {
+    let shutdown = apply(ENGINE_QUIT_EFFECTS[0]);
+    let exit = apply(ENGINE_QUIT_EFFECTS[1]);
+    match shutdown {
+        Ok(()) => exit,
+        Err(error) => Err(error),
+    }
 }
 
 fn exit_settings_if_requested(close_requested: bool, exit: impl FnOnce()) {
@@ -267,12 +288,6 @@ pub fn show_settings_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()>
     let builder = tauri::WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
         .title("Zero Gesture")
         .inner_size(800.0, 600.0);
-    #[cfg(all(windows, debug_assertions))]
-    let builder = if let Some(data_dir) = std::env::var_os("ZG_P05A_TEST_WEBVIEW_DATA_DIR") {
-        builder.data_directory(std::path::PathBuf::from(data_dir))
-    } else {
-        builder
-    };
     let window = builder.build()?;
 
     #[cfg(windows)]
@@ -397,29 +412,26 @@ mod tests {
 
     #[test]
     fn engine_quit_stops_workers_before_process_exit() {
-        let events = Arc::new(Mutex::new(Vec::new()));
-        let shutdown_events = Arc::clone(&events);
-        let exit_events = Arc::clone(&events);
+        let mut effects = Vec::new();
 
-        quit_engine_with(
-            move || {
-                shutdown_events.lock().unwrap().push("shutdown");
-                Ok::<(), ()>(())
-            },
-            move || exit_events.lock().unwrap().push("exit"),
-        )
+        quit_engine_with(|effect| {
+            effects.push(effect);
+            Ok::<(), ()>(())
+        })
         .unwrap();
 
-        assert_eq!(*events.lock().unwrap(), vec!["shutdown", "exit"]);
+        assert_eq!(
+            effects,
+            vec![EngineQuitEffect::StopWorkers, EngineQuitEffect::Exit]
+        );
     }
 
     #[test]
-    fn engine_quit_has_no_autostart_mutation_capability() {
-        let autostart_enabled = std::cell::Cell::new(true);
-
-        quit_engine_with(|| Ok::<(), ()>(()), || {}).unwrap();
-
-        assert!(autostart_enabled.get());
+    fn engine_quit_effect_inventory_excludes_autostart_mutation() {
+        assert_eq!(
+            ENGINE_QUIT_EFFECTS,
+            [EngineQuitEffect::StopWorkers, EngineQuitEffect::Exit]
+        );
     }
 
     #[test]

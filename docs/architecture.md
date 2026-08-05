@@ -85,9 +85,14 @@ window/WebView2を作らない。SettingsはEngineと共存し、必要時だけ
 Settings builderだけがTauriのautostart pluginとsingle-instance pluginを登録する。
 Settingsの成功したsetupは同一exeの`--engine` login起動をenableし、current-user
 Run valueを`"absolute executable path" --engine`へ補正してexact readbackする。
-同時cold launchはTauri build前のbounded current-user launch mutexで直列化し、
-plugin receiver作成前の競合を防ぐ。二つ目のSettings起動はTauri/WebView2を作る前に
-既存receiverへbounded転送して終了し、既存windowをshow/unminimize/focusする。
+pluginと補正backendは同じpackage-derived value nameを使い、変更前のRun/
+StartupApprovedをquery/set-value権限だけでsnapshotする。enable/rewrite/read/
+mismatch失敗は両valueを元へ戻す。同時cold launchはSettings専用の短命owner
+threadがTauri build前から`RunEvent::Ready`まで保持するbounded current-user
+launch mutexで直列化する。mainとの同期は容量1のacquired/release channelだけで、
+mutexは同じowner threadがreleaseする。二つ目のSettings起動はTauri/WebView2を
+作る前に既存receiverへbounded転送して終了し、既存windowを
+show/unminimize/focusする。
 close中にplugin mutexだけが残る場合は新規Settingsを作らずfail closedする。
 Settings windowを閉じるとSettings
 processとWebView2は終了するが、Engine、hook、IPCは継続する。Engine trayの

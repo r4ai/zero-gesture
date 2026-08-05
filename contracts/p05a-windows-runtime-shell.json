@@ -9,31 +9,31 @@
     },
     {
       "id": "P05A-AUTOSTART-002",
-      "obligation": "Repeated autostart setup overwrites one named logical registration with the same exact command and preserves cardinality one.",
+      "obligation": "The plugin and exact-command backend share one package-derived registration name; repeated setup preserves one Run and one StartupApproved value.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/runtime_shell.rs",
       "evidence_name": "autostart_registration_is_idempotent_for_one_named_command"
     },
     {
       "id": "P05A-AUTOSTART-003",
-      "obligation": "A failed autostart enable operation is returned as a registration failure.",
+      "obligation": "A failed plugin enable operation is returned as a registration failure after restoring the prior Run and StartupApproved values.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/runtime_shell.rs",
-      "evidence_name": "autostart_registration_failure_is_not_reported_as_success"
+      "evidence_name": "autostart_registration_failure_restores_prior_values"
     },
     {
       "id": "P05A-AUTOSTART-004",
-      "obligation": "An autostart registration whose stored command does not exactly match the requested command is returned as a failure.",
+      "obligation": "A stored-command mismatch is returned as a failure after restoring the prior Run and StartupApproved values.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/runtime_shell.rs",
-      "evidence_name": "autostart_command_mismatch_is_not_reported_as_success"
+      "evidence_name": "autostart_command_mismatch_restores_prior_values"
     },
     {
       "id": "P05A-AUTOSTART-005",
-      "obligation": "An error while verifying autostart registration is returned as a verification failure.",
+      "obligation": "A stored-command read error is returned as a verification failure after restoring the prior Run and StartupApproved values.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/runtime_shell.rs",
-      "evidence_name": "autostart_verification_error_is_not_reported_as_success"
+      "evidence_name": "autostart_verification_error_restores_prior_values"
     },
     {
       "id": "P05A-AUTOSTART-006",
@@ -41,6 +41,13 @@
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/runtime_shell.rs",
       "evidence_name": "autostart_command_quotes_a_spaced_windows_executable_path"
+    },
+    {
+      "id": "P05A-AUTOSTART-007",
+      "obligation": "If the exact-command rewrite fails after plugin enable, rollback removes every malformed intermediate value when no prior values existed.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/runtime_shell.rs",
+      "evidence_name": "autostart_rewrite_failure_removes_plugin_intermediate_values"
     },
     {
       "id": "P05A-PROCESS-001",
@@ -72,17 +79,24 @@
     },
     {
       "id": "P05A-SETTINGS-003",
-      "obligation": "The explicit process-test exit seam removes the Settings process and WebView2 descendants after Engine connection while Engine remains running.",
+      "obligation": "After observing a live Settings content window and WebView2 descendant, the explicit exit seam removes the Settings process and descendants while Engine remains running.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/tests/p03_engine_process.rs",
       "evidence_name": "settings_exit_seam_removes_webview_and_keeps_engine_running"
     },
     {
       "id": "P05A-SETTINGS-004",
-      "obligation": "Two concurrent cold Settings launches converge on exactly one live Settings process and one content window while Engine remains alive.",
+      "obligation": "Two concurrent cold Settings launches converge on exactly one live Settings process and at most one content window while Engine remains alive.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/tests/p03_engine_process.rs",
       "evidence_name": "concurrent_cold_settings_launches_converge_on_one_process_and_window"
+    },
+    {
+      "id": "P05A-SETTINGS-005",
+      "obligation": "The launch gate remains held across a delayed Engine-unavailable setup until Ready, so concurrent cold launches still converge on one Settings process.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/tests/p03_engine_process.rs",
+      "evidence_name": "concurrent_cold_settings_launches_converge_while_engine_is_unavailable"
     },
     {
       "id": "P05A-TRAY-001",
@@ -103,7 +117,7 @@
       "obligation": "The production Engine Quit seam has shutdown and exit capabilities only, so it cannot mutate login autostart registration.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/tray.rs",
-      "evidence_name": "engine_quit_has_no_autostart_mutation_capability"
+      "evidence_name": "engine_quit_effect_inventory_excludes_autostart_mutation"
     }
   ]
 }

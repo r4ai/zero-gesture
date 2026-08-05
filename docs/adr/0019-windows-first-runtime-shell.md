@@ -54,10 +54,14 @@ current executable with exactly `--engine`. The locked plugin backend does not
 quote a spaced executable path and its enabled check does not compare the
 stored command. Settings therefore overwrites that same current-user Run value
 with `"absolute executable path" --engine` and reads it back for exact equality.
-Repeated setup overwrites one named value, so logical registration cardinality
-stays one. Enable, write, read, and mismatch failures abort Settings setup.
-Debug process tests explicitly bypass OS registration; serializer and
-registration-map tests exercise the production leaf without writing HKCU.
+The plugin and correction backend receive the same package-derived registration
+name. Before enable, Settings snapshots both Run and StartupApproved values
+using only query/set-value access. Enable, rewrite, read, and mismatch failures
+restore or delete both values to their prior state; rollback failure is also a
+hard setup failure. Repeated setup therefore preserves one named Run and one
+StartupApproved value. Debug process tests explicitly bypass OS registration;
+serializer and failure-atomic registry-map tests exercise the production leaf
+without writing HKCU.
 
 The single-instance plugin is registered first and only in Settings mode.
 Consequently it cannot exclude Engine. A second Settings process forwards to
@@ -67,13 +71,17 @@ scheduling is initiated from a short-lived Settings activation thread so the
 callback can return before the main-thread task runs. No resident Engine
 thread or general process coordinator is introduced.
 
-The locked plugin creates its mutex before its hidden receiver window. Settings
-therefore acquires a bounded current-user launch mutex before building
-Tauri. While holding the gate, a later launch uses the plugin's bounded
-`WM_COPYDATA` receiver protocol directly and exits before constructing Tauri or
-WebView2. The primary releases the gate at app setup entry, after plugin setup
-has created its receiver and before Settings creates a WebView. The wait uses
-`WaitForSingleObject`, not polling, and is absent from Engine.
+The locked plugin creates its mutex before its hidden receiver window. A
+short-lived Settings-only gate-owner thread therefore acquires the bounded
+current-user launch mutex before main proceeds. It reports acquisition through
+a capacity-one channel and remains the mutex owner through Tauri build and
+setup. At `RunEvent::Ready`, main sends a capacity-one release signal; that
+same owner thread calls `ReleaseMutex` and exits. A later launch then acquires
+the gate, uses the plugin's bounded `WM_COPYDATA` receiver protocol, and exits
+before constructing Tauri or WebView2. Build/setup failure drops the gate or
+terminates its process, so a waiter recovers normally or through
+`WAIT_ABANDONED`. Timeouts and channel failures fail closed. The gate is absent
+from Engine and introduces no generic coordinator.
 If the plugin mutex exists without a receiver during close, the new launch
 fails closed instead of constructing a second Settings process.
 
@@ -90,20 +98,22 @@ run concurrently. Both use the same application config directory.
 
 ## Verification
 
-`contracts/p05a-windows-runtime-shell.json` maps fifteen detectable obligations
-to fifteen unique Cargo tests: `O = 15`, `O_v = 15`, `U = 0`, `T = 15`,
-`T_u = 10`, `T_i = 5`, and `T_e = 0`.
+`contracts/p05a-windows-runtime-shell.json` maps seventeen detectable
+obligations to seventeen unique Cargo tests: `O = 17`, `O_v = 17`, `U = 0`,
+`T = 17`, `T_u = 11`, `T_i = 6`, and `T_e = 0`.
 
 Deterministic tests cover the exact quoted autostart command for a spaced path,
-one-key registration cardinality, write/readback failures, repeated tray
-launch arguments, shutdown-before-exit ordering, and the Quit seam's lack of
-autostart capability. Actual Windows child-process tests prove Engine/Settings
-coexistence, Engine window/WebView2 zero while Settings is alive, simultaneous
-cold Settings launches converging on one process/window, second-Settings exit
-plus existing-window reactivation, and an explicit post-window-creation
-Settings exit seam plus Engine survival. The production CloseRequested-to-exit
-leaf is unit-tested; a real user close gesture remains an installed P05c
-acceptance gate.
+one package-derived registration name, failure-atomic rollback after every
+mutating stage, repeated tray launch arguments, shutdown-before-exit ordering,
+and the Quit effect inventory's lack of autostart mutation. Actual Windows
+child-process tests prove Engine/Settings coexistence, Engine window/WebView2
+zero while Settings is alive, simultaneous cold Settings launches converging
+on one process and at most one window, the same convergence across a delayed
+Engine-unavailable setup, second-Settings exit plus existing-window
+reactivation, and an explicit exit triggered only after observing a Settings
+window and WebView2 descendant. The production CloseRequested-to-exit leaf is
+unit-tested; a real user close gesture remains an installed P05c acceptance
+gate.
 
 The Windows gate runs formatting, lint, all Rust tests, rustdoc, the frontend,
 Tauri debug build, and every contract manifest. P05a may not increase the
