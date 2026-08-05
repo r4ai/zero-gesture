@@ -4,8 +4,10 @@ import { Download, FolderOpen, Upload } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel"
+import { useConfigDraft } from "@/contexts/config-draft"
 import { useConfig, useImportConfig } from "@/hooks/use-config"
 import { exportConfig, openConfigDir } from "@/lib/api"
+import { settingsErrorMessage } from "@/lib/settings-error"
 
 export const Route = createFileRoute("/advanced/")({
   component: AdvancedSettings,
@@ -18,6 +20,7 @@ export const Route = createFileRoute("/advanced/")({
 function AdvancedSettings() {
   const { data: observed } = useConfig()
   const { mutateAsync: importConfig } = useImportConfig()
+  const { adoptApplied } = useConfigDraft()
 
   const handleImportConfig = async () => {
     try {
@@ -32,15 +35,16 @@ function AdvancedSettings() {
       })
 
       if (filePath) {
-        await importConfig({
+        const result = await importConfig({
           filePath,
           expectedRevision: observed.revision,
         })
+        adoptApplied(result.current)
         toast.success("Config imported successfully")
       }
     } catch (error) {
       console.error("Failed to import config:", error)
-      toast.error("Failed to import config")
+      toast.error(settingsErrorMessage(error, "Import"))
     }
   }
 
@@ -63,7 +67,7 @@ function AdvancedSettings() {
       }
     } catch (error) {
       console.error("Failed to export config:", error)
-      toast.error("Failed to export config")
+      toast.error(settingsErrorMessage(error, "Export"))
     }
   }
 
@@ -72,7 +76,7 @@ function AdvancedSettings() {
       await openConfigDir()
     } catch (error) {
       console.error("Failed to open config folder:", error)
-      toast.error("Failed to open config folder")
+      toast.error(settingsErrorMessage(error, "Open config folder"))
     }
   }
 

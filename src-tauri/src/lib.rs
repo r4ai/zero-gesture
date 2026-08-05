@@ -39,6 +39,7 @@ pub struct ConfigDir(pub PathBuf);
 /// [`ThreadRuntime`] itself is stored as Tauri managed state so that, for
 /// example, the tray "Quit" handler can trigger a graceful shutdown.
 struct WorkerThreads {
+    capture: Arc<capture::WindowCapture>,
     hook_thread_tid: Arc<AtomicU32>,
     hook_stop: Arc<AtomicBool>,
     hook_handle: Option<JoinHandle<()>>,
@@ -78,20 +79,26 @@ impl std::error::Error for RuntimeProjectionError {}
 impl WorkerThreads {
     /// Spawns the single Windows input owner. Renderer generations are owned
     /// inside it and are created only outside the native callback.
-    fn spawn(reader: config::ConfigSnapshotReader) -> Result<Self, RuntimeProjectionError> {
+    fn spawn(
+        reader: config::ConfigSnapshotReader,
+        capture: Arc<capture::WindowCapture>,
+    ) -> Result<Self, RuntimeProjectionError> {
         #[cfg(debug_assertions)]
         if let Some(path) = std::env::var_os("ZG_P03_TEST_WORKER_START_MARKER") {
             std::fs::write(path, b"worker-started").map_err(RuntimeProjectionError::TestMarker)?;
         }
         info!("starting native input owner");
         let (hook_thread_tid, hook_stop, hook_handle, hook_events) =
-            hook::spawn(reader).map_err(|source| RuntimeProjectionError::WorkerSpawn {
-                worker: "hook",
-                source,
+            hook::spawn(reader, Arc::clone(&capture)).map_err(|source| {
+                RuntimeProjectionError::WorkerSpawn {
+                    worker: "hook",
+                    source,
+                }
             })?;
         info!("native input owner started");
 
         Ok(Self {
+            capture,
             hook_thread_tid,
             hook_stop,
             hook_handle: Some(hook_handle),
@@ -102,6 +109,7 @@ impl WorkerThreads {
     /// Sends shutdown signals to both background threads and waits for them.
     fn shutdown(&mut self) -> Result<(), RuntimeProjectionError> {
         info!("stopping worker threads");
+        self.capture.shutdown();
         self.hook_stop.store(true, Ordering::Release);
         // Post WM_QUIT to the hook thread's Win32 message loop.
         let tid = self.hook_thread_tid.load(Ordering::Acquire);
@@ -148,8 +156,11 @@ impl ThreadRuntime {
     /// Starts the native owner after IPC readiness and configuration
     /// publication have been established. Disabled or unavailable snapshots
     /// remain fail-open inside the owner without restarting it.
-    fn start(reader: config::ConfigSnapshotReader) -> Result<Self, RuntimeProjectionError> {
-        let initial_state = RuntimeState::Running(WorkerThreads::spawn(reader)?);
+    fn start(
+        reader: config::ConfigSnapshotReader,
+        capture: Arc<capture::WindowCapture>,
+    ) -> Result<Self, RuntimeProjectionError> {
+        let initial_state = RuntimeState::Running(WorkerThreads::spawn(reader, capture)?);
         Ok(Self {
             state: Mutex::new(initial_state),
         })
@@ -300,15 +311,6 @@ enum SettingsEngineState {
     Unavailable(String),
 }
 
-impl SettingsEngineState {
-    fn control(&self) -> Result<&ipc::EngineControl, String> {
-        match self {
-            Self::Connected(control) => Ok(control),
-            Self::Unavailable(message) => Err(message.clone()),
-        }
-    }
-}
-
 #[derive(serde::Serialize)]
 #[serde(rename_all = "kebab-case")]
 enum SettingsEngineErrorKind {
@@ -421,19 +423,20 @@ fn run_engine() -> Result<(), String> {
             let snapshot_reader = config_owner.reader();
             app.manage(engine_control);
             app.manage(ConfigDir(config_dir_path));
-            let thread_runtime = ThreadRuntime::start(snapshot_reader).map_err(|error| {
-                tauri::Error::Setup((Box::new(error) as Box<dyn std::error::Error>).into())
-            })?;
+            let capture = Arc::new(capture::WindowCapture::new());
+            let thread_runtime = ThreadRuntime::start(snapshot_reader, Arc::clone(&capture))
+                .map_err(|error| {
+                    tauri::Error::Setup((Box::new(error) as Box<dyn std::error::Error>).into())
+                })?;
             app.manage(thread_runtime);
             app.state::<ThreadRuntime>()
                 .monitor_owner(app.handle().clone())
                 .map_err(|error| {
                     tauri::Error::Setup((Box::new(error) as Box<dyn std::error::Error>).into())
                 })?;
-            app.manage(commands::CaptureState(std::sync::Mutex::new(None)));
             tray::setup(app, enabled)?;
 
-            start_engine_ipc(app, server, config_owner)?;
+            start_engine_ipc(app, server, config_owner, capture)?;
             #[cfg(debug_assertions)]
             if let Some(path) = std::env::var_os("ZG_P03_TEST_READY_MARKER") {
                 std::fs::write(path, b"engine-ready")?;
@@ -490,9 +493,11 @@ fn run_engine() -> Result<(), String> {
             let snapshot_reader = config_owner.reader();
             app.manage(engine_control);
             app.manage(ConfigDir(config_dir_path));
-            let thread_runtime = ThreadRuntime::start(snapshot_reader).map_err(|error| {
-                tauri::Error::Setup((Box::new(error) as Box<dyn std::error::Error>).into())
-            })?;
+            let capture = Arc::new(capture::WindowCapture::new());
+            let thread_runtime = ThreadRuntime::start(snapshot_reader, Arc::clone(&capture))
+                .map_err(|error| {
+                    tauri::Error::Setup((Box::new(error) as Box<dyn std::error::Error>).into())
+                })?;
             app.manage(thread_runtime);
             app.state::<ThreadRuntime>()
                 .monitor_owner(app.handle().clone())
@@ -505,7 +510,7 @@ fn run_engine() -> Result<(), String> {
                     io::Error::other("macOS Engine must not own a managed WebView window").into(),
                 );
             }
-            start_engine_ipc(app, server, config_owner)?;
+            start_engine_ipc(app, server, config_owner, capture)?;
             #[cfg(debug_assertions)]
             if let Some(path) = std::env::var_os("ZG_P03_TEST_READY_MARKER") {
                 std::fs::write(path, b"engine-ready")?;
@@ -564,6 +569,7 @@ fn start_engine_ipc(
     app: &mut tauri::App,
     server: ipc::EngineServer,
     config_owner: config::ConfigOwner,
+    capture: Arc<capture::WindowCapture>,
 ) -> tauri::Result<()> {
     let stop = Arc::new(AtomicBool::new(false));
     let server_stop = Arc::clone(&stop);
@@ -571,20 +577,27 @@ fn start_engine_ipc(
     let handle = thread::Builder::new()
         .name("engine-ipc".to_string())
         .spawn(move || {
-            let result = server.run(server_stop, config_owner, |active, _generation| {
-                let runtime = app_handle.try_state::<ThreadRuntime>().ok_or_else(|| {
-                    ipc::ControlError::projection("thread runtime state is unavailable")
-                })?;
-                runtime
-                    .observe_applied(active)
-                    .map_err(ipc::ControlError::projection)?;
-                #[cfg(windows)]
-                if let Err(error) = tray::schedule_toggle_menu_label(&app_handle, active.enabled())
-                {
-                    warn!("failed to schedule tray label reconciliation: {error}");
-                }
-                Ok(())
-            });
+            let result = server.run(
+                server_stop,
+                config_owner,
+                capture,
+                window_info::get_window_info_at_point,
+                |active, _generation| {
+                    let runtime = app_handle.try_state::<ThreadRuntime>().ok_or_else(|| {
+                        ipc::ControlError::projection("thread runtime state is unavailable")
+                    })?;
+                    runtime
+                        .observe_applied(active)
+                        .map_err(ipc::ControlError::projection)?;
+                    #[cfg(windows)]
+                    if let Err(error) =
+                        tray::schedule_toggle_menu_label(&app_handle, active.enabled())
+                    {
+                        warn!("failed to schedule tray label reconciliation: {error}");
+                    }
+                    Ok(())
+                },
+            );
             match result {
                 Ok(ipc::ServerExit::Shutdown) => {
                     info!("Engine shutdown requested over IPC");
@@ -712,7 +725,6 @@ fn run_settings() -> Result<(), String> {
             app.manage(engine);
             app.manage(ConfigDir(config_dir_path));
             app.manage(ThreadRuntime::settings());
-            app.manage(commands::CaptureState(std::sync::Mutex::new(None)));
             #[cfg(all(windows, debug_assertions))]
             let skip_window = std::env::var_os("ZG_P05A_TEST_SKIP_SETTINGS_WINDOW").is_some();
             #[cfg(not(all(windows, debug_assertions)))]
@@ -730,11 +742,13 @@ fn run_settings() -> Result<(), String> {
             commands::show_settings_window,
             commands::get_config,
             commands::update_config,
+            commands::set_enabled,
             commands::import_config,
             commands::export_config,
             commands::open_config_dir,
             commands::get_foreground_window_info,
             commands::start_window_capture,
+            commands::poll_window_capture,
             commands::stop_window_capture
         ])
         .build(context)
@@ -800,7 +814,8 @@ mod tests {
     fn thread_runtime_observes_applied_config_without_restarting_native_owner() {
         let directory = tempfile::tempdir().unwrap();
         let (owner, _) = config::ConfigOwner::startup(directory.path());
-        let runtime = ThreadRuntime::start(owner.reader()).unwrap();
+        let runtime =
+            ThreadRuntime::start(owner.reader(), Arc::new(capture::WindowCapture::new())).unwrap();
         let owner_thread = {
             let state = runtime.state.lock().unwrap();
             let RuntimeState::Running(workers) = &*state else {

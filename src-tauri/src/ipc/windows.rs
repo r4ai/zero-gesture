@@ -836,7 +836,8 @@ fn send_response(pipe: &mut Pipe, request_id: u64, response: Response) -> Result
 #[cfg(test)]
 mod tests {
     use super::super::core::{
-        ConfigObservation, ServerExit, CONNECT_TIMEOUT, RETRY_INTERVAL, TERMINAL_RESPONSE_GRACE,
+        ConfigApplyError, ConfigApplyPhase, ConfigObservation, ServerExit, CONNECT_TIMEOUT,
+        RETRY_INTERVAL, TERMINAL_RESPONSE_GRACE,
     };
     use super::super::protocol::ProcessRole;
     use super::*;
@@ -971,19 +972,27 @@ mod tests {
         };
         let (owner, _) = ConfigOwner::startup(&directory);
         let reader = owner.reader();
-        let runtime = std::env::var_os(HELPER_RUNTIME_ENV)
-            .map(|_| crate::ThreadRuntime::start(reader).unwrap());
+        let runtime = std::env::var_os(HELPER_RUNTIME_ENV).map(|_| {
+            crate::ThreadRuntime::start(reader, Arc::new(crate::capture::WindowCapture::new()))
+                .unwrap()
+        });
         if std::env::var_os(HELPER_POISON_RUNTIME_ENV).is_some() {
             runtime.as_ref().unwrap().poison_for_test();
         }
-        let result = server.run(Arc::new(AtomicBool::new(false)), owner, |active, _| {
-            if let Some(runtime) = &runtime {
-                runtime
-                    .observe_applied(active)
-                    .map_err(ControlError::projection)?;
-            }
-            Ok(())
-        });
+        let result = server.run(
+            Arc::new(AtomicBool::new(false)),
+            owner,
+            Arc::new(crate::capture::WindowCapture::new()),
+            crate::window_info::get_window_info_at_point,
+            |active, _| {
+                if let Some(runtime) = &runtime {
+                    runtime
+                        .observe_applied(active)
+                        .map_err(ControlError::projection)?;
+                }
+                Ok(())
+            },
+        );
         if let Some(runtime) = runtime {
             let shutdown = runtime.shutdown();
             if result.is_ok() {
@@ -1008,6 +1017,199 @@ mod tests {
             Session::connect(&wrong_endpoint),
             Err(ControlError::Rejected(ErrorCode::AuthenticationFailed))
         ));
+    }
+
+    #[test]
+    fn native_capture_result_flows_through_engine_session_and_protocol() {
+        fn resolve(
+            point: crate::domain::Point,
+        ) -> Result<crate::window_info::ForegroundWindowInfo, ()> {
+            assert_eq!(point, crate::domain::Point::new(320, 240));
+            Ok(crate::window_info::ForegroundWindowInfo {
+                process_name: Some("explorer.exe".to_string()),
+                window_class: Some("CabinetWClass".to_string()),
+                title: Some("Downloads".to_string()),
+            })
+        }
+
+        let (directory, suffix, control) = fixture();
+        let server = EngineServer::for_test(directory.path(), &suffix)
+            .unwrap()
+            .unwrap();
+        let (owner, _) = ConfigOwner::startup(directory.path());
+        let capture = Arc::new(crate::capture::WindowCapture::new());
+        let server_capture = Arc::clone(&capture);
+        let server_thread = thread::spawn(move || {
+            server
+                .run(
+                    Arc::new(AtomicBool::new(false)),
+                    owner,
+                    server_capture,
+                    resolve,
+                    |_, _| Ok(()),
+                )
+                .unwrap()
+        });
+
+        control.connect_or_start_with(|| Ok(())).unwrap();
+        let started = control.begin_window_capture(55).unwrap();
+        assert!(crate::hook::record_window_capture(
+            &capture,
+            crate::domain::MouseEvent::ButtonDown(crate::domain::TriggerButton::Left),
+            crate::domain::Point::new(320, 240),
+        ));
+        assert_eq!(
+            control
+                .poll_window_capture(started.capture_id, started.epoch)
+                .unwrap(),
+            crate::ipc::WindowCaptureObservation::Captured {
+                info: crate::window_info::ForegroundWindowInfo {
+                    process_name: Some("explorer.exe".to_string()),
+                    window_class: Some("CabinetWClass".to_string()),
+                    title: Some("Downloads".to_string()),
+                },
+            }
+        );
+        control
+            .cancel_window_capture(started.capture_id, started.epoch)
+            .unwrap();
+        assert!(!control.shutdown().unwrap());
+        assert_eq!(server_thread.join().unwrap(), ServerExit::Shutdown);
+    }
+
+    #[test]
+    fn stale_cancel_keeps_the_replacement_capture_alive() {
+        let (directory, suffix, control) = fixture();
+        let server = EngineServer::for_test(directory.path(), &suffix)
+            .unwrap()
+            .unwrap();
+        let (owner, _) = ConfigOwner::startup(directory.path());
+        let server_thread = thread::spawn(move || {
+            server
+                .run(
+                    Arc::new(AtomicBool::new(false)),
+                    owner,
+                    Arc::new(crate::capture::WindowCapture::new()),
+                    crate::window_info::get_window_info_at_point,
+                    |_, _| Ok(()),
+                )
+                .unwrap()
+        });
+
+        control.connect_or_start_with(|| Ok(())).unwrap();
+        let first = control.begin_window_capture(70).unwrap();
+        let replacement = control.begin_window_capture(71).unwrap();
+        assert!(matches!(
+            control.cancel_window_capture(first.capture_id, first.epoch),
+            Err(ControlError::Rejected(ErrorCode::CaptureStale))
+        ));
+        assert_eq!(
+            control
+                .poll_window_capture(replacement.capture_id, replacement.epoch)
+                .unwrap(),
+            crate::ipc::WindowCaptureObservation::Pending
+        );
+        control
+            .cancel_window_capture(replacement.capture_id, replacement.epoch)
+            .unwrap();
+        assert!(!control.shutdown().unwrap());
+        assert_eq!(server_thread.join().unwrap(), ServerExit::Shutdown);
+    }
+
+    #[test]
+    fn pending_capture_does_not_block_config_control_sessions() {
+        let (directory, suffix, control) = fixture();
+        let child = spawn_helper(directory.path(), &suffix);
+        let _guard = ChildGuard::new(child, control.clone());
+        control.connect_or_start_with(|| Ok(())).unwrap();
+
+        let started = control.begin_window_capture(72).unwrap();
+        assert_eq!(
+            control
+                .poll_window_capture(started.capture_id, started.epoch)
+                .unwrap(),
+            crate::ipc::WindowCaptureObservation::Pending
+        );
+        let observed = control.current_config().unwrap();
+        let enabled = observed.config.as_ref().unwrap().shared.enabled;
+        let applied = control
+            .set_enabled(!enabled, observed.revision)
+            .expect("a pending capture must not occupy the control endpoint");
+        assert_eq!(applied.current.config.unwrap().shared.enabled, !enabled);
+
+        control
+            .cancel_window_capture(started.capture_id, started.epoch)
+            .unwrap();
+    }
+
+    #[test]
+    fn capture_polling_is_not_limited_by_one_connection_request_budget() {
+        let (directory, suffix, control) = fixture();
+        let child = spawn_helper(directory.path(), &suffix);
+        let _guard = ChildGuard::new(child, control.clone());
+        control.connect_or_start_with(|| Ok(())).unwrap();
+
+        let started = control.begin_window_capture(73).unwrap();
+        for _ in 0..super::super::protocol::MAX_REQUESTS_PER_CONNECTION {
+            assert_eq!(
+                control
+                    .poll_window_capture(started.capture_id, started.epoch)
+                    .unwrap(),
+                crate::ipc::WindowCaptureObservation::Pending
+            );
+        }
+        control
+            .cancel_window_capture(started.capture_id, started.epoch)
+            .unwrap();
+    }
+
+    #[test]
+    fn oversized_capture_metadata_returns_typed_backend_failure() {
+        fn resolve(
+            _: crate::domain::Point,
+        ) -> Result<crate::window_info::ForegroundWindowInfo, ()> {
+            Ok(crate::window_info::ForegroundWindowInfo {
+                process_name: Some("explorer.exe".to_string()),
+                window_class: Some("CabinetWClass".to_string()),
+                title: Some("é".repeat(2_049)),
+            })
+        }
+
+        let (directory, suffix, control) = fixture();
+        let server = EngineServer::for_test(directory.path(), &suffix)
+            .unwrap()
+            .unwrap();
+        let (owner, _) = ConfigOwner::startup(directory.path());
+        let capture = Arc::new(crate::capture::WindowCapture::new());
+        let server_capture = Arc::clone(&capture);
+        let server_thread = thread::spawn(move || {
+            server
+                .run(
+                    Arc::new(AtomicBool::new(false)),
+                    owner,
+                    server_capture,
+                    resolve,
+                    |_, _| Ok(()),
+                )
+                .unwrap()
+        });
+
+        control.connect_or_start_with(|| Ok(())).unwrap();
+        let started = control.begin_window_capture(80).unwrap();
+        assert!(crate::hook::record_window_capture(
+            &capture,
+            crate::domain::MouseEvent::ButtonDown(crate::domain::TriggerButton::Left),
+            crate::domain::Point::new(10, 20),
+        ));
+        assert!(matches!(
+            control.poll_window_capture(started.capture_id, started.epoch),
+            Err(ControlError::Rejected(ErrorCode::CaptureBackendFailed))
+        ));
+        control
+            .cancel_window_capture(started.capture_id, started.epoch)
+            .unwrap();
+        assert!(!control.shutdown().unwrap());
+        assert_eq!(server_thread.join().unwrap(), ServerExit::Shutdown);
     }
 
     #[test]
@@ -1151,7 +1353,10 @@ mod tests {
         assert!(
             matches!(
                 error,
-                ControlError::Rejected(ErrorCode::ConfigRevisionConflict)
+                ConfigApplyError {
+                    phase: ConfigApplyPhase::Prepare,
+                    source: ControlError::Rejected(ErrorCode::ConfigRevisionConflict),
+                }
             ),
             "unexpected stale-draft result: {error:?}"
         );
@@ -1577,14 +1782,19 @@ mod tests {
         let _guard = ChildGuard::new(child, control.clone());
         control.connect_or_start_with(|| Ok(())).unwrap();
         let mut session = Session::connect(&control.endpoint).unwrap();
-        for request_id in 10..17 {
+        let first_request_id = 10_u64;
+        let limit_request_id =
+            first_request_id + (super::super::protocol::MAX_REQUESTS_PER_CONNECTION - 1) as u64;
+        for request_id in first_request_id..limit_request_id {
             assert_eq!(
                 session.exchange_with_id(request_id, Request::Ping).unwrap(),
                 Response::Pong
             );
         }
         assert_eq!(
-            session.exchange_with_id(17, Request::Ping).unwrap(),
+            session
+                .exchange_with_id(limit_request_id, Request::Ping)
+                .unwrap(),
             Response::Error(ErrorCode::RequestLimit)
         );
     }

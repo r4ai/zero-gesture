@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 import {
   CONFIG_QUERY_KEY,
   cacheAppliedConfig,
+  cacheConfigConflict,
   configMutation,
   durabilityWarningMessage,
 } from "@/hooks/use-config"
@@ -47,5 +48,25 @@ describe("config cache", () => {
     expect(durabilityWarningMessage(result)).toContain(
       "could not confirm directory metadata durability",
     )
+  })
+
+  it("refreshes the observed revision from a typed conflict payload", () => {
+    const queryClient = new QueryClient()
+    const current = {
+      revision: 12,
+      generation: 12,
+      config: DEFAULTS,
+    }
+
+    expect(
+      cacheConfigConflict(queryClient, {
+        code: "revision-conflict",
+        message: "detail",
+        retryable: true,
+        current,
+      }),
+    ).toBe(true)
+    expect(queryClient.getQueryData(CONFIG_QUERY_KEY)).toBe(current)
+    expect(cacheConfigConflict(queryClient, "revision conflict")).toBe(false)
   })
 })

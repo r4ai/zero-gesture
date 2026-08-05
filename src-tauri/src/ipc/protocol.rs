@@ -5,23 +5,40 @@ use serde::Serialize;
 
 use crate::config::MAX_CONFIG_BYTES;
 
-pub const PROTOCOL_VERSION: u16 = 2;
+pub const PROTOCOL_VERSION: u16 = 3;
 pub const MAX_ENCODED_FRAME: usize = 1024 * 1024 - 1;
 #[cfg(test)]
 pub const MAX_BODY: usize = MAX_ENCODED_FRAME - size_of::<u32>();
 pub const AUTH_SECRET_BYTES: usize = 32;
 pub const MAX_VERSION_BYTES: usize = 64;
-pub const MAX_REQUESTS_PER_CONNECTION: usize = 8;
+pub const MAX_REQUESTS_PER_CONNECTION: usize = 1024;
 pub const CAPABILITY_PING: u64 = 1 << 0;
 pub const CAPABILITY_STATUS: u64 = 1 << 1;
 pub const CAPABILITY_SHUTDOWN: u64 = 1 << 2;
 pub const CAPABILITY_CONFIG_READ: u64 = 1 << 3;
 pub const CAPABILITY_CONFIG_TRANSACTION: u64 = 1 << 4;
-pub const CAPABILITIES: u64 = CAPABILITY_PING
+pub const CAPABILITY_WINDOW_CAPTURE: u64 = 1 << 5;
+const BASE_CAPABILITIES: u64 = CAPABILITY_PING
     | CAPABILITY_STATUS
     | CAPABILITY_SHUTDOWN
     | CAPABILITY_CONFIG_READ
     | CAPABILITY_CONFIG_TRANSACTION;
+#[cfg(windows)]
+pub const CAPABILITIES: u64 = BASE_CAPABILITIES | CAPABILITY_WINDOW_CAPTURE;
+#[cfg(not(windows))]
+pub const CAPABILITIES: u64 = BASE_CAPABILITIES;
+const MAX_CAPTURE_TEXT_BYTES: usize = 4 * 1024;
+
+pub(crate) fn capture_info_within_limits(info: &WindowCaptureInfo) -> bool {
+    [
+        info.process_name.as_deref(),
+        info.window_class.as_deref(),
+        info.title.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .all(|value| value.len() <= MAX_CAPTURE_TEXT_BYTES)
+}
 
 const HEADER_BYTES: usize = size_of::<u16>() + size_of::<u8>() + size_of::<u8>() + size_of::<u64>();
 
@@ -69,6 +86,17 @@ pub enum Request {
         expected_revision: u64,
         enabled: bool,
     },
+    BeginWindowCapture {
+        capture_id: u64,
+    },
+    PollWindowCapture {
+        capture_id: u64,
+        epoch: u64,
+    },
+    CancelWindowCapture {
+        capture_id: u64,
+        epoch: u64,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -88,6 +116,22 @@ pub enum ErrorCode {
     NoPreparedConfig,
     ConfigGenerationExhausted,
     ConfigPersistenceFailed,
+    CaptureStale,
+    CaptureUnavailable,
+    CaptureBackendFailed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WindowCaptureInfo {
+    pub process_name: Option<String>,
+    pub window_class: Option<String>,
+    pub title: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WindowCaptureResult {
+    Pending,
+    Captured(WindowCaptureInfo),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -116,6 +160,19 @@ pub enum Response {
         revision: u64,
         generation: u64,
         durability_warning: bool,
+    },
+    WindowCaptureStarted {
+        capture_id: u64,
+        epoch: u64,
+    },
+    WindowCapture {
+        capture_id: u64,
+        epoch: u64,
+        result: WindowCaptureResult,
+    },
+    WindowCaptureCancelled {
+        capture_id: u64,
+        epoch: u64,
     },
     Error(ErrorCode),
 }
@@ -277,6 +334,19 @@ pub fn encode_request(envelope: &Envelope<Request>) -> Result<Vec<u8>, ProtocolE
             payload.push(u8::from(*enabled));
             (8, payload)
         }
+        Request::BeginWindowCapture { capture_id } => (9, capture_id.to_le_bytes().to_vec()),
+        Request::PollWindowCapture { capture_id, epoch } => {
+            let mut payload = Vec::with_capacity(16);
+            payload.extend_from_slice(&capture_id.to_le_bytes());
+            payload.extend_from_slice(&epoch.to_le_bytes());
+            (10, payload)
+        }
+        Request::CancelWindowCapture { capture_id, epoch } => {
+            let mut payload = Vec::with_capacity(16);
+            payload.extend_from_slice(&capture_id.to_le_bytes());
+            payload.extend_from_slice(&epoch.to_le_bytes());
+            (11, payload)
+        }
     };
     encode_envelope(
         envelope.protocol_version,
@@ -332,6 +402,32 @@ pub fn decode_request(body: &[u8]) -> Result<Envelope<Request>, ProtocolError> {
             let request = Request::SetEnabled {
                 expected_revision: cursor.u64()?,
                 enabled: cursor.boolean()?,
+            };
+            cursor.finish()?;
+            request
+        }
+        9 => {
+            let mut cursor = Cursor::new(payload);
+            let request = Request::BeginWindowCapture {
+                capture_id: cursor.u64()?,
+            };
+            cursor.finish()?;
+            request
+        }
+        10 => {
+            let mut cursor = Cursor::new(payload);
+            let request = Request::PollWindowCapture {
+                capture_id: cursor.u64()?,
+                epoch: cursor.u64()?,
+            };
+            cursor.finish()?;
+            request
+        }
+        11 => {
+            let mut cursor = Cursor::new(payload);
+            let request = Request::CancelWindowCapture {
+                capture_id: cursor.u64()?,
+                epoch: cursor.u64()?,
             };
             cursor.finish()?;
             request
@@ -421,6 +517,37 @@ pub fn encode_response(envelope: &Envelope<Response>) -> Result<Vec<u8>, Protoco
             payload.extend_from_slice(&generation.to_le_bytes());
             payload.push(u8::from(*durability_warning));
             (135, payload)
+        }
+        Response::WindowCaptureStarted { capture_id, epoch } => {
+            let mut payload = Vec::with_capacity(16);
+            payload.extend_from_slice(&capture_id.to_le_bytes());
+            payload.extend_from_slice(&epoch.to_le_bytes());
+            (136, payload)
+        }
+        Response::WindowCapture {
+            capture_id,
+            epoch,
+            result,
+        } => {
+            let mut payload = Vec::new();
+            payload.extend_from_slice(&capture_id.to_le_bytes());
+            payload.extend_from_slice(&epoch.to_le_bytes());
+            match result {
+                WindowCaptureResult::Pending => payload.push(0),
+                WindowCaptureResult::Captured(info) => {
+                    payload.push(1);
+                    put_optional_capture_text(&mut payload, info.process_name.as_deref())?;
+                    put_optional_capture_text(&mut payload, info.window_class.as_deref())?;
+                    put_optional_capture_text(&mut payload, info.title.as_deref())?;
+                }
+            }
+            (137, payload)
+        }
+        Response::WindowCaptureCancelled { capture_id, epoch } => {
+            let mut payload = Vec::with_capacity(16);
+            payload.extend_from_slice(&capture_id.to_le_bytes());
+            payload.extend_from_slice(&epoch.to_le_bytes());
+            (138, payload)
         }
         Response::Error(code) => (255, vec![error_code_byte(*code)]),
     };
@@ -522,6 +649,44 @@ pub fn decode_response(
             cursor.finish()?;
             response
         }
+        136 => {
+            let mut cursor = Cursor::new(payload);
+            let response = Response::WindowCaptureStarted {
+                capture_id: cursor.u64()?,
+                epoch: cursor.u64()?,
+            };
+            cursor.finish()?;
+            response
+        }
+        137 => {
+            let mut cursor = Cursor::new(payload);
+            let capture_id = cursor.u64()?;
+            let epoch = cursor.u64()?;
+            let result = match cursor.u8()? {
+                0 => WindowCaptureResult::Pending,
+                1 => WindowCaptureResult::Captured(WindowCaptureInfo {
+                    process_name: cursor.optional_capture_text()?,
+                    window_class: cursor.optional_capture_text()?,
+                    title: cursor.optional_capture_text()?,
+                }),
+                _ => return Err(ProtocolError::InvalidMessage),
+            };
+            cursor.finish()?;
+            Response::WindowCapture {
+                capture_id,
+                epoch,
+                result,
+            }
+        }
+        138 => {
+            let mut cursor = Cursor::new(payload);
+            let response = Response::WindowCaptureCancelled {
+                capture_id: cursor.u64()?,
+                epoch: cursor.u64()?,
+            };
+            cursor.finish()?;
+            response
+        }
         255 => {
             if payload.len() != 1 {
                 return Err(ProtocolError::InvalidMessage);
@@ -591,6 +756,22 @@ fn put_string(output: &mut Vec<u8>, value: &str) -> Result<(), ProtocolError> {
     Ok(())
 }
 
+fn put_optional_capture_text(
+    output: &mut Vec<u8>,
+    value: Option<&str>,
+) -> Result<(), ProtocolError> {
+    let Some(value) = value else {
+        output.extend_from_slice(&u16::MAX.to_le_bytes());
+        return Ok(());
+    };
+    if value.len() > MAX_CAPTURE_TEXT_BYTES || value.len() >= u16::MAX as usize {
+        return Err(ProtocolError::InvalidMessage);
+    }
+    output.extend_from_slice(&(value.len() as u16).to_le_bytes());
+    output.extend_from_slice(value.as_bytes());
+    Ok(())
+}
+
 fn empty_payload<T>(payload: &[u8], value: T) -> Result<T, ProtocolError> {
     if payload.is_empty() {
         Ok(value)
@@ -616,6 +797,9 @@ fn error_code_byte(code: ErrorCode) -> u8 {
         ErrorCode::NoPreparedConfig => 13,
         ErrorCode::ConfigGenerationExhausted => 14,
         ErrorCode::ConfigPersistenceFailed => 15,
+        ErrorCode::CaptureStale => 16,
+        ErrorCode::CaptureUnavailable => 17,
+        ErrorCode::CaptureBackendFailed => 18,
     }
 }
 
@@ -636,6 +820,9 @@ fn byte_error_code(byte: u8) -> Result<ErrorCode, ProtocolError> {
         13 => Ok(ErrorCode::NoPreparedConfig),
         14 => Ok(ErrorCode::ConfigGenerationExhausted),
         15 => Ok(ErrorCode::ConfigPersistenceFailed),
+        16 => Ok(ErrorCode::CaptureStale),
+        17 => Ok(ErrorCode::CaptureUnavailable),
+        18 => Ok(ErrorCode::CaptureBackendFailed),
         _ => Err(ProtocolError::InvalidMessage),
     }
 }
@@ -727,6 +914,28 @@ impl<'a> Cursor<'a> {
         self.position = end;
         std::str::from_utf8(bytes)
             .map(str::to_owned)
+            .map_err(|_| ProtocolError::InvalidUtf8)
+    }
+
+    fn optional_capture_text(&mut self) -> Result<Option<String>, ProtocolError> {
+        let length = self.u16()? as usize;
+        if length == u16::MAX as usize {
+            return Ok(None);
+        }
+        if length > MAX_CAPTURE_TEXT_BYTES {
+            return Err(ProtocolError::InvalidMessage);
+        }
+        let end = self
+            .position
+            .checked_add(length)
+            .ok_or(ProtocolError::InvalidMessage)?;
+        let bytes = self
+            .bytes
+            .get(self.position..end)
+            .ok_or(ProtocolError::InvalidMessage)?;
+        self.position = end;
+        std::str::from_utf8(bytes)
+            .map(|value| Some(value.to_owned()))
             .map_err(|_| ProtocolError::InvalidUtf8)
     }
 
@@ -901,6 +1110,79 @@ mod tests {
             decode_request(&encode_request(&request).unwrap()).unwrap(),
             request
         );
+    }
+
+    #[test]
+    fn codec_roundtrips_window_capture_identity_and_result() {
+        let begin = Envelope::current(30, Request::BeginWindowCapture { capture_id: 77 });
+        assert_eq!(
+            decode_request(&encode_request(&begin).unwrap()).unwrap(),
+            begin
+        );
+
+        let poll = Envelope::current(
+            31,
+            Request::PollWindowCapture {
+                capture_id: 77,
+                epoch: 9,
+            },
+        );
+        assert_eq!(
+            decode_request(&encode_request(&poll).unwrap()).unwrap(),
+            poll
+        );
+
+        let response = Envelope::current(
+            31,
+            Response::WindowCapture {
+                capture_id: 77,
+                epoch: 9,
+                result: WindowCaptureResult::Captured(WindowCaptureInfo {
+                    process_name: Some("explorer.exe".to_string()),
+                    window_class: Some("CabinetWClass".to_string()),
+                    title: Some("Downloads".to_string()),
+                }),
+            },
+        );
+        assert_eq!(
+            decode_response(&encode_response(&response).unwrap(), 31).unwrap(),
+            response
+        );
+    }
+
+    #[test]
+    fn capture_metadata_codec_accepts_utf8_boundary_and_rejects_overflow() {
+        let boundary = "é".repeat(MAX_CAPTURE_TEXT_BYTES / "é".len());
+        let accepted = Envelope::current(
+            32,
+            Response::WindowCapture {
+                capture_id: 1,
+                epoch: 2,
+                result: WindowCaptureResult::Captured(WindowCaptureInfo {
+                    process_name: Some(boundary.clone()),
+                    window_class: Some(boundary.clone()),
+                    title: Some(boundary),
+                }),
+            },
+        );
+        assert!(encode_response(&accepted).is_ok());
+
+        let overflow = Envelope::current(
+            33,
+            Response::WindowCapture {
+                capture_id: 1,
+                epoch: 2,
+                result: WindowCaptureResult::Captured(WindowCaptureInfo {
+                    process_name: None,
+                    window_class: None,
+                    title: Some("é".repeat(MAX_CAPTURE_TEXT_BYTES / "é".len() + 1)),
+                }),
+            },
+        );
+        assert!(matches!(
+            encode_response(&overflow),
+            Err(ProtocolError::InvalidMessage)
+        ));
     }
 
     #[test]

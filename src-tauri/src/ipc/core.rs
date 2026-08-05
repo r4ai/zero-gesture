@@ -1,9 +1,12 @@
 use super::platform;
 use super::protocol::{
-    self, EngineStatus, Envelope, ErrorCode, ProtocolError, Request, Response, AUTH_SECRET_BYTES,
-    CAPABILITIES, MAX_REQUESTS_PER_CONNECTION,
+    self, EngineStatus, Envelope, ErrorCode, ProtocolError, Request, Response, WindowCaptureInfo,
+    WindowCaptureResult, AUTH_SECRET_BYTES, CAPABILITIES, MAX_REQUESTS_PER_CONNECTION,
 };
+use crate::capture::{CaptureError, CapturePoll, WindowCapture};
 use crate::config::{self, ConfigOwner, ConfigOwnerError, ConfigOwnerStatus, PreparedToken};
+use crate::domain::Point;
+use log::{debug, warn};
 use std::fmt;
 use std::io::{self, Read};
 use std::path::Path;
@@ -22,6 +25,9 @@ pub(super) const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 pub(super) const RETRY_INTERVAL: Duration = Duration::from_millis(40);
 pub(super) const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(2);
 pub(super) const TERMINAL_RESPONSE_GRACE: Duration = Duration::from_millis(100);
+pub(super) const CAPTURE_LEASE_TIMEOUT: Duration = Duration::from_secs(2);
+const CAPTURE_LEASE_SWEEP_INTERVAL: Duration = Duration::from_millis(50);
+pub(crate) type CaptureResolver = fn(Point) -> Result<crate::window_info::ForegroundWindowInfo, ()>;
 
 #[derive(Debug)]
 pub enum ControlError {
@@ -97,6 +103,52 @@ pub(crate) struct ConfigApplyResult {
     pub(crate) durability_warning: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ConfigApplyPhase {
+    Prepare,
+    Commit,
+    Query,
+}
+
+#[derive(Debug)]
+pub(crate) struct ConfigApplyError {
+    pub(crate) phase: ConfigApplyPhase,
+    pub(crate) source: ControlError,
+}
+
+impl ConfigApplyError {
+    fn new(phase: ConfigApplyPhase, source: ControlError) -> Self {
+        Self { phase, source }
+    }
+}
+
+impl fmt::Display for ConfigApplyError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.source.fmt(formatter)
+    }
+}
+
+impl std::error::Error for ConfigApplyError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+pub(crate) struct WindowCaptureStarted {
+    pub(crate) capture_id: u64,
+    pub(crate) epoch: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(tag = "state", rename_all = "kebab-case")]
+pub(crate) enum WindowCaptureObservation {
+    Pending,
+    Captured {
+        info: crate::window_info::ForegroundWindowInfo,
+    },
+}
+
 impl EngineControl {
     pub fn connect_or_start(executable: &Path, config_dir: &Path) -> Result<Self, ControlError> {
         #[cfg(debug_assertions)]
@@ -157,9 +209,13 @@ impl EngineControl {
         &self,
         document: config::ConfigDocument,
         expected_revision: u64,
-    ) -> Result<ConfigApplyResult, ControlError> {
-        let bytes = serde_json::to_vec(&document)
-            .map_err(|_| ControlError::Rejected(ErrorCode::ConfigValidationFailed))?;
+    ) -> Result<ConfigApplyResult, ConfigApplyError> {
+        let bytes = serde_json::to_vec(&document).map_err(|_| {
+            ConfigApplyError::new(
+                ConfigApplyPhase::Prepare,
+                ControlError::Rejected(ErrorCode::ConfigValidationFailed),
+            )
+        })?;
         self.apply_config_bytes(bytes, expected_revision)
     }
 
@@ -167,33 +223,62 @@ impl EngineControl {
         &self,
         bytes: Vec<u8>,
         expected_revision: u64,
-    ) -> Result<ConfigApplyResult, ControlError> {
-        let mut session = Session::connect(&self.endpoint)?;
-        let prepared = match session.exchange(Request::PrepareConfig {
-            expected_revision,
-            config_bytes: bytes,
-        })? {
+    ) -> Result<ConfigApplyResult, ConfigApplyError> {
+        let mut session = Session::connect(&self.endpoint)
+            .map_err(|error| ConfigApplyError::new(ConfigApplyPhase::Prepare, error))?;
+        let prepared = match session
+            .exchange(Request::PrepareConfig {
+                expected_revision,
+                config_bytes: bytes,
+            })
+            .map_err(|error| ConfigApplyError::new(ConfigApplyPhase::Prepare, error))?
+        {
             Response::Prepared {
                 token,
                 base_revision,
                 base_generation,
             } => (token, base_revision, base_generation),
-            Response::Error(code) => return Err(ControlError::Rejected(code)),
-            _ => return Err(ControlError::Protocol(ProtocolError::InvalidMessage)),
+            Response::Error(code) => {
+                return Err(ConfigApplyError::new(
+                    ConfigApplyPhase::Prepare,
+                    ControlError::Rejected(code),
+                ))
+            }
+            _ => {
+                return Err(ConfigApplyError::new(
+                    ConfigApplyPhase::Prepare,
+                    ControlError::Protocol(ProtocolError::InvalidMessage),
+                ))
+            }
         };
-        let durability_warning = match session.exchange(Request::CommitConfig {
-            token: prepared.0,
-            base_revision: prepared.1,
-            base_generation: prepared.2,
-        })? {
+        let durability_warning = match session
+            .exchange(Request::CommitConfig {
+                token: prepared.0,
+                base_revision: prepared.1,
+                base_generation: prepared.2,
+            })
+            .map_err(|error| ConfigApplyError::new(ConfigApplyPhase::Commit, error))?
+        {
             Response::Applied {
                 durability_warning, ..
             } => durability_warning,
-            Response::Error(code) => return Err(ControlError::Rejected(code)),
-            _ => return Err(ControlError::Protocol(ProtocolError::InvalidMessage)),
+            Response::Error(code) => {
+                return Err(ConfigApplyError::new(
+                    ConfigApplyPhase::Commit,
+                    ControlError::Rejected(code),
+                ))
+            }
+            _ => {
+                return Err(ConfigApplyError::new(
+                    ConfigApplyPhase::Commit,
+                    ControlError::Protocol(ProtocolError::InvalidMessage),
+                ))
+            }
         };
         Ok(ConfigApplyResult {
-            current: session.current_config()?,
+            current: session
+                .current_config()
+                .map_err(|error| ConfigApplyError::new(ConfigApplyPhase::Query, error))?,
             durability_warning,
         })
     }
@@ -224,6 +309,62 @@ impl EngineControl {
         let mut session = Session::connect(&self.endpoint)?;
         match session.exchange(Request::Shutdown)? {
             Response::Shutdown { already_requested } => Ok(already_requested),
+            Response::Error(code) => Err(ControlError::Rejected(code)),
+            _ => Err(ControlError::Protocol(ProtocolError::InvalidMessage)),
+        }
+    }
+
+    pub(crate) fn begin_window_capture(
+        &self,
+        capture_id: u64,
+    ) -> Result<WindowCaptureStarted, ControlError> {
+        let mut session = Session::connect(&self.endpoint)?;
+        match session.exchange(Request::BeginWindowCapture { capture_id })? {
+            Response::WindowCaptureStarted { capture_id, epoch } => {
+                Ok(WindowCaptureStarted { capture_id, epoch })
+            }
+            Response::Error(code) => Err(ControlError::Rejected(code)),
+            _ => Err(ControlError::Protocol(ProtocolError::InvalidMessage)),
+        }
+    }
+
+    pub(crate) fn poll_window_capture(
+        &self,
+        capture_id: u64,
+        epoch: u64,
+    ) -> Result<WindowCaptureObservation, ControlError> {
+        let mut session = Session::connect(&self.endpoint)?;
+        match session.exchange(Request::PollWindowCapture { capture_id, epoch })? {
+            Response::WindowCapture {
+                capture_id: actual_id,
+                epoch: actual_epoch,
+                result,
+            } if actual_id == capture_id && actual_epoch == epoch => Ok(match result {
+                WindowCaptureResult::Pending => WindowCaptureObservation::Pending,
+                WindowCaptureResult::Captured(info) => WindowCaptureObservation::Captured {
+                    info: crate::window_info::ForegroundWindowInfo {
+                        process_name: info.process_name,
+                        window_class: info.window_class,
+                        title: info.title,
+                    },
+                },
+            }),
+            Response::Error(code) => Err(ControlError::Rejected(code)),
+            _ => Err(ControlError::Protocol(ProtocolError::InvalidMessage)),
+        }
+    }
+
+    pub(crate) fn cancel_window_capture(
+        &self,
+        capture_id: u64,
+        epoch: u64,
+    ) -> Result<(), ControlError> {
+        let mut session = Session::connect(&self.endpoint)?;
+        match session.exchange(Request::CancelWindowCapture { capture_id, epoch })? {
+            Response::WindowCaptureCancelled {
+                capture_id: actual_id,
+                epoch: actual_epoch,
+            } if actual_id == capture_id && actual_epoch == epoch => Ok(()),
             Response::Error(code) => Err(ControlError::Rejected(code)),
             _ => Err(ControlError::Protocol(ProtocolError::InvalidMessage)),
         }
@@ -321,6 +462,8 @@ impl EngineServer {
         self,
         stop: Arc<AtomicBool>,
         mut config_owner: ConfigOwner,
+        capture: Arc<WindowCapture>,
+        resolve_capture: CaptureResolver,
         mut on_applied: F,
     ) -> Result<ServerExit, ControlError>
     where
@@ -334,44 +477,65 @@ impl EngineServer {
         let started_at = Instant::now();
         let mut next_session = 1_u64;
 
-        while !stop.load(Ordering::Acquire) {
-            let Some(mut connection) = transport.accept(&stop)? else {
-                return Ok(ServerExit::Stopped);
-            };
-            let session = next_session;
-            next_session = next_session.checked_add(1).unwrap_or(1);
-            if serve_connection(
-                &mut connection,
-                &secret,
-                started_at,
-                &mut config_owner,
-                session,
-                &mut on_applied,
-            )? {
-                return Ok(ServerExit::Shutdown);
+        let lease_worker = (CAPABILITIES & protocol::CAPABILITY_WINDOW_CAPTURE != 0).then(|| {
+            let lease_stop = Arc::new(AtomicBool::new(false));
+            let capture = Arc::clone(&capture);
+            let worker_stop = Arc::clone(&lease_stop);
+            let handle = thread::spawn(move || {
+                while !worker_stop.load(Ordering::Acquire) {
+                    thread::sleep(CAPTURE_LEASE_SWEEP_INTERVAL);
+                    capture.expire(Instant::now());
+                }
+            });
+            (lease_stop, handle)
+        });
+        let result = (|| {
+            while !stop.load(Ordering::Acquire) {
+                let Some(mut connection) = transport.accept(&stop)? else {
+                    return Ok(ServerExit::Stopped);
+                };
+                let session = next_session;
+                next_session = next_session.checked_add(1).unwrap_or(1);
+                let mut context = ConnectionContext {
+                    started_at,
+                    config_owner: &mut config_owner,
+                    capture: &capture,
+                    resolve_capture,
+                    session,
+                    on_applied: &mut on_applied,
+                };
+                if serve_connection(&mut connection, &secret, &mut context)? {
+                    return Ok(ServerExit::Shutdown);
+                }
             }
+            Ok(ServerExit::Stopped)
+        })();
+        if let Some((lease_stop, lease_worker)) = lease_worker {
+            lease_stop.store(true, Ordering::Release);
+            lease_worker
+                .join()
+                .map_err(|_| ControlError::projection("capture lease worker panicked"))?;
         }
-        Ok(ServerExit::Stopped)
+        result
     }
+}
+
+struct ConnectionContext<'a> {
+    started_at: Instant,
+    config_owner: &'a mut ConfigOwner,
+    capture: &'a WindowCapture,
+    resolve_capture: CaptureResolver,
+    session: u64,
+    on_applied: &'a mut dyn FnMut(&config::ActiveConfig, u64) -> Result<(), ControlError>,
 }
 
 fn serve_connection(
     connection: &mut platform::AcceptedConnection<'_>,
     secret: &[u8; AUTH_SECRET_BYTES],
-    started_at: Instant,
-    config_owner: &mut ConfigOwner,
-    session: u64,
-    on_applied: &mut impl FnMut(&config::ActiveConfig, u64) -> Result<(), ControlError>,
+    context: &mut ConnectionContext<'_>,
 ) -> Result<bool, ControlError> {
-    let result = serve_connection_inner(
-        connection,
-        secret,
-        started_at,
-        config_owner,
-        session,
-        on_applied,
-    );
-    config_owner.disconnect(session);
+    let result = serve_connection_inner(connection, secret, context);
+    context.config_owner.disconnect(context.session);
     match result {
         Err(error @ ControlError::ProjectionFailed(_)) => Err(error),
         Err(_) => Ok(false),
@@ -382,10 +546,7 @@ fn serve_connection(
 fn serve_connection_inner(
     connection: &mut platform::AcceptedConnection<'_>,
     secret: &[u8; AUTH_SECRET_BYTES],
-    started_at: Instant,
-    config_owner: &mut ConfigOwner,
-    session: u64,
-    on_applied: &mut impl FnMut(&config::ActiveConfig, u64) -> Result<(), ControlError>,
+    context: &mut ConnectionContext<'_>,
 ) -> Result<bool, ControlError> {
     let mut authenticated = false;
     let mut version_matches = false;
@@ -475,10 +636,7 @@ fn serve_connection_inner(
             dispatch_request(
                 request.message,
                 version_matches,
-                started_at,
-                config_owner,
-                session,
-                on_applied,
+                context,
                 &mut shutdown_requested,
             )?
         };
@@ -489,18 +647,15 @@ fn serve_connection_inner(
 fn dispatch_request(
     request: Request,
     version_matches: bool,
-    started_at: Instant,
-    config_owner: &mut ConfigOwner,
-    session: u64,
-    on_applied: &mut impl FnMut(&config::ActiveConfig, u64) -> Result<(), ControlError>,
+    context: &mut ConnectionContext<'_>,
     shutdown_requested: &mut bool,
 ) -> Result<Response, ControlError> {
     let response = match request {
         Request::Hello { .. } => Response::Error(ErrorCode::InvalidMessage),
         Request::Ping => Response::Pong,
         Request::GetStatus => {
-            let config = config_owner.status(Instant::now());
-            Response::Status(process_status(started_at, config)?)
+            let config = context.config_owner.status(Instant::now());
+            Response::Status(process_status(context.started_at, config)?)
         }
         Request::Shutdown if version_matches => {
             let already_requested = *shutdown_requested;
@@ -508,7 +663,7 @@ fn dispatch_request(
             Response::Shutdown { already_requested }
         }
         Request::Shutdown => Response::Error(ErrorCode::ExecutableVersionMismatch),
-        Request::GetConfig => match config_owner.current_bytes(Instant::now()) {
+        Request::GetConfig => match context.config_owner.current_bytes(Instant::now()) {
             Ok((revision, generation, config_bytes)) => Response::Config {
                 revision,
                 generation,
@@ -519,15 +674,30 @@ fn dispatch_request(
         Request::PrepareConfig { .. }
         | Request::CommitConfig { .. }
         | Request::SetEnabled { .. }
+        | Request::BeginWindowCapture { .. }
+        | Request::PollWindowCapture { .. }
+        | Request::CancelWindowCapture { .. }
             if !version_matches =>
         {
             Response::Error(ErrorCode::ExecutableVersionMismatch)
+        }
+        Request::BeginWindowCapture { .. }
+        | Request::PollWindowCapture { .. }
+        | Request::CancelWindowCapture { .. }
+            if CAPABILITIES & protocol::CAPABILITY_WINDOW_CAPTURE == 0 =>
+        {
+            Response::Error(ErrorCode::CaptureUnavailable)
         }
         Request::PrepareConfig {
             expected_revision,
             config_bytes,
         } => {
-            match config_owner.prepare(session, expected_revision, &config_bytes, Instant::now()) {
+            match context.config_owner.prepare(
+                context.session,
+                expected_revision,
+                &config_bytes,
+                Instant::now(),
+            ) {
                 Ok(prepared) => Response::Prepared {
                     token: prepared.token.0,
                     base_revision: prepared.base_revision,
@@ -540,23 +710,106 @@ fn dispatch_request(
             token,
             base_revision,
             base_generation,
-        } => match config_owner.commit(
-            session,
+        } => match context.config_owner.commit(
+            context.session,
             PreparedToken(token),
             base_revision,
             base_generation,
             Instant::now(),
         ) {
-            Ok(applied) => applied_response(config_owner, applied, on_applied)?,
+            Ok(applied) => applied_response(context.config_owner, applied, context.on_applied)?,
             Err(error) => Response::Error(config_error_code(error)),
         },
         Request::SetEnabled {
             expected_revision,
             enabled,
-        } => match config_owner.set_enabled(session, expected_revision, enabled, Instant::now()) {
-            Ok(applied) => applied_response(config_owner, applied, on_applied)?,
+        } => match context.config_owner.set_enabled(
+            context.session,
+            expected_revision,
+            enabled,
+            Instant::now(),
+        ) {
+            Ok(applied) => applied_response(context.config_owner, applied, context.on_applied)?,
             Err(error) => Response::Error(config_error_code(error)),
         },
+        Request::BeginWindowCapture { capture_id } => {
+            match context
+                .capture
+                .begin(capture_id, Instant::now() + CAPTURE_LEASE_TIMEOUT)
+            {
+                Ok(epoch) => {
+                    debug!("window capture id={capture_id} epoch={epoch} phase=begin");
+                    Response::WindowCaptureStarted { capture_id, epoch }
+                }
+                Err(error) => {
+                    let code = capture_error_code(error);
+                    warn!("window capture id={capture_id} phase=begin error={code:?}");
+                    Response::Error(code)
+                }
+            }
+        }
+        Request::PollWindowCapture { capture_id, epoch } => {
+            match context
+                .capture
+                .poll(capture_id, epoch, Instant::now() + CAPTURE_LEASE_TIMEOUT)
+            {
+                Ok(CapturePoll::Pending) => Response::WindowCapture {
+                    capture_id,
+                    epoch,
+                    result: WindowCaptureResult::Pending,
+                },
+                Ok(CapturePoll::Captured(point)) => match (context.resolve_capture)(point) {
+                    Ok(info) => {
+                        let info = WindowCaptureInfo {
+                            process_name: info.process_name,
+                            window_class: info.window_class,
+                            title: info.title,
+                        };
+                        if protocol::capture_info_within_limits(&info) {
+                            debug!("window capture id={capture_id} epoch={epoch} phase=captured");
+                            Response::WindowCapture {
+                                capture_id,
+                                epoch,
+                                result: WindowCaptureResult::Captured(info),
+                            }
+                        } else {
+                            warn!(
+                                "window capture id={capture_id} epoch={epoch} phase=resolve error={:?}",
+                                ErrorCode::CaptureBackendFailed
+                            );
+                            Response::Error(ErrorCode::CaptureBackendFailed)
+                        }
+                    }
+                    Err(()) => {
+                        warn!(
+                            "window capture id={capture_id} epoch={epoch} phase=resolve error={:?}",
+                            ErrorCode::CaptureBackendFailed
+                        );
+                        Response::Error(ErrorCode::CaptureBackendFailed)
+                    }
+                },
+                Err(error) => {
+                    let code = capture_error_code(error);
+                    warn!("window capture id={capture_id} epoch={epoch} phase=poll error={code:?}");
+                    Response::Error(code)
+                }
+            }
+        }
+        Request::CancelWindowCapture { capture_id, epoch } => {
+            match context.capture.cancel(capture_id, epoch) {
+                Ok(()) => {
+                    debug!("window capture id={capture_id} epoch={epoch} phase=cancel");
+                    Response::WindowCaptureCancelled { capture_id, epoch }
+                }
+                Err(error) => {
+                    let code = capture_error_code(error);
+                    warn!(
+                        "window capture id={capture_id} epoch={epoch} phase=cancel error={code:?}"
+                    );
+                    Response::Error(code)
+                }
+            }
+        }
     };
     Ok(response)
 }
@@ -564,7 +817,7 @@ fn dispatch_request(
 fn applied_response(
     config_owner: &ConfigOwner,
     applied: config::AppliedConfig,
-    on_applied: &mut impl FnMut(&config::ActiveConfig, u64) -> Result<(), ControlError>,
+    on_applied: &mut dyn FnMut(&config::ActiveConfig, u64) -> Result<(), ControlError>,
 ) -> Result<Response, ControlError> {
     on_applied(
         config_owner
@@ -589,6 +842,13 @@ fn config_error_code(error: ConfigOwnerError) -> ErrorCode {
         ConfigOwnerError::NoPreparedConfig => ErrorCode::NoPreparedConfig,
         ConfigOwnerError::GenerationExhausted => ErrorCode::ConfigGenerationExhausted,
         ConfigOwnerError::PersistenceFailed => ErrorCode::ConfigPersistenceFailed,
+    }
+}
+
+fn capture_error_code(error: CaptureError) -> ErrorCode {
+    match error {
+        CaptureError::Stale => ErrorCode::CaptureStale,
+        CaptureError::Unavailable => ErrorCode::CaptureUnavailable,
     }
 }
 

@@ -978,7 +978,10 @@ fn endpoint_io(operation: &'static str, error: io::Error) -> ControlError {
 #[cfg(test)]
 mod tests {
     use super::super::core::{
-        EngineControl, EngineServer, ServerExit, CONNECT_TIMEOUT, IO_TIMEOUT,
+        EngineControl, EngineServer, ServerExit, Session, CONNECT_TIMEOUT, IO_TIMEOUT,
+    };
+    use super::super::protocol::{
+        ErrorCode, Request, Response, CAPABILITIES, CAPABILITY_WINDOW_CAPTURE,
     };
     use super::*;
     use crate::config::{self, ConfigDocument, ConfigOwner};
@@ -1038,8 +1041,17 @@ mod tests {
             let (owner, _) = ConfigOwner::startup(directory.path());
             let stop = Arc::new(AtomicBool::new(false));
             let server_stop = Arc::clone(&stop);
-            let handle =
-                thread::spawn(move || server.run(server_stop, owner, |_, _| Ok(())).unwrap());
+            let handle = thread::spawn(move || {
+                server
+                    .run(
+                        server_stop,
+                        owner,
+                        Arc::new(crate::capture::WindowCapture::new()),
+                        crate::window_info::get_window_info_at_point,
+                        |_, _| Ok(()),
+                    )
+                    .unwrap()
+            });
             Self {
                 control,
                 stop,
@@ -1056,6 +1068,34 @@ mod tests {
                 handle.join().unwrap();
             }
         }
+    }
+
+    #[test]
+    fn macos_hello_omits_capture_capability_and_begin_is_rejected() {
+        assert_eq!(CAPABILITIES & CAPABILITY_WINDOW_CAPTURE, 0);
+        let server = RunningServer::start();
+        let mut session = Session::connect(&server.control.endpoint).unwrap();
+        assert_eq!(
+            session
+                .exchange(Request::BeginWindowCapture { capture_id: 1 })
+                .unwrap(),
+            Response::Error(ErrorCode::CaptureUnavailable)
+        );
+    }
+
+    #[test]
+    fn unavailable_capture_begin_remains_typed_after_the_idle_timeout() {
+        let server = RunningServer::start();
+
+        assert!(matches!(
+            server.control.begin_window_capture(1),
+            Err(ControlError::Rejected(ErrorCode::CaptureUnavailable))
+        ));
+        thread::sleep(IO_TIMEOUT + Duration::from_millis(100));
+        assert!(matches!(
+            server.control.begin_window_capture(2),
+            Err(ControlError::Rejected(ErrorCode::CaptureUnavailable))
+        ));
     }
 
     struct ChildGuard(Child);
@@ -1114,7 +1154,13 @@ mod tests {
         let (owner, _) = ConfigOwner::startup(&directory);
         assert_eq!(
             server
-                .run(Arc::new(AtomicBool::new(false)), owner, |_, _| Ok(()))
+                .run(
+                    Arc::new(AtomicBool::new(false)),
+                    owner,
+                    Arc::new(crate::capture::WindowCapture::new()),
+                    crate::window_info::get_window_info_at_point,
+                    |_, _| Ok(()),
+                )
                 .unwrap(),
             ServerExit::Shutdown
         );

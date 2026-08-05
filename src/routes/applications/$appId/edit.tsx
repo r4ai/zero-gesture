@@ -4,7 +4,6 @@ import {
   useNavigate,
   useParams,
 } from "@tanstack/react-router"
-import { listen } from "@tauri-apps/api/event"
 import {
   ArrowLeft,
   Check,
@@ -14,7 +13,8 @@ import {
   Trash2,
   X,
 } from "lucide-react"
-import { useEffect, useState } from "react"
+import { createContext, useContext, useEffect, useRef, useState } from "react"
+import { toast } from "sonner"
 import { SettingsFormActions } from "@/components/settings-form-actions"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -33,9 +33,15 @@ import { TextField } from "@/components/ui/textfield"
 import { useConfigDraft } from "@/contexts/config-draft"
 import {
   type ForegroundWindowInfo,
+  pollWindowCapture,
   startWindowCapture,
   stopWindowCapture,
 } from "@/lib/api"
+import { settingsErrorMessage } from "@/lib/settings-error"
+import {
+  acceptedCurrentWindowCapture,
+  isCurrentWindowCapture,
+} from "@/lib/window-capture"
 import {
   getWindowsApplication,
   type MatchMethod,
@@ -166,6 +172,9 @@ function usePickDialog() {
   const [windowInfo, setWindowInfo] = useState<ForegroundWindowInfo | null>(
     null,
   )
+  const activeCapture = useRef<Awaited<
+    ReturnType<typeof startWindowCapture>
+  > | null>(null)
 
   const isPickDialogOpen = search.pickStep === "pick"
   const isSelectDialogOpen = search.pickStep === "select"
@@ -174,24 +183,35 @@ function usePickDialog() {
   useEffect(() => {
     if (!isPickDialogOpen) return
 
-    let unlisten: (() => void) | undefined
+    let active = true
+    let token: Awaited<ReturnType<typeof startWindowCapture>> | undefined
 
     const setup = async () => {
-      // Listen for the window-captured event BEFORE starting the hook so we
-      // don't miss the event in case the hook fires very quickly.
-      unlisten = await listen<ForegroundWindowInfo>(
-        "window-captured",
-        (event) => {
-          const info = event.payload
+      token = await startWindowCapture()
+      if (!active) {
+        await stopWindowCapture(token).catch(() => {})
+        return
+      }
+      activeCapture.current = token
+      while (active) {
+        const result = await pollWindowCapture(token)
+        const info = acceptedCurrentWindowCapture(
+          active,
+          activeCapture.current,
+          token,
+          result,
+        )
+        if (info) {
+          if (!isCurrentWindowCapture(active, activeCapture.current, token))
+            return
           setWindowInfo(info)
-          // Pre-select the first populated field.
-          if (info.process_name) {
-            setSelectedDetectKey("process_name")
-          } else if (info.window_class) {
-            setSelectedDetectKey("window_class")
-          } else {
-            setSelectedDetectKey("window_title")
-          }
+          setSelectedDetectKey(
+            info.process_name
+              ? "process_name"
+              : info.window_class
+                ? "window_class"
+                : "window_title",
+          )
           navigate({
             to: "/applications/$appId/edit",
             params: { appId },
@@ -201,16 +221,29 @@ function usePickDialog() {
             },
             replace: true,
           })
-        },
-      )
-      await startWindowCapture()
+          return
+        }
+        await new Promise((resolve) => setTimeout(resolve, 200))
+      }
     }
 
-    setup().catch(console.error)
+    setup().catch((error) => {
+      if (active) {
+        console.error("Window capture failed:", error)
+        toast.error(settingsErrorMessage(error, "Window capture"))
+      }
+    })
 
     return () => {
-      stopWindowCapture().catch(console.error)
-      unlisten?.()
+      active = false
+      if (
+        token &&
+        activeCapture.current?.capture_id === token.capture_id &&
+        activeCapture.current.epoch === token.epoch
+      ) {
+        activeCapture.current = null
+      }
+      if (token) stopWindowCapture(token).catch(() => {})
     }
   }, [isPickDialogOpen, appId, navigate, activeConditionId])
 
@@ -271,6 +304,19 @@ function usePickDialog() {
     close,
     confirm,
   }
+}
+
+const PickDialogContext = createContext<ReturnType<
+  typeof usePickDialog
+> | null>(null)
+
+function usePickDialogController() {
+  const controller = useContext(PickDialogContext)
+  if (!controller)
+    throw new Error(
+      "usePickDialogController must be used within the App edit page",
+    )
+  return controller
 }
 
 function AppEditHeader() {
@@ -417,7 +463,7 @@ function ConditionCard({
 
 function ConditionsList() {
   const { appId, conditions, addCondition, isDefaultApp } = useApplication()
-  const { open: openPickDialog } = usePickDialog()
+  const { open: openPickDialog } = usePickDialogController()
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
@@ -467,7 +513,7 @@ function ConditionsList() {
 }
 
 function PickDialog() {
-  const { isPickDialogOpen, close } = usePickDialog()
+  const { isPickDialogOpen, close } = usePickDialogController()
 
   return (
     <Dialog
@@ -506,7 +552,7 @@ function SelectDialog() {
     setSelectedDetectMethod,
     close,
     confirm,
-  } = usePickDialog()
+  } = usePickDialogController()
 
   /** Display name derived from window info (process name preferred). */
   const displayName =
@@ -652,13 +698,16 @@ function SelectDialog() {
  * Based on Pencil: "Applications Settings - App Edit"
  */
 function AppEditPage() {
+  const pickDialog = usePickDialog()
   return (
-    <div className="flex h-full flex-1 flex-col bg-background">
-      <AppEditHeader />
-      <ConditionsList />
-      <SettingsFormActions />
-      <PickDialog />
-      <SelectDialog />
-    </div>
+    <PickDialogContext.Provider value={pickDialog}>
+      <div className="flex h-full flex-1 flex-col bg-background">
+        <AppEditHeader />
+        <ConditionsList />
+        <SettingsFormActions />
+        <PickDialog />
+        <SelectDialog />
+      </div>
+    </PickDialogContext.Provider>
   )
 }

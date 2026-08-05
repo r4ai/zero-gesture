@@ -7,6 +7,7 @@ import {
 import { isTauri } from "@tauri-apps/api/core"
 import { toast } from "sonner"
 import * as api from "@/lib/api"
+import { configConflictObservation } from "@/lib/settings-error"
 import { type AppConfig, DEFAULTS } from "@/types/config"
 
 export const CONFIG_QUERY_KEY = ["config"] as const
@@ -18,6 +19,16 @@ export function cacheAppliedConfig(
   result: api.ConfigApplyResult,
 ) {
   queryClient.setQueryData(CONFIG_QUERY_KEY, result.current)
+}
+
+export function cacheConfigConflict(
+  queryClient: QueryClient,
+  error: unknown,
+): boolean {
+  const current = configConflictObservation(error)
+  if (!current) return false
+  queryClient.setQueryData(CONFIG_QUERY_KEY, current)
+  return true
 }
 
 export function configMutation(
@@ -89,8 +100,8 @@ function appliedCallbacks(queryClient: QueryClient) {
         toast.warning(warning)
       }
     },
-    onError: () => {
-      queryClient.invalidateQueries({ queryKey: CONFIG_QUERY_KEY })
+    onError: (error: unknown) => {
+      cacheConfigConflict(queryClient, error)
     },
   }
 }
