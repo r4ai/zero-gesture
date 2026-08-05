@@ -41,6 +41,7 @@ const meta = {
           isDirty: args.isDirty,
           reset: args.onCancel,
           save: args.onSave,
+          adoptApplied: () => {},
           isSaving: args.isSaving,
           saveError: args.saveError,
         }}

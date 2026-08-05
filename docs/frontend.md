@@ -36,10 +36,14 @@ typed recovery状態であり、default draftを保存して修復できる。
 command errorは`code`、`operation`、`message`、`retryable`、任意の`current`を
 持つobjectとして扱い、message文字列で分類しない。revision conflictでは
 `current`をquery cacheへ反映するがdirty draftは保持し、次のretryで新revisionを
-使う。Save/Import/Export/Open Folder/window captureはcodeごとの再試行案を表示する。
+使う。Applied成功は原因を明示してbase/draft/currentを置換するため、dirty中の
+Import後に旧draftは残らない。Save/Import/Export/Open Folder/window captureは
+codeごとの再試行案を表示する。
 window captureはTauri eventをlistenせず、Engineが返す`capture_id`/`epoch`付き
 Begin/Poll/Cancelを使う。poll await後もeffect active flagとproduction refの
 current identityを再確認し、cleanup/replacement後に完了したCapturedは適用しない。
+App edit routeがcontrollerを一度だけ作り、ConditionsList/PickDialog/SelectDialogへ
+route-private Contextで共有する。
 
 ## コマンド
 

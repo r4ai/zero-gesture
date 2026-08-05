@@ -4,7 +4,11 @@
 //! click point. Window lookup and metadata collection happen later on the
 //! Engine IPC thread.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{
+    atomic::{AtomicBool, AtomicU64, Ordering},
+    Mutex,
+};
+use std::time::Instant;
 
 use crate::domain::{MouseEvent, Point, TriggerButton};
 
@@ -30,45 +34,70 @@ pub(crate) enum CapturePoll {
 pub(crate) struct WindowCapture {
     next_epoch: AtomicU64,
     state: AtomicU64,
-    owner_session: AtomicU64,
     capture_id: AtomicU64,
     point: AtomicU64,
     shut_down: AtomicBool,
+    lease: Mutex<Option<CaptureLease>>,
+}
+
+#[derive(Clone, Copy)]
+struct CaptureLease {
+    capture_id: u64,
+    epoch: u64,
+    deadline: Instant,
 }
 
 impl WindowCapture {
-    pub(crate) const fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             next_epoch: AtomicU64::new(0),
             state: AtomicU64::new(0),
-            owner_session: AtomicU64::new(0),
             capture_id: AtomicU64::new(0),
             point: AtomicU64::new(0),
             shut_down: AtomicBool::new(false),
+            lease: Mutex::new(None),
         }
     }
 
-    pub(crate) fn begin(&self, owner_session: u64, capture_id: u64) -> Result<u64, CaptureError> {
+    pub(crate) fn begin(
+        &self,
+        capture_id: u64,
+        lease_deadline: Instant,
+    ) -> Result<u64, CaptureError> {
         if self.shut_down.load(Ordering::Acquire) {
             return Err(CaptureError::Unavailable);
         }
         let epoch = self.next_epoch()?;
         self.state
             .store(pack_state(epoch, PHASE_CANCELLED), Ordering::Release);
-        self.owner_session.store(owner_session, Ordering::Relaxed);
         self.capture_id.store(capture_id, Ordering::Relaxed);
         self.state
             .store(pack_state(epoch, PHASE_ACTIVE), Ordering::Release);
+        *self.lease.lock().unwrap_or_else(|error| error.into_inner()) = Some(CaptureLease {
+            capture_id,
+            epoch,
+            deadline: lease_deadline,
+        });
         Ok(epoch)
     }
 
     pub(crate) fn poll(
         &self,
-        owner_session: u64,
         capture_id: u64,
         epoch: u64,
+        lease_deadline: Instant,
     ) -> Result<CapturePoll, CaptureError> {
-        let state = self.matching_state(owner_session, capture_id, epoch)?;
+        let state = self.matching_state(capture_id, epoch)?;
+        let mut lease = self.lease.lock().unwrap_or_else(|error| error.into_inner());
+        match lease.as_mut() {
+            Some(current) if current.capture_id == capture_id && current.epoch == epoch => {
+                current.deadline = lease_deadline;
+            }
+            _ => return Err(CaptureError::Stale),
+        }
+        if self.state.load(Ordering::Acquire) != state {
+            return Err(CaptureError::Stale);
+        }
         match phase(state) {
             PHASE_ACTIVE | PHASE_WRITING => Ok(CapturePoll::Pending),
             PHASE_CAPTURED => Ok(CapturePoll::Captured(unpack_point(
@@ -78,14 +107,9 @@ impl WindowCapture {
         }
     }
 
-    pub(crate) fn cancel(
-        &self,
-        owner_session: u64,
-        capture_id: u64,
-        epoch: u64,
-    ) -> Result<(), CaptureError> {
+    pub(crate) fn cancel(&self, capture_id: u64, epoch: u64) -> Result<(), CaptureError> {
         loop {
-            let state = self.matching_state(owner_session, capture_id, epoch)?;
+            let state = self.matching_state(capture_id, epoch)?;
             if phase(state) == PHASE_CANCELLED {
                 return Err(CaptureError::Stale);
             }
@@ -99,30 +123,49 @@ impl WindowCapture {
                 )
                 .is_ok()
             {
+                let mut lease = self.lease.lock().unwrap_or_else(|error| error.into_inner());
+                if matches!(
+                    *lease,
+                    Some(current)
+                        if current.capture_id == capture_id && current.epoch == epoch
+                ) {
+                    lease.take();
+                }
                 return Ok(());
             }
         }
     }
 
-    pub(crate) fn disconnect(&self, owner_session: u64) {
+    pub(crate) fn expire(&self, now: Instant) -> bool {
+        let expired = {
+            let mut lease = self.lease.lock().unwrap_or_else(|error| error.into_inner());
+            match *lease {
+                Some(current) if current.deadline <= now => lease.take(),
+                _ => None,
+            }
+        };
+        let Some(expired) = expired else {
+            return false;
+        };
         loop {
             let state = self.state.load(Ordering::Acquire);
-            if phase(state) == PHASE_CANCELLED
-                || self.owner_session.load(Ordering::Relaxed) != owner_session
+            if epoch(state) != expired.epoch
+                || phase(state) == PHASE_CANCELLED
+                || self.capture_id.load(Ordering::Relaxed) != expired.capture_id
             {
-                return;
+                return false;
             }
             if self
                 .state
                 .compare_exchange(
                     state,
-                    pack_state(epoch(state), PHASE_CANCELLED),
+                    pack_state(expired.epoch, PHASE_CANCELLED),
                     Ordering::AcqRel,
                     Ordering::Acquire,
                 )
                 .is_ok()
             {
-                return;
+                return true;
             }
         }
     }
@@ -130,6 +173,10 @@ impl WindowCapture {
     pub(crate) fn shutdown(&self) {
         self.shut_down.store(true, Ordering::Release);
         self.state.store(0, Ordering::Release);
+        self.lease
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .take();
     }
 
     /// Callback-facing capture operation: one state load/CAS and one point
@@ -164,15 +211,9 @@ impl WindowCapture {
             .is_ok()
     }
 
-    fn matching_state(
-        &self,
-        owner_session: u64,
-        capture_id: u64,
-        requested_epoch: u64,
-    ) -> Result<u64, CaptureError> {
+    fn matching_state(&self, capture_id: u64, requested_epoch: u64) -> Result<u64, CaptureError> {
         let state = self.state.load(Ordering::Acquire);
         let matches = epoch(state) == requested_epoch
-            && self.owner_session.load(Ordering::Relaxed) == owner_session
             && self.capture_id.load(Ordering::Relaxed) == capture_id
             && self.state.load(Ordering::Acquire) == state;
         matches.then_some(state).ok_or(CaptureError::Stale)
@@ -220,45 +261,61 @@ fn unpack_point(point: u64) -> Point {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+
+    fn deadline() -> Instant {
+        Instant::now() + Duration::from_secs(1)
+    }
 
     #[test]
     fn begin_replaces_the_active_epoch_and_stale_results_never_apply() {
         let capture = WindowCapture::new();
-        let first = capture.begin(41, 7).unwrap();
-        let second = capture.begin(41, 8).unwrap();
+        let first = capture.begin(7, deadline()).unwrap();
+        let second = capture.begin(8, deadline()).unwrap();
 
         assert!(capture.try_record(
             MouseEvent::ButtonDown(TriggerButton::Left),
             Point::new(20, 30)
         ));
-        assert_eq!(capture.poll(41, 7, first), Err(CaptureError::Stale));
+        assert_eq!(capture.poll(7, first, deadline()), Err(CaptureError::Stale));
         assert_eq!(
-            capture.poll(41, 8, second),
+            capture.poll(8, second, deadline()),
             Ok(CapturePoll::Captured(Point::new(20, 30)))
         );
     }
 
     #[test]
-    fn cancel_and_disconnect_invalidate_only_the_matching_owner() {
+    fn cancel_and_lease_expiry_invalidate_only_the_matching_capture() {
         let capture = WindowCapture::new();
-        let epoch = capture.begin(11, 100).unwrap();
-        capture.cancel(11, 100, epoch).unwrap();
+        let now = Instant::now();
+        let epoch = capture
+            .begin(100, now + Duration::from_millis(100))
+            .unwrap();
+        capture.cancel(100, epoch).unwrap();
         assert!(!capture.try_record(
             MouseEvent::ButtonDown(TriggerButton::Left),
             Point::new(1, 2)
         ));
 
-        let replacement = capture.begin(12, 101).unwrap();
-        capture.disconnect(11);
-        assert_eq!(capture.poll(12, 101, replacement), Ok(CapturePoll::Pending));
-        capture.disconnect(12);
-        assert_eq!(capture.poll(12, 101, replacement), Err(CaptureError::Stale));
+        let replacement = capture
+            .begin(101, now + Duration::from_millis(200))
+            .unwrap();
+        assert!(!capture.expire(now + Duration::from_millis(100)));
+        assert_eq!(
+            capture.poll(101, replacement, now + Duration::from_millis(200)),
+            Ok(CapturePoll::Pending)
+        );
+        assert!(capture.expire(now + Duration::from_millis(200)));
+        assert_eq!(
+            capture.poll(101, replacement, deadline()),
+            Err(CaptureError::Stale)
+        );
     }
 
     #[test]
     fn overload_or_non_capture_input_remains_fail_open() {
         let capture = WindowCapture::new();
-        capture.begin(1, 1).unwrap();
+        capture.begin(1, deadline()).unwrap();
         assert!(!capture.try_record(MouseEvent::MouseMove, Point::new(5, 6)));
         assert!(capture.try_record(
             MouseEvent::ButtonDown(TriggerButton::Left),
@@ -273,11 +330,11 @@ mod tests {
     #[test]
     fn engine_shutdown_invalidates_capture_and_rejects_new_begin() {
         let capture = WindowCapture::new();
-        let epoch = capture.begin(1, 1).unwrap();
+        let epoch = capture.begin(1, deadline()).unwrap();
         capture.shutdown();
 
-        assert_eq!(capture.poll(1, 1, epoch), Err(CaptureError::Stale));
-        assert_eq!(capture.begin(1, 2), Err(CaptureError::Unavailable));
+        assert_eq!(capture.poll(1, epoch, deadline()), Err(CaptureError::Stale));
+        assert_eq!(capture.begin(2, deadline()), Err(CaptureError::Unavailable));
         assert!(!capture.try_record(
             MouseEvent::ButtonDown(TriggerButton::Left),
             Point::new(1, 2)

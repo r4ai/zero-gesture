@@ -13,7 +13,7 @@ import {
   Trash2,
   X,
 } from "lucide-react"
-import { useEffect, useRef, useState } from "react"
+import { createContext, useContext, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import { SettingsFormActions } from "@/components/settings-form-actions"
 import { Badge } from "@/components/ui/badge"
@@ -306,6 +306,19 @@ function usePickDialog() {
   }
 }
 
+const PickDialogContext = createContext<ReturnType<
+  typeof usePickDialog
+> | null>(null)
+
+function usePickDialogController() {
+  const controller = useContext(PickDialogContext)
+  if (!controller)
+    throw new Error(
+      "usePickDialogController must be used within the App edit page",
+    )
+  return controller
+}
+
 function AppEditHeader() {
   const { appName, setAppName, isDefaultApp, deleteApp } = useApplication()
 
@@ -450,7 +463,7 @@ function ConditionCard({
 
 function ConditionsList() {
   const { appId, conditions, addCondition, isDefaultApp } = useApplication()
-  const { open: openPickDialog } = usePickDialog()
+  const { open: openPickDialog } = usePickDialogController()
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
@@ -500,7 +513,7 @@ function ConditionsList() {
 }
 
 function PickDialog() {
-  const { isPickDialogOpen, close } = usePickDialog()
+  const { isPickDialogOpen, close } = usePickDialogController()
 
   return (
     <Dialog
@@ -539,7 +552,7 @@ function SelectDialog() {
     setSelectedDetectMethod,
     close,
     confirm,
-  } = usePickDialog()
+  } = usePickDialogController()
 
   /** Display name derived from window info (process name preferred). */
   const displayName =
@@ -685,13 +698,16 @@ function SelectDialog() {
  * Based on Pencil: "Applications Settings - App Edit"
  */
 function AppEditPage() {
+  const pickDialog = usePickDialog()
   return (
-    <div className="flex h-full flex-1 flex-col bg-background">
-      <AppEditHeader />
-      <ConditionsList />
-      <SettingsFormActions />
-      <PickDialog />
-      <SelectDialog />
-    </div>
+    <PickDialogContext.Provider value={pickDialog}>
+      <div className="flex h-full flex-1 flex-col bg-background">
+        <AppEditHeader />
+        <ConditionsList />
+        <SettingsFormActions />
+        <PickDialog />
+        <SelectDialog />
+      </div>
+    </PickDialogContext.Provider>
   )
 }

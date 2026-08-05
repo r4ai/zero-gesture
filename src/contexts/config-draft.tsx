@@ -16,6 +16,7 @@ interface ConfigDraftContext {
   isDirty: boolean
   reset: () => void
   save: () => void
+  adoptApplied: (observed: api.ConfigObservation) => void
   isSaving: boolean
   saveError: string | null
 }
@@ -54,7 +55,9 @@ export function ConfigDraftProvider({ children }: { children: ReactNode }) {
   })
 
   useEffect(() => {
-    setState((current) => advanceDraftObservation(current, observed))
+    setState((current) =>
+      advanceDraftObservation(current, observed, "conflict"),
+    )
   }, [observed])
 
   const isDirty = observed.config === null || state.draft !== state.base
@@ -72,15 +75,14 @@ export function ConfigDraftProvider({ children }: { children: ReactNode }) {
       configMutation({ ...observed, revision: state.revision }, state.draft),
       {
         onSuccess: (result) => {
-          const applied = result.current.config ?? DEFAULTS
-          setState({
-            base: applied,
-            draft: applied,
-            revision: result.current.revision,
-          })
+          setState((current) =>
+            advanceDraftObservation(current, result.current, "applied"),
+          )
         },
       },
     )
+  const adoptApplied = (current: api.ConfigObservation) =>
+    setState((state) => advanceDraftObservation(state, current, "applied"))
 
   return (
     <ConfigDraftContext.Provider
@@ -90,6 +92,7 @@ export function ConfigDraftProvider({ children }: { children: ReactNode }) {
         isDirty,
         reset,
         save,
+        adoptApplied,
         isSaving: isPending,
         saveError: error ? settingsErrorMessage(error, "Save") : null,
       }}
@@ -108,12 +111,14 @@ type DraftState = {
 export function advanceDraftObservation(
   state: DraftState,
   observed: api.ConfigObservation,
+  cause: "conflict" | "applied" = "conflict",
 ): DraftState {
   if (state.revision === observed.revision) return state
   const base = observed.config ?? DEFAULTS
   return {
     base,
-    draft: state.draft === state.base ? base : state.draft,
+    draft:
+      cause === "applied" || state.draft === state.base ? base : state.draft,
     revision: observed.revision,
   }
 }

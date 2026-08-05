@@ -1083,6 +1083,21 @@ mod tests {
         );
     }
 
+    #[test]
+    fn unavailable_capture_begin_remains_typed_after_the_idle_timeout() {
+        let server = RunningServer::start();
+
+        assert!(matches!(
+            server.control.begin_window_capture(1),
+            Err(ControlError::Rejected(ErrorCode::CaptureUnavailable))
+        ));
+        thread::sleep(IO_TIMEOUT + Duration::from_millis(100));
+        assert!(matches!(
+            server.control.begin_window_capture(2),
+            Err(ControlError::Rejected(ErrorCode::CaptureUnavailable))
+        ));
+    }
+
     struct ChildGuard(Child);
 
     impl Drop for ChildGuard {

@@ -1078,7 +1078,7 @@ mod tests {
     }
 
     #[test]
-    fn stale_cancel_keeps_the_replacement_capture_session_alive() {
+    fn stale_cancel_keeps_the_replacement_capture_alive() {
         let (directory, suffix, control) = fixture();
         let server = EngineServer::for_test(directory.path(), &suffix)
             .unwrap()
@@ -1114,6 +1114,53 @@ mod tests {
             .unwrap();
         assert!(!control.shutdown().unwrap());
         assert_eq!(server_thread.join().unwrap(), ServerExit::Shutdown);
+    }
+
+    #[test]
+    fn pending_capture_does_not_block_config_control_sessions() {
+        let (directory, suffix, control) = fixture();
+        let child = spawn_helper(directory.path(), &suffix);
+        let _guard = ChildGuard::new(child, control.clone());
+        control.connect_or_start_with(|| Ok(())).unwrap();
+
+        let started = control.begin_window_capture(72).unwrap();
+        assert_eq!(
+            control
+                .poll_window_capture(started.capture_id, started.epoch)
+                .unwrap(),
+            crate::ipc::WindowCaptureObservation::Pending
+        );
+        let observed = control.current_config().unwrap();
+        let enabled = observed.config.as_ref().unwrap().shared.enabled;
+        let applied = control
+            .set_enabled(!enabled, observed.revision)
+            .expect("a pending capture must not occupy the control endpoint");
+        assert_eq!(applied.current.config.unwrap().shared.enabled, !enabled);
+
+        control
+            .cancel_window_capture(started.capture_id, started.epoch)
+            .unwrap();
+    }
+
+    #[test]
+    fn capture_polling_is_not_limited_by_one_connection_request_budget() {
+        let (directory, suffix, control) = fixture();
+        let child = spawn_helper(directory.path(), &suffix);
+        let _guard = ChildGuard::new(child, control.clone());
+        control.connect_or_start_with(|| Ok(())).unwrap();
+
+        let started = control.begin_window_capture(73).unwrap();
+        for _ in 0..super::super::protocol::MAX_REQUESTS_PER_CONNECTION {
+            assert_eq!(
+                control
+                    .poll_window_capture(started.capture_id, started.epoch)
+                    .unwrap(),
+                crate::ipc::WindowCaptureObservation::Pending
+            );
+        }
+        control
+            .cancel_window_capture(started.capture_id, started.epoch)
+            .unwrap();
     }
 
     #[test]

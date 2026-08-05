@@ -44,10 +44,10 @@
     },
     {
       "id": "P05B-LIFECYCLE-001",
-      "obligation": "Cancel and Settings connection cleanup invalidate only the matching capture owner.",
+      "obligation": "Cancel and the bounded Engine lease expiry invalidate only the matching capture.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/capture.rs",
-      "evidence_name": "cancel_and_disconnect_invalidate_only_the_matching_owner"
+      "evidence_name": "cancel_and_lease_expiry_invalidate_only_the_matching_capture"
     },
     {
       "id": "P05B-HOT-001",
@@ -65,17 +65,17 @@
     },
     {
       "id": "P05B-IPC-002",
-      "obligation": "The production native capture seam flows through Engine-owned state, an authenticated persistent session, the resolver boundary, and the typed IPC result.",
+      "obligation": "The production native capture seam flows through Engine-owned state, authenticated short sessions, the resolver boundary, and the typed IPC result.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/ipc/windows.rs",
       "evidence_name": "native_capture_result_flows_through_engine_session_and_protocol"
     },
     {
       "id": "P05B-LIFECYCLE-003",
-      "obligation": "A stale cancel does not drop the authenticated session or invalidate the replacement capture.",
+      "obligation": "A stale cancel does not invalidate the replacement capture.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/src/ipc/windows.rs",
-      "evidence_name": "stale_cancel_keeps_the_replacement_capture_session_alive"
+      "evidence_name": "stale_cancel_keeps_the_replacement_capture_alive"
     },
     {
       "id": "P05B-IPC-003",
@@ -92,11 +92,32 @@
       "evidence_name": "oversized_capture_metadata_returns_typed_backend_failure"
     },
     {
+      "id": "P05B-IPC-005",
+      "obligation": "A pending capture releases the transport so independent GetConfig and SetEnabled control sessions complete.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "pending_capture_does_not_block_config_control_sessions"
+    },
+    {
+      "id": "P05B-IPC-006",
+      "obligation": "Capture polling uses short authenticated sessions and remains outside one connection's request budget.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/ipc/windows.rs",
+      "evidence_name": "capture_polling_is_not_limited_by_one_connection_request_budget"
+    },
+    {
       "id": "P05B-MACOS-001",
       "obligation": "macOS omits the deferred Windows capture capability and rejects BeginWindowCapture as unavailable.",
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/ipc/macos.rs",
       "evidence_name": "macos_hello_omits_capture_capability_and_begin_is_rejected"
+    },
+    {
+      "id": "P05B-MACOS-002",
+      "obligation": "A terminal unavailable Begin drops its client session so a second Begin after the idle timeout remains typed.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/ipc/macos.rs",
+      "evidence_name": "unavailable_capture_begin_remains_typed_after_the_idle_timeout"
     }
   ]
 }

@@ -13,7 +13,7 @@ use std::path::Path;
 use std::process::Command;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
+    Arc,
 };
 use std::thread;
 use std::time::{Duration, Instant};
@@ -25,6 +25,8 @@ pub(super) const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 pub(super) const RETRY_INTERVAL: Duration = Duration::from_millis(40);
 pub(super) const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(2);
 pub(super) const TERMINAL_RESPONSE_GRACE: Duration = Duration::from_millis(100);
+pub(super) const CAPTURE_LEASE_TIMEOUT: Duration = Duration::from_secs(2);
+const CAPTURE_LEASE_SWEEP_INTERVAL: Duration = Duration::from_millis(50);
 pub(crate) type CaptureResolver = fn(Point) -> Result<crate::window_info::ForegroundWindowInfo, ()>;
 
 #[derive(Debug)]
@@ -86,7 +88,6 @@ impl ControlError {
 #[derive(Clone)]
 pub struct EngineControl {
     pub(super) endpoint: platform::Endpoint,
-    capture_session: Arc<Mutex<Option<Session>>>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
@@ -165,7 +166,6 @@ impl EngineControl {
         let suffix = String::new();
         let control = Self {
             endpoint: platform::Endpoint::current_user(config_dir, &suffix)?,
-            capture_session: Arc::new(Mutex::new(None)),
         };
         control.connect_or_start_with(|| {
             Command::new(executable)
@@ -306,7 +306,6 @@ impl EngineControl {
     }
 
     pub fn shutdown(&self) -> Result<bool, ControlError> {
-        self.drop_capture_session()?;
         let mut session = Session::connect(&self.endpoint)?;
         match session.exchange(Request::Shutdown)? {
             Response::Shutdown { already_requested } => Ok(already_requested),
@@ -319,16 +318,7 @@ impl EngineControl {
         &self,
         capture_id: u64,
     ) -> Result<WindowCaptureStarted, ControlError> {
-        let mut sessions = self
-            .capture_session
-            .lock()
-            .map_err(|_| ControlError::Protocol(ProtocolError::InvalidMessage))?;
-        if sessions.is_none() {
-            *sessions = Some(Session::connect(&self.endpoint)?);
-        }
-        let session = sessions
-            .as_mut()
-            .expect("capture session was inserted above");
+        let mut session = Session::connect(&self.endpoint)?;
         match session.exchange(Request::BeginWindowCapture { capture_id })? {
             Response::WindowCaptureStarted { capture_id, epoch } => {
                 Ok(WindowCaptureStarted { capture_id, epoch })
@@ -343,13 +333,7 @@ impl EngineControl {
         capture_id: u64,
         epoch: u64,
     ) -> Result<WindowCaptureObservation, ControlError> {
-        let mut sessions = self
-            .capture_session
-            .lock()
-            .map_err(|_| ControlError::Protocol(ProtocolError::InvalidMessage))?;
-        let session = sessions
-            .as_mut()
-            .ok_or(ControlError::Rejected(ErrorCode::CaptureStale))?;
+        let mut session = Session::connect(&self.endpoint)?;
         match session.exchange(Request::PollWindowCapture { capture_id, epoch })? {
             Response::WindowCapture {
                 capture_id: actual_id,
@@ -375,32 +359,15 @@ impl EngineControl {
         capture_id: u64,
         epoch: u64,
     ) -> Result<(), ControlError> {
-        let mut sessions = self
-            .capture_session
-            .lock()
-            .map_err(|_| ControlError::Protocol(ProtocolError::InvalidMessage))?;
-        let session = sessions
-            .as_mut()
-            .ok_or(ControlError::Rejected(ErrorCode::CaptureStale))?;
+        let mut session = Session::connect(&self.endpoint)?;
         match session.exchange(Request::CancelWindowCapture { capture_id, epoch })? {
             Response::WindowCaptureCancelled {
                 capture_id: actual_id,
                 epoch: actual_epoch,
-            } if actual_id == capture_id && actual_epoch == epoch => {
-                sessions.take();
-                Ok(())
-            }
+            } if actual_id == capture_id && actual_epoch == epoch => Ok(()),
             Response::Error(code) => Err(ControlError::Rejected(code)),
             _ => Err(ControlError::Protocol(ProtocolError::InvalidMessage)),
         }
-    }
-
-    fn drop_capture_session(&self) -> Result<(), ControlError> {
-        self.capture_session
-            .lock()
-            .map_err(|_| ControlError::Protocol(ProtocolError::InvalidMessage))?
-            .take();
-        Ok(())
     }
 
     pub(super) fn connect_or_start_with(
@@ -439,14 +406,12 @@ impl EngineControl {
     pub(super) fn for_test(config_dir: &Path, suffix: &str) -> Result<Self, ControlError> {
         Ok(Self {
             endpoint: platform::Endpoint::current_user(config_dir, suffix)?,
-            capture_session: Arc::new(Mutex::new(None)),
         })
     }
 
     pub(crate) fn for_prepared_server(server: &EngineServer) -> Self {
         Self {
             endpoint: server.endpoint.clone(),
-            capture_session: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -512,25 +477,46 @@ impl EngineServer {
         let started_at = Instant::now();
         let mut next_session = 1_u64;
 
-        while !stop.load(Ordering::Acquire) {
-            let Some(mut connection) = transport.accept(&stop)? else {
-                return Ok(ServerExit::Stopped);
-            };
-            let session = next_session;
-            next_session = next_session.checked_add(1).unwrap_or(1);
-            let mut context = ConnectionContext {
-                started_at,
-                config_owner: &mut config_owner,
-                capture: &capture,
-                resolve_capture,
-                session,
-                on_applied: &mut on_applied,
-            };
-            if serve_connection(&mut connection, &secret, &mut context)? {
-                return Ok(ServerExit::Shutdown);
+        let lease_worker = (CAPABILITIES & protocol::CAPABILITY_WINDOW_CAPTURE != 0).then(|| {
+            let lease_stop = Arc::new(AtomicBool::new(false));
+            let capture = Arc::clone(&capture);
+            let worker_stop = Arc::clone(&lease_stop);
+            let handle = thread::spawn(move || {
+                while !worker_stop.load(Ordering::Acquire) {
+                    thread::sleep(CAPTURE_LEASE_SWEEP_INTERVAL);
+                    capture.expire(Instant::now());
+                }
+            });
+            (lease_stop, handle)
+        });
+        let result = (|| {
+            while !stop.load(Ordering::Acquire) {
+                let Some(mut connection) = transport.accept(&stop)? else {
+                    return Ok(ServerExit::Stopped);
+                };
+                let session = next_session;
+                next_session = next_session.checked_add(1).unwrap_or(1);
+                let mut context = ConnectionContext {
+                    started_at,
+                    config_owner: &mut config_owner,
+                    capture: &capture,
+                    resolve_capture,
+                    session,
+                    on_applied: &mut on_applied,
+                };
+                if serve_connection(&mut connection, &secret, &mut context)? {
+                    return Ok(ServerExit::Shutdown);
+                }
             }
+            Ok(ServerExit::Stopped)
+        })();
+        if let Some((lease_stop, lease_worker)) = lease_worker {
+            lease_stop.store(true, Ordering::Release);
+            lease_worker
+                .join()
+                .map_err(|_| ControlError::projection("capture lease worker panicked"))?;
         }
-        Ok(ServerExit::Stopped)
+        result
     }
 }
 
@@ -550,7 +536,6 @@ fn serve_connection(
 ) -> Result<bool, ControlError> {
     let result = serve_connection_inner(connection, secret, context);
     context.config_owner.disconnect(context.session);
-    context.capture.disconnect(context.session);
     match result {
         Err(error @ ControlError::ProjectionFailed(_)) => Err(error),
         Err(_) => Ok(false),
@@ -748,7 +733,10 @@ fn dispatch_request(
             Err(error) => Response::Error(config_error_code(error)),
         },
         Request::BeginWindowCapture { capture_id } => {
-            match context.capture.begin(context.session, capture_id) {
+            match context
+                .capture
+                .begin(capture_id, Instant::now() + CAPTURE_LEASE_TIMEOUT)
+            {
                 Ok(epoch) => {
                     debug!("window capture id={capture_id} epoch={epoch} phase=begin");
                     Response::WindowCaptureStarted { capture_id, epoch }
@@ -761,7 +749,10 @@ fn dispatch_request(
             }
         }
         Request::PollWindowCapture { capture_id, epoch } => {
-            match context.capture.poll(context.session, capture_id, epoch) {
+            match context
+                .capture
+                .poll(capture_id, epoch, Instant::now() + CAPTURE_LEASE_TIMEOUT)
+            {
                 Ok(CapturePoll::Pending) => Response::WindowCapture {
                     capture_id,
                     epoch,
@@ -805,7 +796,7 @@ fn dispatch_request(
             }
         }
         Request::CancelWindowCapture { capture_id, epoch } => {
-            match context.capture.cancel(context.session, capture_id, epoch) {
+            match context.capture.cancel(capture_id, epoch) {
                 Ok(()) => {
                     debug!("window capture id={capture_id} epoch={epoch} phase=cancel");
                     Response::WindowCaptureCancelled { capture_id, epoch }

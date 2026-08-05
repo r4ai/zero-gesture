@@ -45,8 +45,9 @@ On revision conflict, the Rust bridge queries the Engine for its current
 observation and includes it in `current` when available. TanStack Query adopts
 that observation. The draft state advances its retry revision and base without
 replacing a dirty draft. A retry therefore submits the user's unchanged draft
-against the observed current revision. Applied continues to replace cache,
-base, and draft with the Engine-returned observation.
+against the observed current revision. Applied, including Import, explicitly
+replaces cache, base, draft, and revision with the Engine-returned observation;
+an older dirty draft cannot overwrite an imported document on the next Save.
 
 ### Engine-owned window capture
 
@@ -60,16 +61,24 @@ CancelWindowCapture(capture_id, epoch) -> WindowCaptureCancelled
 
 Only one capture is active. Engine assigns a monotonically increasing epoch;
 `capture_id` identifies the Settings request. Every poll/cancel/result carries
-both values. Replaced, cancelled, disconnected, or shut-down epochs return a
+both values. Replaced, cancelled, lease-expired, or shut-down epochs return a
 typed stale/unavailable error and cannot update the UI.
 
-Settings keeps one authenticated capture pipe session open from begin through
-poll/cancel. Closing Settings closes that session; the existing connection
-cleanup invalidates its capture within the bounded pipe timeout. New begin on
-the same session replaces the prior epoch. A stale cancel keeps that session
-and replacement alive; only the matching successful cancel drops it. Engine
-shutdown invalidates the mailbox before worker teardown. No transport, secret,
-endpoint, singleton, or external API is added.
+Each Begin, Poll, and Cancel uses a short authenticated current-user pipe
+session. Capture ownership is the unforgeable authenticated request plus the
+`capture_id`/Engine epoch pair, not the lifetime of a transport connection.
+Pending capture therefore never occupies the single pipe instance and cannot
+block GetConfig, SetEnabled, or another control operation. It also cannot
+accumulate the per-connection request budget. A terminal Begin failure drops
+its short client session before the next attempt.
+
+Each successful Begin or matching Poll establishes or refreshes a two-second
+Engine lease. A 50 ms Engine worker sweep cancels an expired matching epoch
+outside the callback, while normal dialog cleanup sends an explicit Cancel.
+This preserves bounded cleanup for Settings close/disconnect without keeping a
+pipe open. A stale cancel cannot invalidate a replacement. Engine shutdown
+invalidates the mailbox before worker teardown. No transport, secret, endpoint,
+singleton, or external API is added.
 
 The existing Engine `WH_MOUSE_LL` callback is the only Windows capture input
 source. On a real left-button down it performs one fixed state load/CAS, stores
@@ -82,12 +91,14 @@ run later on the Engine IPC thread. Ordinary logs never include title, path,
 config contents, or IPC secret.
 
 The old Settings-owned hook, mutex handle, and `window-captured` Tauri event are
-removed. React polls the typed command and applies a captured value only when
-the effect is still active and a production ref still names the requested id
-and epoch. Cleanup or replacement therefore rejects a captured poll that
-finishes later. Each metadata field is checked at the 4 KiB UTF-8 byte
-boundary before response encoding; overflow returns typed
-`capture-backend-failed` without disconnecting the pipe.
+removed. The App edit route creates one route-private capture controller and
+shares it with ConditionsList, PickDialog, and SelectDialog. One open therefore
+issues one Begin, and Captured metadata remains available to SelectDialog.
+React applies a captured value only when the effect is still active and a
+production ref still names the requested id and epoch. Cleanup or replacement
+therefore rejects a captured poll that finishes later. Each metadata field is
+checked at the 4 KiB UTF-8 byte boundary before response encoding; overflow
+returns typed `capture-backend-failed` without disconnecting the pipe.
 
 Only Windows advertises the capture capability. macOS compiles the shared
 protocol but omits the capability and returns `capture-unavailable` for
@@ -95,21 +106,24 @@ begin/poll/cancel until its native input owner is connected in a later phase.
 
 ## Verification
 
-`contracts/p05b-windows-settings-control.json` maps fourteen independent Rust
-obligations to fourteen unique tests: `O = 14`, `O_v = 14`, `U = 0`, `T = 14`,
-`T_u = 10`, `T_i = 4`, and `T_e = 0`.
+`contracts/p05b-windows-settings-control.json` maps seventeen independent Rust
+obligations to seventeen unique tests: `O = 17`, `O_v = 17`, `U = 0`, `T = 17`,
+`T_u = 10`, `T_i = 7`, and `T_e = 0`.
 
-The integration case drives the same crate-private native capture function
+The integration cases drive the same crate-private native capture function
 called by the production callback, the Engine atomic state, authenticated
-persistent Named Pipe session, injected Win32 metadata system boundary, closed
-codec, and client observation. Unit cases cover replace/stale, cancel,
-disconnect, shutdown, duplicate/overload fail-open, capture codec identity,
-typed error categories, conflict current revision, Commit persistence, and
+short Named Pipe sessions, injected Win32 metadata system boundary, closed
+codec, and client observation. Unit cases cover replace/stale, cancel/lease
+expiry, shutdown, duplicate/overload fail-open, capture codec identity, typed
+error categories, conflict current revision, Commit persistence, and
 enable-disable operation identity. Regression cases cover stale cancel versus
-replacement, the exact/overflow metadata boundary and typed server rejection,
-plus macOS capability omission. Frontend unit tests additionally cover
-code-only error presentation, conflict cache adoption, dirty-draft
-preservation, and post-cleanup stale result rejection. The Settings actions Storybook
+replacement, Pending capture concurrent with GetConfig/SetEnabled, polling
+beyond one connection budget, the exact/overflow metadata boundary and typed
+server rejection, macOS capability omission, and repeated macOS unavailable
+Begin after idle timeout. Frontend tests additionally cover code-only error
+presentation, conflict cache adoption, dirty-draft preservation, dirty Import
+replacement, post-cleanup stale result rejection, and one page-owned controller
+carrying Captured metadata into SelectDialog. The Settings actions Storybook
 interaction verifies that a retryable failure is visible and Save remains
 retryable.
 
@@ -131,6 +145,6 @@ updating and any public capture/config framework are outside scope.
 Settings failures are actionable without string parsing, conflicts preserve
 user work, and window capture now follows the same Engine ownership and
 fail-open callback budget as normal Windows input. The protocol adds explicit
-internal cases and a short-lived persistent session, but no general actor/RPC
-framework, trait hierarchy, global coordinator, transport, dependency, or
-resident WebView.
+internal cases, short authenticated requests, and one bounded lease sweep, but
+no general actor/RPC framework, trait hierarchy, global coordinator, transport,
+dependency, or resident WebView.

@@ -114,15 +114,17 @@ P05bではSettings command failureを`code`、`operation`、`retryable`、
 parseせずcodeでrevision conflict、Engine unavailable/disconnected、validation、
 rejected input、filesystem、platform、backend failureを表示する。conflict時は
 Engineのcurrent revision/configをquery cacheへ反映するがdirty draftは保持し、
-retryだけが新revisionを使う。Applied成功とschema v2は変更せず、
+retryだけが新revisionを使う。Applied成功（Importを含む）はEngine observationで
+base/draft/currentを置換する。schema v2は変更せず、
 `durability_warning`も成功結果として表示する。
 
 window captureはSettings processの別hook/eventを持たない。protocol v3の
-Begin/Poll/Cancelは`capture_id`とEngineの単調`epoch`を必須にし、一つの
-authenticated Named Pipe sessionが一つのactive captureを所有する。既存Engine
+Begin/Poll/Cancelは`capture_id`とEngineの単調`epoch`を必須にし、各操作を短い
+authenticated Named Pipe sessionで行うためPending中も他controlを占有しない。
+App edit routeは一つのcontrollerを三consumerへ共有する。既存Engine
 callbackはreal left-downでatomic phase CASとraw point格納だけを行う。window/app/
-class/title解決、IPC、ログはcallback外で行い、replace/cancel/disconnect/shutdown
-後のstale epochを返さない。metadataはfieldごとに4 KiB UTF-8境界で検証し、
+class/title解決、IPC、ログ、2秒leaseの50 ms sweepはcallback外で行い、
+replace/cancel/lease expiry/shutdown後のstale epochを返さない。metadataはfieldごとに4 KiB UTF-8境界で検証し、
 macOSは共有protocolをcompileするだけでcapture capabilityを広告しない。詳細は
 [ADR 0020](./adr/0020-engine-owned-windows-settings-control.md)を正とする。
 

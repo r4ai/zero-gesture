@@ -48,4 +48,31 @@ describe("config draft observation", () => {
       revision: 6,
     })
   })
+
+  it("replaces a dirty draft with the config returned by a successful Import", () => {
+    const draft = {
+      ...DEFAULTS,
+      shared: { ...DEFAULTS.shared, enabled: false },
+    }
+    const imported = {
+      revision: 9,
+      generation: 9,
+      config: {
+        ...DEFAULTS,
+        shared: { ...DEFAULTS.shared, locale: "ja-JP" },
+      },
+    }
+
+    expect(
+      advanceDraftObservation(
+        { base: DEFAULTS, draft, revision: 8 },
+        imported,
+        "applied",
+      ),
+    ).toEqual({
+      base: imported.config,
+      draft: imported.config,
+      revision: 9,
+    })
+  })
 })
