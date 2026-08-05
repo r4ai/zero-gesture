@@ -363,7 +363,7 @@ fn second_settings_forwards_to_the_existing_window_and_exits() {
         unsafe { PostMessageW(window, WM_SYSCOMMAND, SC_MINIMIZE as usize, 0) },
         0
     );
-    let deadline = Instant::now() + START_TIMEOUT;
+    let deadline = Instant::now() + SETTINGS_RUNTIME_TIMEOUT;
     while unsafe { IsIconic(window) } == 0 {
         assert!(
             Instant::now() < deadline,

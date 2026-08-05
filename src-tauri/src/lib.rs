@@ -697,14 +697,6 @@ fn run_settings() -> Result<(), String> {
             app.manage(ThreadRuntime::settings());
             app.manage(commands::CaptureState(std::sync::Mutex::new(None)));
             tray::show_settings_window(app.handle())?;
-            #[cfg(all(windows, debug_assertions))]
-            if std::env::var_os("ZG_P05A_TEST_EXIT_SETTINGS_AFTER_READY").is_some() {
-                let app = app.handle().clone();
-                std::thread::spawn(move || {
-                    let exit_app = app.clone();
-                    let _ = app.run_on_main_thread(move || exit_app.exit(0));
-                });
-            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -724,6 +716,12 @@ fn run_settings() -> Result<(), String> {
         .map_err(|error| format!("failed to build Settings: {error}"))?;
 
     app.run(|app, event| {
+        #[cfg(all(windows, debug_assertions))]
+        if matches!(event, tauri::RunEvent::Ready)
+            && std::env::var_os("ZG_P05A_TEST_EXIT_SETTINGS_AFTER_READY").is_some()
+        {
+            app.exit(0);
+        }
         if let tauri::RunEvent::ExitRequested { .. } = event {
             if let Some(runtime) = app.try_state::<ThreadRuntime>() {
                 let _ = runtime.shutdown();
