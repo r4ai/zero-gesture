@@ -9,17 +9,17 @@
     },
     {
       "id": "P04B3A-ISOLATION-001",
-      "obligation": "The Event Tap callback stops at the normalized queue and only the run-loop owner drains captured input.",
+      "obligation": "The actual Event Tap callback returns a real self-tagged CGEvent without queueing it and normalizes a real foreign-tagged CGEvent into the queue.",
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/hook/macos.rs",
-      "evidence_name": "callback_capture_stops_at_the_queue_before_context_resolution"
+      "evidence_name": "actual_callback_filters_self_and_enqueues_a_real_foreign_event"
     },
     {
       "id": "P04B3A-ISOLATION-002",
-      "obligation": "The Event Tap callback reaches context and action workers only after foreign input crosses the normalized queue into the production owner step.",
+      "obligation": "The actual Event Tap callback only enqueues foreign input; the shared production run-loop drain leaf later invokes the context and action consumer from that same TapState queue.",
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/hook/macos.rs",
-      "evidence_name": "callback_queue_is_the_only_bridge_to_context_and_action_workers"
+      "evidence_name": "actual_callback_only_enqueues_and_actual_drain_later_invokes_consumer"
     },
     {
       "id": "P04B3A-REQUEST-001",

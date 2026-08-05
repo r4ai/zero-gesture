@@ -63,6 +63,7 @@ const SYSTEM_AX_FUNCTIONS: AxFunctions = AxFunctions {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ContextRequest {
+    request_id: u64,
     point: Point,
     tick: u32,
 }
@@ -82,6 +83,7 @@ struct ContextIdentity {
 
 #[derive(Clone, Copy)]
 struct ResolvedContext {
+    request_id: u64,
     view: ContextView,
     identity: ContextIdentity,
 }
@@ -112,6 +114,7 @@ struct WorkerResources {
 
 struct RequestMailbox {
     sequence: AtomicU64,
+    request_id: AtomicU64,
     point: AtomicU64,
     tick: AtomicU32,
     wake: Sender<()>,
@@ -123,6 +126,7 @@ impl RequestMailbox {
         (
             Arc::new(Self {
                 sequence: AtomicU64::new(0),
+                request_id: AtomicU64::new(0),
                 point: AtomicU64::new(0),
                 tick: AtomicU32::new(0),
                 wake,
@@ -134,6 +138,7 @@ impl RequestMailbox {
     fn publish(&self, request: ContextRequest) {
         let writing = self.sequence.fetch_add(1, Ordering::AcqRel) + 1;
         debug_assert_eq!(writing & 1, 1);
+        self.request_id.store(request.request_id, Ordering::Relaxed);
         self.point
             .store(pack_point(request.point), Ordering::Relaxed);
         self.tick.store(request.tick, Ordering::Relaxed);
@@ -147,11 +152,13 @@ impl RequestMailbox {
             if before & 1 != 0 {
                 continue;
             }
+            let request_id = self.request_id.load(Ordering::Relaxed);
             let point = self.point.load(Ordering::Relaxed);
             let tick = self.tick.load(Ordering::Relaxed);
             fence(Ordering::Acquire);
             if self.sequence.load(Ordering::Relaxed) == before {
                 return ContextRequest {
+                    request_id,
                     point: unpack_point(point),
                     tick,
                 };
@@ -163,6 +170,7 @@ impl RequestMailbox {
 struct SnapshotMailbox {
     sequence: AtomicU64,
     valid: AtomicBool,
+    request_id: AtomicU64,
     generation: AtomicU64,
     binding_set: AtomicU64,
     target: AtomicU64,
@@ -179,6 +187,7 @@ impl SnapshotMailbox {
         Self {
             sequence: AtomicU64::new(0),
             valid: AtomicBool::new(false),
+            request_id: AtomicU64::new(0),
             generation: AtomicU64::new(0),
             binding_set: AtomicU64::new(0),
             target: AtomicU64::new(0),
@@ -195,6 +204,7 @@ impl SnapshotMailbox {
         let writing = self.sequence.fetch_add(1, Ordering::AcqRel) + 1;
         debug_assert_eq!(writing & 1, 1);
         if let Some(context) = context {
+            self.request_id.store(context.request_id, Ordering::Relaxed);
             let view = context.view;
             let identity = context.identity;
             self.generation.store(view.generation, Ordering::Relaxed);
@@ -224,6 +234,7 @@ impl SnapshotMailbox {
                 continue;
             }
             let valid = self.valid.load(Ordering::Relaxed);
+            let request_id = self.request_id.load(Ordering::Relaxed);
             let generation = self.generation.load(Ordering::Relaxed);
             let binding_set = self.binding_set.load(Ordering::Relaxed);
             let target = self.target.load(Ordering::Relaxed);
@@ -245,6 +256,7 @@ impl SnapshotMailbox {
                 return None;
             }
             return Some(ResolvedContext {
+                request_id,
                 view: ContextView {
                     generation,
                     binding_set,
@@ -283,8 +295,9 @@ pub(super) struct ContextWorker {
     preflight_complete: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
     last_request_tick: Option<u32>,
+    next_request_id: u64,
+    minimum_request_id: u64,
     needed: bool,
-    awaiting_snapshot: bool,
 }
 
 impl ContextWorker {
@@ -341,8 +354,9 @@ impl ContextWorker {
             preflight_complete,
             handle: Some(handle),
             last_request_tick: None,
+            next_request_id: 0,
+            minimum_request_id: 0,
             needed: true,
-            awaiting_snapshot: false,
         })
     }
 
@@ -352,7 +366,9 @@ impl ContextWorker {
         }
         self.needed = needed;
         self.last_request_tick = None;
-        self.awaiting_snapshot = true;
+        if !needed {
+            self.minimum_request_id = self.next_request_id;
+        }
     }
 
     pub(super) fn observe(&mut self, event: MouseEvent, point: Point, timestamp_ns: u64) {
@@ -361,7 +377,16 @@ impl ContextWorker {
         }
         let tick = (timestamp_ns / 1_000_000) as u32;
         if request_due(self.last_request_tick, event, tick) {
-            self.requests.publish(ContextRequest { point, tick });
+            if self.next_request_id == u64::MAX {
+                self.minimum_request_id = u64::MAX;
+                return;
+            }
+            self.next_request_id += 1;
+            self.requests.publish(ContextRequest {
+                request_id: self.next_request_id,
+                point,
+                tick,
+            });
             self.last_request_tick = Some(tick);
         }
     }
@@ -370,18 +395,10 @@ impl ContextWorker {
         if !self.needed {
             return None;
         }
-        let current = self
-            .snapshots
+        self.snapshots
             .latest(point, tick)
-            .map(|context| context.view);
-        if self.awaiting_snapshot {
-            let current =
-                current.filter(|context| self.last_request_tick == Some(context.updated_tick));
-            self.awaiting_snapshot = current.is_none();
-            current
-        } else {
-            current
-        }
+            .filter(|context| context.request_id > self.minimum_request_id)
+            .map(|context| context.view)
     }
 
     pub(super) fn shutdown(self) {}
@@ -557,6 +574,7 @@ fn resolve_native(reader: &ConfigSnapshotReader, request: ContextRequest) -> Res
         window_fingerprint: observation.window_fingerprint,
     };
     Ok(ResolvedContext {
+        request_id: request.request_id,
         view: ContextView {
             generation: snapshot.generation(),
             binding_set,
@@ -1033,6 +1051,7 @@ mod tests {
 
     fn resolved(identity: ContextIdentity, point: Point, tick: u32) -> ResolvedContext {
         ResolvedContext {
+            request_id: 1,
             view: ContextView {
                 generation: 3,
                 binding_set: BindingSetId::from_index(1).unwrap(),
@@ -1041,6 +1060,13 @@ mod tests {
                 updated_tick: tick,
             },
             identity,
+        }
+    }
+
+    fn resolved_request(identity: ContextIdentity, request: ContextRequest) -> ResolvedContext {
+        ResolvedContext {
+            request_id: request.request_id,
+            ..resolved(identity, request.point, request.tick)
         }
     }
 
@@ -1066,7 +1092,7 @@ mod tests {
         let first_resolution = AtomicBool::new(true);
         let mut worker = ContextWorker::spawn_with(reader, allowed, move |_, request| {
             if first_resolution.swap(false, Ordering::AcqRel) {
-                Ok(resolved(identity(41, 100, 9), request.point, request.tick))
+                Ok(resolved_request(identity(41, 100, 9), request))
             } else {
                 Err(failure)
             }
@@ -1113,7 +1139,7 @@ mod tests {
     }
 
     fn fake_resolver(_: &ConfigSnapshotReader, request: ContextRequest) -> Resolution {
-        Ok(resolved(identity(71, 200, 11), request.point, request.tick))
+        Ok(resolved_request(identity(71, 200, 11), request))
     }
 
     fn reader() -> (tempfile::TempDir, ConfigSnapshotReader) {
@@ -1269,14 +1295,17 @@ mod tests {
     fn request_mailbox_is_bounded_and_coalesces_to_the_latest_request() {
         let (mailbox, wake) = RequestMailbox::new();
         mailbox.publish(ContextRequest {
+            request_id: 1,
             point: Point::new(1, 1),
             tick: 1,
         });
         mailbox.publish(ContextRequest {
+            request_id: 2,
             point: Point::new(2, 2),
             tick: 2,
         });
         mailbox.publish(ContextRequest {
+            request_id: 3,
             point: Point::new(3, 3),
             tick: 3,
         });
@@ -1286,6 +1315,7 @@ mod tests {
         assert_eq!(
             mailbox.latest(),
             ContextRequest {
+                request_id: 3,
                 point: Point::new(3, 3),
                 tick: 3,
             }
@@ -1444,25 +1474,49 @@ mod tests {
     }
 
     #[test]
-    fn context_need_transition_invalidates_the_latest_snapshot() {
+    fn same_tick_pre_invalidation_result_is_rejected_until_new_request_completes() {
         let (_directory, reader) = reader();
-        let mut worker = ContextWorker::spawn_with(reader, allowed, fake_resolver).unwrap();
+        let first_call = Arc::new(AtomicBool::new(true));
+        let resolver_first_call = Arc::clone(&first_call);
+        let (started, started_rx) = bounded(2);
+        let (release_old, release_old_rx) = bounded(1);
+        let (release_new, release_new_rx) = bounded(1);
+        let mut worker = ContextWorker::spawn_with(reader, allowed, move |_, request| {
+            let old = resolver_first_call.swap(false, Ordering::AcqRel);
+            started.send(old).unwrap();
+            if old {
+                release_old_rx.recv().unwrap();
+                Ok(resolved_request(identity(41, 100, 9), request))
+            } else {
+                release_new_rx.recv().unwrap();
+                Ok(resolved_request(identity(42, 100, 9), request))
+            }
+        })
+        .unwrap();
         let point = Point::new(12, 34);
         worker.observe(MouseEvent::MouseMove, point, 25_000_000);
-        assert!(wait_until(Duration::from_millis(200), || {
-            worker.latest(point, 25).is_some()
-        }));
+        assert_eq!(
+            started_rx.recv_timeout(Duration::from_millis(200)),
+            Ok(true)
+        );
 
         worker.set_needed(false);
-        assert!(worker.latest(point, 25).is_none());
         worker.set_needed(true);
-        assert!(worker.latest(point, 25).is_none());
+        worker.observe(MouseEvent::MouseMove, point, 25_000_000);
+        release_old.send(()).unwrap();
+        assert_eq!(
+            started_rx.recv_timeout(Duration::from_millis(200)),
+            Ok(false)
+        );
+        let old_result_was_rejected = worker.latest(point, 25).is_none();
 
-        let next_point = Point::new(13, 35);
-        worker.observe(MouseEvent::MouseMove, next_point, 26_000_000);
+        release_new.send(()).unwrap();
         assert!(wait_until(Duration::from_millis(200), || {
-            worker.latest(next_point, 26).is_some()
+            worker
+                .latest(point, 25)
+                .is_some_and(|context| context.target == target_token(identity(42, 100, 9)))
         }));
+        assert!(old_result_was_rejected);
         worker.shutdown();
     }
 

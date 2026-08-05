@@ -114,10 +114,10 @@
     },
     {
       "id": "P04B3B-CONTEXT-005",
-      "obligation": "A transition to context-not-needed invalidates the latest snapshot, and re-enabling begins from Unknown.",
+      "obligation": "A context-not-needed transition records a monotonic request-id boundary, so a same-tick pre-transition completion is rejected and only a later request id can restore context while point and tick freshness checks remain required.",
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/hook/macos_context.rs",
-      "evidence_name": "context_need_transition_invalidates_the_latest_snapshot"
+      "evidence_name": "same_tick_pre_invalidation_result_is_rejected_until_new_request_completes"
     }
   ]
 }

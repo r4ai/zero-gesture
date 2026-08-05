@@ -37,7 +37,12 @@ binding is usable and remains limited to one request per 25 ms. Button-down is
 immediate only when its trigger has a binding. Button-up, wheel, unrelated
 button-down, and other events do not create context work. A transition to
 disabled, bindingless, or unavailable configuration invalidates the latest
-snapshot to Unknown; re-enabling starts from Unknown.
+snapshot to Unknown. Each submitted request carries one owner-issued
+monotonic `u64` request id through the coalescing mailbox, resolver, and
+numeric snapshot. The transition records the last issued id, so re-enabling
+accepts only a later request id even when an old completion has the same
+wrapping millisecond tick. Exact-point and 100 ms wrapping-tick freshness
+checks remain additional requirements.
 
 One concrete `macos-action` worker owns Core Graphics event creation and
 posting. The run-loop sends the existing `Action` value plus session and
@@ -144,14 +149,19 @@ obligations to seventeen uniquely named tests: `O = 17`, `O_v = 17`, `U = 0`,
 `T = 17`, `T_u = 17`, `T_i = 0`, `T_e = 0`, `T_r = 0`, `P = 0`, `D = 0`,
 and `F = 0`.
 
-The deterministic core and concrete function-pointer seams verify the actual
-callback's source-user-data field read and self-marker short circuit before
-later raw reads, different-marker normalization/enqueue, marker copy order,
+The deterministic core and concrete function-pointer seams verify the
+source-user-data field read and self-marker short circuit before later raw
+reads. macOS tests create real CGEvents without posting, invoke the actual
+callback for matching and foreign markers, and drain the callback-enqueued
+item through the same production run-loop leaf before the consumer is
+invoked. The suite also verifies different-marker normalization/enqueue,
+marker copy order,
 per-event tag-before-post order, keyboard ordering, permission and NULL
 failure, before/after-injection classification, bounded FIFO overload and
 FIFO order, worker stop, bounded shutdown, callback-to-owner queue isolation,
 production context call order, enabled/relevant-binding request gating,
-need-transition invalidation, fresh selection, and unknown/stale rejection.
+same-tick request-id invalidation, fresh selection, and unknown/stale
+rejection.
 
 The Apple Silicon macOS job compiles and lints every target, runs the same
 tests without interactive permission or actual input injection, builds the

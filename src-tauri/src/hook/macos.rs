@@ -101,6 +101,13 @@ type EventTapCallback = unsafe extern "C" fn(
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     fn CGPreflightListenEventAccess() -> bool;
+    #[cfg(test)]
+    fn CGEventCreateMouseEvent(
+        source: *const c_void,
+        event_type: u32,
+        position: CGPoint,
+        button: u32,
+    ) -> CGEventRef;
     fn CGEventTapCreate(
         tap: u32,
         place: u32,
@@ -114,6 +121,8 @@ extern "C" {
     fn CGEventGetLocation(event: CGEventRef) -> CGPoint;
     fn CGEventGetIntegerValueField(event: CGEventRef, field: u32) -> i64;
     fn CGEventGetTimestamp(event: CGEventRef) -> u64;
+    #[cfg(test)]
+    fn CGEventSetIntegerValueField(event: CGEventRef, field: u32, value: i64);
 }
 
 #[cfg(target_os = "macos")]
@@ -584,46 +593,62 @@ fn run_active(
         let result =
             unsafe { CFRunLoopRunInMode(kCFRunLoopDefaultMode, RUN_LOOP_SLICE_SECONDS, false) };
         if classify_run_loop_result(result) == RunLoopDisposition::Degrade {
-            drain_input(&state, &mut context, &mut consumer, &mut clock);
+            drain_input(
+                &state,
+                &mut context,
+                &mut consumer,
+                &mut clock,
+                &MACOS_INPUT_STEP_FUNCTIONS,
+            );
             run_non_timeout_owner_step(&stop, resources);
             consumer.shutdown();
             context.shutdown();
             return Ok(());
         }
-        drain_input(&state, &mut context, &mut consumer, &mut clock);
+        drain_input(
+            &state,
+            &mut context,
+            &mut consumer,
+            &mut clock,
+            &MACOS_INPUT_STEP_FUNCTIONS,
+        );
         consumer.safety_timer(clock.current());
         state.reenable_if_requested(resources.tap);
     }
-    drain_input(&state, &mut context, &mut consumer, &mut clock);
+    drain_input(
+        &state,
+        &mut context,
+        &mut consumer,
+        &mut clock,
+        &MACOS_INPUT_STEP_FUNCTIONS,
+    );
     drop(resources);
     consumer.shutdown();
     context.shutdown();
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
-fn drain_input(
+fn drain_input<C, W>(
     state: &TapState,
-    context: &mut ContextWorker,
-    consumer: &mut MacosInputConsumer,
+    context: &mut W,
+    consumer: &mut C,
     clock: &mut OwnerClock,
+    functions: &InputStepFunctions<C, W>,
 ) {
     state.drain(|input| {
-        process_input_step(
-            input,
-            clock,
-            context,
-            consumer,
-            InputStepFunctions {
-                route: MacosInputConsumer::context_route,
-                set_needed: ContextWorker::set_needed,
-                observe: ContextWorker::observe,
-                latest: ContextWorker::latest,
-                consume: MacosInputConsumer::consume,
-            },
-        );
+        process_input_step(input, clock, context, consumer, functions);
     });
 }
+
+#[cfg(target_os = "macos")]
+const MACOS_INPUT_STEP_FUNCTIONS: InputStepFunctions<MacosInputConsumer, ContextWorker> =
+    InputStepFunctions {
+        route: MacosInputConsumer::context_route,
+        set_needed: ContextWorker::set_needed,
+        observe: ContextWorker::observe,
+        latest: ContextWorker::latest,
+        consume: MacosInputConsumer::consume,
+    };
 
 struct InputStepFunctions<C, W> {
     route: fn(&mut C, MouseEvent) -> ContextRoute,
@@ -638,7 +663,7 @@ fn process_input_step<C, W>(
     clock: &mut OwnerClock,
     context: &mut W,
     consumer: &mut C,
-    functions: InputStepFunctions<C, W>,
+    functions: &InputStepFunctions<C, W>,
 ) {
     let tick = clock.observe(input.timestamp_ns);
     let route = (functions.route)(consumer, input.event);
@@ -968,6 +993,32 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "macos")]
+    struct OwnedTestEvent(CGEventRef);
+
+    #[cfg(target_os = "macos")]
+    impl OwnedTestEvent {
+        fn mouse_move(marker: i64, x: f64, y: f64) -> Self {
+            let event = unsafe {
+                CGEventCreateMouseEvent(std::ptr::null(), EVENT_MOUSE_MOVED, CGPoint { x, y }, 0)
+            };
+            assert!(!event.is_null());
+            unsafe {
+                CGEventSetIntegerValueField(event, EVENT_FIELD_SOURCE_USER_DATA, marker);
+            }
+            Self(event)
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    impl Drop for OwnedTestEvent {
+        fn drop(&mut self) {
+            unsafe {
+                CFRelease(self.0.cast_const());
+            }
+        }
+    }
+
     fn consumer_reader() -> (tempfile::TempDir, ConfigOwner, ConfigSnapshotReader, u64) {
         let mut document = ConfigDocument::default();
         document.applications.clear();
@@ -1171,23 +1222,59 @@ mod tests {
                 calls: Rc::clone(&calls),
             };
             let mut clock = OwnerClock::new();
+            let state = TapState::new();
+            let queued_input = input(MouseEvent::MouseMove, Point::new(4, 5), 6);
+            assert!(state.queue.push(queued_input));
 
-            process_input_step(
-                input(MouseEvent::MouseMove, Point::new(4, 5), 6),
-                &mut clock,
+            drain_input(
+                &state,
                 &mut context,
                 &mut consumer,
-                fake_input_step_functions(),
+                &mut clock,
+                &fake_input_step_functions(),
             );
 
             assert_eq!(*calls.borrow(), expected);
         }
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
-    fn callback_queue_is_the_only_bridge_to_context_and_action_workers() {
+    fn actual_callback_filters_self_and_enqueues_a_real_foreign_event() {
         let state = TapState::with_marker(41);
-        reset_callback_reads(42);
+        let self_event = OwnedTestEvent::mouse_move(41, 1.0, 2.0);
+        let foreign_event = OwnedTestEvent::mouse_move(42, 3.0, 4.0);
+
+        unsafe {
+            event_tap_callback(
+                std::ptr::null_mut(),
+                EVENT_MOUSE_MOVED,
+                self_event.0,
+                std::ptr::from_ref(&state).cast_mut().cast(),
+            );
+        }
+        assert!(state.queue.pop().is_none());
+        assert_eq!(state.snapshot().received, 0);
+
+        unsafe {
+            event_tap_callback(
+                std::ptr::null_mut(),
+                EVENT_MOUSE_MOVED,
+                foreign_event.0,
+                std::ptr::from_ref(&state).cast_mut().cast(),
+            );
+        }
+        let input = state.queue.pop().unwrap();
+        assert_eq!(input.event, MouseEvent::MouseMove);
+        assert_eq!(input.point, Point::new(3, 4));
+        assert_eq!(state.snapshot().received, 1);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn actual_callback_only_enqueues_and_actual_drain_later_invokes_consumer() {
+        let state = TapState::with_marker(41);
+        let event = OwnedTestEvent::mouse_move(42, 1.0, 2.0);
         let worker_calls = Rc::new(RefCell::new(Vec::new()));
         let mut context = FakeContextWorker {
             calls: Rc::clone(&worker_calls),
@@ -1199,25 +1286,22 @@ mod tests {
         let mut clock = OwnerClock::new();
 
         unsafe {
-            capture_callback_event(
-                &state,
-                EVENT_MOUSE_MOVED,
+            event_tap_callback(
                 std::ptr::null_mut(),
-                record_callback_marker,
-                record_callback_raw,
+                EVENT_MOUSE_MOVED,
+                event.0,
+                std::ptr::from_ref(&state).cast_mut().cast(),
             );
         }
         assert!(worker_calls.borrow().is_empty());
 
-        state.drain(|input| {
-            process_input_step(
-                input,
-                &mut clock,
-                &mut context,
-                &mut consumer,
-                fake_input_step_functions(),
-            );
-        });
+        drain_input(
+            &state,
+            &mut context,
+            &mut consumer,
+            &mut clock,
+            &fake_input_step_functions(),
+        );
         assert_eq!(
             *worker_calls.borrow(),
             [
@@ -1363,32 +1447,6 @@ mod tests {
                 disabled: 0,
             }
         );
-    }
-
-    #[test]
-    fn callback_capture_stops_at_the_queue_before_context_resolution() {
-        let state = TapState::new();
-        state.capture_raw(RawInput {
-            event_type: EVENT_RIGHT_MOUSE_DOWN,
-            button: 0,
-            scroll: 0,
-            x: 10.0,
-            y: 20.0,
-            timestamp_ns: 30_000_000,
-        });
-
-        assert_eq!(state.snapshot().processed, 0);
-        let mut observed = None;
-        state.drain(|input| observed = Some(input));
-        assert_eq!(
-            observed,
-            Some(NormalizedInput {
-                event: MouseEvent::ButtonDown(TriggerButton::Right),
-                point: Point::new(10, 20),
-                timestamp_ns: 30_000_000,
-            })
-        );
-        assert_eq!(state.snapshot().processed, 1);
     }
 
     #[test]

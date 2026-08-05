@@ -114,11 +114,16 @@ listen-only通過を維持する。
 
 P04b3bではrun-loop consumerが初めて`ConfigSnapshotReader`を保持し、
 `ContextWorker`をproduction起動する。Event Tap callbackはresolverやexecutorを
-参照せず、run-loop側だけが既存owner/runtimeからcontext必要性を判定する。
+呼ばず、foreign inputを固定queueへenqueueする。actual run-loopとbehavior testは
+同じcrate-private drain leafを使い、そのleaf側だけが既存owner/runtimeから
+context必要性を判定してconsumerを呼ぶ。
 enabledかつbindingありの場合に限りMouseMoveを25 ms rate limitでobserveし、
 ButtonDownは該当trigger bindingがある場合だけ即時observeする。ButtonUp、
 wheel、無関係なButtonDownはqueryを起こさずcacheだけを保持する。disabled、
 bindingless、config unavailableへの遷移ではsnapshotをUnknownへinvalidateする。
+requestはownerが発行する単調`u64` idをmailbox、resolver、snapshotへ保持し、
+不要遷移時の最終idより新しい結果だけを再受理するため、同一tickの遅延結果や
+`u32` tick wrapでは再有効化後のUnknownを解除できない。
 exact pointかつ100 ms以内のsnapshotだけを`NativeInputOwner`へ渡し、
 Unknown/stale/wrong generationではgesture/actionを開始しない。
 
