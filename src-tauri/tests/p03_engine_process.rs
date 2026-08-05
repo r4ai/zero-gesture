@@ -465,7 +465,7 @@ fn settings_exit_seam_removes_webview_and_keeps_engine_running() {
         fixture.settings_connected_marker().exists(),
         "Settings must connect to Engine before exercising its exit seam"
     );
-    let deadline = Instant::now() + START_TIMEOUT;
+    let deadline = Instant::now() + SETTINGS_RUNTIME_TIMEOUT;
     while !webview2_descendants(settings_process_id).is_empty() {
         assert!(
             Instant::now() < deadline,
