@@ -150,6 +150,12 @@ pub(crate) enum WindowCaptureObservation {
 }
 
 impl EngineControl {
+    pub(crate) fn current_user(config_dir: &Path) -> Result<Self, ControlError> {
+        Ok(Self {
+            endpoint: platform::Endpoint::current_user(config_dir, "")?,
+        })
+    }
+
     pub fn connect_or_start(executable: &Path, config_dir: &Path) -> Result<Self, ControlError> {
         #[cfg(debug_assertions)]
         let suffix = std::env::var_os("ZG_P03_TEST_NAMESPACE")

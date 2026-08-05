@@ -55,6 +55,7 @@ enum RuntimeProjectionError {
         source: io::Error,
     },
     WorkerPanicked(&'static str),
+    #[cfg(debug_assertions)]
     TestMarker(io::Error),
 }
 
@@ -67,6 +68,7 @@ impl fmt::Display for RuntimeProjectionError {
                 write!(formatter, "failed to spawn {worker} worker: {source}")
             }
             Self::WorkerPanicked(worker) => write!(formatter, "{worker} worker panicked"),
+            #[cfg(debug_assertions)]
             Self::TestMarker(source) => {
                 write!(formatter, "failed to write worker start marker: {source}")
             }
@@ -253,7 +255,10 @@ impl ThreadRuntime {
         result
     }
 
-    fn observe_applied(&self, active: &config::ActiveConfig) -> Result<(), RuntimeProjectionError> {
+    fn observe_applied(
+        &self,
+        _active: &config::ActiveConfig,
+    ) -> Result<(), RuntimeProjectionError> {
         let state = self
             .state
             .lock()
@@ -261,7 +266,8 @@ impl ThreadRuntime {
         match &*state {
             RuntimeState::Running(workers) => {
                 #[cfg(debug_assertions)]
-                if std::env::var_os("ZG_P03_TEST_FAIL_WORKER_SPAWN").is_some() && active.enabled() {
+                if std::env::var_os("ZG_P03_TEST_FAIL_WORKER_SPAWN").is_some() && _active.enabled()
+                {
                     return Err(RuntimeProjectionError::WorkerSpawn {
                         worker: "replacement",
                         source: io::Error::other("injected owner notification failure"),
@@ -364,6 +370,7 @@ pub fn run_from_args(arguments: impl IntoIterator<Item = OsString>) -> Result<()
     match process::select_mode(arguments) {
         Ok(process::ProcessMode::Engine) => run_engine(),
         Ok(process::ProcessMode::Settings) => run_settings(),
+        Ok(process::ProcessMode::InstalledAcceptance(command)) => run_installed_acceptance(command),
         Err(error) => Err(format!("invalid process mode: {error:?}")),
     }
 }
@@ -378,6 +385,46 @@ pub fn run() {
 
 fn tauri_context() -> tauri::Context {
     tauri::generate_context!()
+}
+
+const INSTALLED_ACCEPTANCE_ENV: &str = "ZG_P05C_INSTALLED_ACCEPTANCE";
+const INSTALLED_ACCEPTANCE_TOKEN: &str = "disposable-runner";
+
+fn installed_acceptance_enabled(value: Option<&std::ffi::OsStr>) -> bool {
+    value == Some(std::ffi::OsStr::new(INSTALLED_ACCEPTANCE_TOKEN))
+}
+
+#[cfg(windows)]
+fn run_installed_acceptance(command: process::InstalledAcceptance) -> Result<(), String> {
+    if !installed_acceptance_enabled(std::env::var_os(INSTALLED_ACCEPTANCE_ENV).as_deref()) {
+        return Err("installed acceptance control is disabled".to_string());
+    }
+    let app = tauri::Builder::default()
+        .build(tauri_context())
+        .map_err(|error| format!("failed to initialize installed acceptance control: {error}"))?;
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map(engine_config_dir)
+        .map_err(|error| error.to_string())?;
+    let control =
+        ipc::EngineControl::current_user(&config_dir).map_err(|error| error.to_string())?;
+    match command {
+        process::InstalledAcceptance::Status(output) => {
+            let status = control.status().map_err(|error| error.to_string())?;
+            let bytes = serde_json::to_vec_pretty(&status).map_err(|error| error.to_string())?;
+            std::fs::write(output, bytes).map_err(|error| error.to_string())
+        }
+        process::InstalledAcceptance::Quit => control
+            .shutdown()
+            .map(|_| ())
+            .map_err(|error| error.to_string()),
+    }
+}
+
+#[cfg(not(windows))]
+fn run_installed_acceptance(_command: process::InstalledAcceptance) -> Result<(), String> {
+    Err("installed acceptance control is supported only on Windows".to_string())
 }
 
 #[cfg(windows)]
@@ -797,6 +844,17 @@ fn schedule_settings_test_exit() -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn installed_acceptance_requires_the_disposable_runner_token() {
+        assert!(installed_acceptance_enabled(Some(std::ffi::OsStr::new(
+            "disposable-runner"
+        ))));
+        assert!(!installed_acceptance_enabled(None));
+        assert!(!installed_acceptance_enabled(Some(std::ffi::OsStr::new(
+            "1"
+        ))));
+    }
 
     #[cfg(target_os = "macos")]
     #[test]

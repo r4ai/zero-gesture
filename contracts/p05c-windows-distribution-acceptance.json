@@ -1,0 +1,74 @@
+{
+  "cases": [
+    {
+      "id": "P05C-BUNDLE-001",
+      "obligation": "Windows distribution selects one current-user NSIS target with downgrade refusal and the owned uninstall hook.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/tests/p05c_windows_distribution.rs",
+      "evidence_name": "windows_bundle_is_current_user_nsis_only"
+    },
+    {
+      "id": "P05C-IDENTITY-001",
+      "obligation": "Installer product identity and version remain exact and synchronized across Tauri, npm, and Cargo manifests.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/tests/p05c_windows_distribution.rs",
+      "evidence_name": "package_identity_and_version_are_fixed_across_manifests"
+    },
+    {
+      "id": "P05C-CONTROL-001",
+      "obligation": "The installed production executable exposes a typed status command with an explicit artifact path and a distinct quit command.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/process.rs",
+      "evidence_name": "installed_acceptance_status_requires_an_explicit_output_path"
+    },
+    {
+      "id": "P05C-CONTROL-002",
+      "obligation": "Installed acceptance quit rejects trailing arguments rather than broadening the process-mode interface.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/process.rs",
+      "evidence_name": "installed_acceptance_quit_rejects_trailing_arguments"
+    },
+    {
+      "id": "P05C-SECURITY-001",
+      "obligation": "Installed acceptance control is unavailable unless the disposable-runner token is exact.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/lib.rs",
+      "evidence_name": "installed_acceptance_requires_the_disposable_runner_token"
+    },
+    {
+      "id": "P05C-INSTALL-001",
+      "obligation": "A disposable runner validates self-signed Authenticode, silent current-user installation to a spaced path, exact Run quoting, StartupApproved, and uninstall registration cleanup.",
+      "runner": "windows-installed-acceptance",
+      "evidence_file": "src-tauri/tests/p05c_windows_installed.rs",
+      "evidence_name": "signed_current_user_nsis_installs_to_a_spaced_path_and_cleans_registration"
+    },
+    {
+      "id": "P05C-LIFECYCLE-001",
+      "obligation": "Installed release Engine and Settings coexist, Settings is single-instance, real close removes its WebView tree while Engine survives, and authenticated Quit stops Engine without changing autostart.",
+      "runner": "windows-installed-acceptance",
+      "evidence_file": "src-tauri/tests/p05c_windows_installed.rs",
+      "evidence_name": "installed_settings_and_engine_lifecycle_uses_production_processes"
+    },
+    {
+      "id": "P05C-RETENTION-001",
+      "obligation": "Silent reinstall and uninstall preserve exact config bytes and existing local log files.",
+      "runner": "windows-installed-acceptance",
+      "evidence_file": "src-tauri/tests/p05c_windows_installed.rs",
+      "evidence_name": "reinstall_and_uninstall_retain_config_and_logs"
+    },
+    {
+      "id": "P05C-KPI-001",
+      "obligation": "Installed release Engine resources, WebView absence, Settings footprint, startup, close, and quit remain within recorded Windows KPI gates.",
+      "runner": "windows-installed-acceptance",
+      "evidence_file": "src-tauri/tests/p05c_windows_installed.rs",
+      "evidence_name": "installed_release_resources_and_lifecycle_meet_kpi_gates"
+    },
+    {
+      "id": "P05C-HOT-001",
+      "obligation": "A sustained non-capture callback workload remains bounded and fail open without entering capture state.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/src/capture.rs",
+      "evidence_name": "callback_stress_remains_bounded_and_fail_open_without_capture"
+    }
+  ]
+}

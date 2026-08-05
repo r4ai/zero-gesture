@@ -182,3 +182,27 @@ test("accepts macOS-only Cargo evidence absent from a Windows Cargo list", () =>
   })
   assert.equal(validateManifestText(manifest, repo, ""), 1)
 })
+
+test("accepts installed Windows evidence outside the ordinary Cargo list", () => {
+  const repo = mkdtempSync(path.join(tmpdir(), "contracts-windows-installed-"))
+  const evidence = path.join(
+    repo,
+    "src-tauri",
+    "tests",
+    "p05c_windows_installed.rs",
+  )
+  mkdirSync(path.dirname(evidence), { recursive: true })
+  writeFileSync(evidence, "#[test]\nfn installed_release_lifecycle() {}\n")
+
+  const manifest = JSON.stringify({
+    cases: [
+      {
+        ...validCase,
+        runner: "windows-installed-acceptance",
+        evidence_file: "src-tauri/tests/p05c_windows_installed.rs",
+        evidence_name: "installed_release_lifecycle",
+      },
+    ],
+  })
+  assert.equal(validateManifestText(manifest, repo, ""), 1)
+})

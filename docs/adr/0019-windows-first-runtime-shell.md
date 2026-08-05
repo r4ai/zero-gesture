@@ -138,3 +138,8 @@ Windows gains a bounded, Tauri-native runtime shell without changing the
 input callback, gesture algorithm, renderer, config schema, or publication
 protocol. CI proves only detectable process and wrapper behavior; it does not
 claim installed-bundle or Explorer evidence before P05c.
+
+P05c resolves the installed-bundle portions above through
+[ADR 0021](./0021-windows-nsis-installed-acceptance.md).
+Publisher Authenticode and physical/GUI input remain explicitly unclosed
+release gates.

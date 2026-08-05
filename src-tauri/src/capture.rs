@@ -340,4 +340,14 @@ mod tests {
             Point::new(1, 2)
         ));
     }
+
+    #[test]
+    fn callback_stress_remains_bounded_and_fail_open_without_capture() {
+        let capture = WindowCapture::new();
+        let started = Instant::now();
+        for index in 0..100_000 {
+            assert!(!capture.try_record(MouseEvent::MouseMove, Point::new(index, -index)));
+        }
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
 }

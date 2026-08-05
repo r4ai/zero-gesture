@@ -45,6 +45,7 @@ A lightweight mouse gesture app for Windows.
 - [Documentation index](./docs/README.md)
 - [Architecture](./docs/architecture.md)
 - [Architecture decisions](./docs/adr/README.md)
+- [Windows distribution](./docs/windows-distribution.md)
 - [Development Guide](./docs/development.md)
 
 ### Environment Variables

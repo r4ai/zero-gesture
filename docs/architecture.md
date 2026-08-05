@@ -102,10 +102,15 @@ Settingsへ収束する。QuitはEngine workerを停止してprocessを終了す
 autostartを操作するcapabilityを持たない。CIの明示的exit seamはwindowとWebView2
 観測後にSettings processを直接終了してOS cleanupとEngine生存を確認する。
 
-実HKCU、installed bundle、Explorer、既存windowのminimize/focus、実close、
-installer/upgrade/reinstall/uninstall、署名はP05cの実機gateであり、debug/CI
-process testはautostart登録を明示的に迂回する。
-順序と非対象は[ADR 0019](./adr/0019-windows-first-runtime-shell.md)を正とする。
+P05cはcurrent-user NSISだけを配布対象にし、disposable Windows runnerでrelease
+installerをsilent installする。実HKCU Run/StartupApproved、single-instance、
+Settingsの実WM_CLOSEとWebView2 tree終了、Engine生存/typed Quit、
+reinstall/uninstall後のconfig/log保持、installed release resource KPIを検証する。
+uninstallはuser dataを保持し、dangling Run/StartupApprovedだけを削除する。
+CI署名はdisposable self-signedであり、実publisher Authenticodeと
+Explorer/physical inputはrelease blockerとしてtruthfulに残す。
+順序とruntime境界は[ADR 0019](./adr/0019-windows-first-runtime-shell.md)、
+配布契約は[ADR 0021](./adr/0021-windows-nsis-installed-acceptance.md)を正とする。
 
 #### Windows Settings control
 

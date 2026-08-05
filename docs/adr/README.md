@@ -25,6 +25,7 @@ ADRは実装の詳細設計ではなく、後続PRが守る外部契約、不変
 | [0018](./0018-macos-action-executor-and-event-tagging.md) | Accepted | bounded macOS action worker、self-generated event marker、最小context consumer接続を固定する |
 | [0019](./0019-windows-first-runtime-shell.md) | Accepted | Windows完成を先行し、P05a runtime shell・P05b Settings control・P05c distributionの順序と契約を固定する |
 | [0020](./0020-engine-owned-windows-settings-control.md) | Accepted | typed Settings error、conflict-safe draft、Engine-owned Windows capture protocolを固定する |
+| [0021](./0021-windows-nsis-installed-acceptance.md) | Accepted | current-user NSIS、retention、installed release acceptance、KPI、Authenticode blockerを固定する |
 
 ## Reading order
 
@@ -45,6 +46,7 @@ ADR 0017はP04b3aで固定したconsumer接続前のidle境界、promptなしAcc
 ADR 0018はP04b3bで接続したrun-loop context consumer、bounded keyboard action worker、self-generated event marker、failure/defer境界を記録する。
 ADR 0019はP04b3b後の順序をWindows-firstへ変更し、P05aのautostart、Settings-only single instance、close/tray/Quit境界とP05b/P05cへの分割を記録する。
 ADR 0020はP05bで接続したtyped Settings failure、revision conflict時のdraft保持、既存native callbackからEngine IPCへ至るcapture id/epoch境界を記録する。
+ADR 0021はP05cで固定したcurrent-user NSIS、設定/log保持、installed production lifecycle/KPI、self-signed CIと実署名blocker、実GUI/physical gateを記録する。
 
 ## Status policy
 

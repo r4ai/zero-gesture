@@ -152,12 +152,17 @@ jobs:
           retention-days: 14
 
   tauri-build:
-    name: Tauri Build
+    name: Windows NSIS Installed Acceptance
     runs-on: windows-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Setup pnpm
         uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061 # v4.2.0
@@ -181,8 +186,86 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Tauri build (no bundle)
-        run: pnpm tauri build --debug --no-bundle --ci
+      - name: Create disposable self-signed code-signing identity
+        shell: pwsh
+        run: |
+          $certificate = New-SelfSignedCertificate `
+            -Type CodeSigningCert `
+            -Subject "CN=Zero Gesture P05c Disposable CI" `
+            -CertStoreLocation "Cert:\CurrentUser\My" `
+            -KeyAlgorithm RSA `
+            -KeyLength 2048 `
+            -HashAlgorithm SHA256 `
+            -NotAfter (Get-Date).AddDays(1)
+          $certificatePath = Join-Path $env:RUNNER_TEMP "p05c-disposable.cer"
+          Export-Certificate -Cert $certificate -FilePath $certificatePath | Out-Null
+          Import-Certificate `
+            -FilePath $certificatePath `
+            -CertStoreLocation "Cert:\CurrentUser\Root" | Out-Null
+          $config = @{
+            bundle = @{
+              windows = @{
+                certificateThumbprint = $certificate.Thumbprint
+              }
+            }
+          } | ConvertTo-Json -Compress
+          "TAURI_CONFIG=$config" >> $env:GITHUB_ENV
+          "P05C_CERT_THUMBPRINT=$($certificate.Thumbprint)" >> $env:GITHUB_ENV
+
+      - name: Build signed-for-acceptance NSIS installer
+        run: pnpm tauri build --bundles nsis --ci
+
+      - name: Run disposable installed acceptance
+        shell: pwsh
+        run: |
+          $installers = @(
+            Get-ChildItem `
+              "src-tauri/target/release/bundle/nsis/*-setup.exe" `
+              -File
+          )
+          if ($installers.Count -ne 1) {
+            throw "Expected one NSIS installer, found $($installers.Count)."
+          }
+          $env:ZG_P05C_INSTALLER = $installers[0].FullName
+          $env:ZG_P05C_ARTIFACT = `
+            "$env:RUNNER_TEMP/p05c-installed-acceptance.json"
+          cargo test `
+            --manifest-path src-tauri/Cargo.toml `
+            --features installed-acceptance `
+            --test p05c_windows_installed `
+            -- `
+            --test-threads=1
+
+      - name: Upload validated NSIS installer
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: zero-gesture-windows-nsis-self-signed-${{ github.run_id }}
+          path: src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload installed acceptance KPI
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-installed-acceptance-${{ github.run_id }}
+          path: ${{ runner.temp }}/p05c-installed-acceptance.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove disposable signing identity
+        if: always()
+        shell: pwsh
+        run: |
+          if ($env:P05C_CERT_THUMBPRINT) {
+            Remove-Item `
+              "Cert:\CurrentUser\My\$env:P05C_CERT_THUMBPRINT" `
+              -Force `
+              -ErrorAction SilentlyContinue
+            Remove-Item `
+              "Cert:\CurrentUser\Root\$env:P05C_CERT_THUMBPRINT" `
+              -Force `
+              -ErrorAction SilentlyContinue
+          }
 
   macos-packaging:
     name: macOS 26 arm64 Packaging
