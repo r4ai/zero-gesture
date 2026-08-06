@@ -98,10 +98,16 @@ close中にplugin mutexだけが残る場合は新規Settingsを作らずfail cl
 Settings windowを閉じるとSettings
 processとWebView2は終了するが、Engine、hook、IPCは継続する。Engine trayの
 left-click/Open Settingsは同一exeを`--settings`で起動し、反復起動も一つの
-Settingsへ収束する。QuitはEngine workerを停止してprocessを終了するが、login
+Settingsへ収束する。Windowsのsingle-instance receiverは、同期WM_COPYDATA
+callbackからcross-thread Tauri handle取得をせず、window表示後にWin32で記録した
+top-level HWNDへ`SW_SHOW`/`SW_RESTORE`をpostする。content windowが未生成の
+debug-tested caseだけは、WebViewの再入生成を避けるため短命threadからTauri event
+loopへ生成を渡す。Quitは
+Engine workerを停止してprocessを終了するが、login
 autostartを操作するcapabilityを持たない。CIはwindowとWebView2の実process identity
-観測後、debug triggerからTauri main threadへ通常exitをscheduleし、同じidentityの
-終了とEngine生存を確認する。`std::process::exit`による強制終了は使わない。
+観測後、debug test専用の隔離WebView2 data directoryとsetup完了markerを用いて
+production Tauri window closeを駆動し、同じidentityの終了とEngine生存を確認する。
+`std::process::exit`による強制終了は使わない。
 
 P05cはcurrent-user NSISだけを配布対象にし、disposable Windows runnerでrelease
 installerをsilent installする。実HKCU Run/StartupApproved、single-instance、

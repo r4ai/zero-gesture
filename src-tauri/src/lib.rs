@@ -779,7 +779,11 @@ fn run_settings() -> Result<(), String> {
             if !skip_window {
                 tray::show_settings_window(app.handle())?;
                 #[cfg(all(windows, debug_assertions))]
-                schedule_settings_test_exit(app.handle())?;
+                schedule_settings_test_close(app.handle())?;
+            }
+            #[cfg(all(windows, debug_assertions))]
+            if let Some(marker) = std::env::var_os("ZG_P05A_TEST_SETTINGS_SETUP_MARKER") {
+                std::fs::write(marker, b"ready")?;
             }
             Ok(())
         })
@@ -811,6 +815,7 @@ fn run_settings() -> Result<(), String> {
                 .is_some_and(|gate| gate.signal_release().is_err())
         {
             app.exit(1);
+            return;
         }
         if let tauri::RunEvent::ExitRequested { .. } = event {
             if let Some(runtime) = app.try_state::<ThreadRuntime>() {
@@ -822,26 +827,25 @@ fn run_settings() -> Result<(), String> {
 }
 
 #[cfg(all(windows, debug_assertions))]
-fn schedule_settings_test_exit<R: tauri::Runtime>(
+fn schedule_settings_test_close<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
 ) -> std::io::Result<()> {
-    let Some(trigger) = std::env::var_os("ZG_P05A_TEST_EXIT_SETTINGS_TRIGGER") else {
+    let Some(trigger) = std::env::var_os("ZG_P05A_TEST_CLOSE_SETTINGS_TRIGGER") else {
         return Ok(());
     };
-    let scheduler = app.clone();
+    let settings = app.clone();
     std::thread::Builder::new()
-        .name("settings-test-exit".to_string())
+        .name("settings-test-close".to_string())
         .spawn(move || {
             let trigger = PathBuf::from(trigger);
             while !trigger.exists() {
                 std::thread::sleep(std::time::Duration::from_millis(20));
             }
-            let exiting = scheduler.clone();
-            if scheduler
-                .run_on_main_thread(move || exiting.exit(0))
-                .is_err()
+            if settings
+                .get_webview_window("main")
+                .is_none_or(|window| window.close().is_err())
             {
-                scheduler.exit(1);
+                settings.exit(1);
             }
         })?;
     Ok(())

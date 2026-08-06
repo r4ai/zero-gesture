@@ -65,11 +65,14 @@ without writing HKCU.
 
 The single-instance plugin is registered first and only in Settings mode.
 Consequently it cannot exclude Engine. A second Settings process forwards to
-the first, exits, and schedules show/unminimize/focus on the Tauri main thread.
+the first and exits. After the content window is shown, Settings records its
+top-level HWND using Win32 enumeration rather than a cross-thread Tauri handle
+getter. The receiver posts `SW_SHOW` and `SW_RESTORE` to that same HWND.
 The Windows plugin callback arrives inside a synchronous `WM_COPYDATA`;
-scheduling is initiated from a short-lived Settings activation thread so the
-callback can return before the main-thread task runs. No resident Engine
-thread or general process coordinator is introduced.
+the callback therefore does not wait for Tauri main-thread window dispatch.
+Only the debug-tested no-content-window case uses a short-lived thread to hand
+window construction to the Tauri event loop. There is no resident Engine thread
+or general process coordinator.
 
 The locked plugin creates its mutex before its hidden receiver window. A
 short-lived Settings-only gate-owner thread therefore acquires the bounded
@@ -111,11 +114,16 @@ child-process tests prove Engine/Settings coexistence, Engine window/WebView2
 zero while Settings is alive, simultaneous cold Settings launches converging
 on one process and at most one window, the same convergence across a delayed
 Engine-unavailable setup, second-Settings exit plus activation of one window
-in the existing process, and an explicit debug trigger after observing a
-Settings window and concrete WebView2 process identities. The trigger schedules
-normal Tauri application exit on the main thread instead of forcing
-`std::process::exit`; the process test waits on those identities and keeps the
-original 10-second lifecycle deadline. Showing/focusing an existing hidden
+in the existing process, and an explicit debug close trigger after observing
+completed Settings setup plus concrete, newly-created WebView2 process
+identities. Debug process tests use an isolated WebView2 data directory and
+`about:blank`, so they neither contend with an existing user Settings process
+nor depend on a development server. The trigger calls the production Tauri
+window close path instead of forcing `std::process::exit`; the process test
+waits on those identities and keeps the original 10-second lifecycle deadline.
+The plugin callback posts restore commands to the recorded HWND; window
+construction is handed to the Tauri event loop because constructing a WebView
+re-entrantly inside that WindowProc is unsupported. Showing an existing hidden
 window and a real installed user close remain P05c acceptance gates.
 
 The Windows gate runs formatting, lint, all Rust tests, rustdoc, the frontend,

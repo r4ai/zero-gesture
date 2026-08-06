@@ -223,21 +223,25 @@ pub(crate) fn autostart_plugin<R: tauri::Runtime>(
 #[cfg(windows)]
 pub(crate) fn single_instance_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
     tauri_plugin_single_instance::init(|app, _arguments, _working_directory| {
-        let existing = app.clone();
+        if crate::tray::restore_settings_window() {
+            return;
+        }
+
+        let activation_app = app.clone();
         if let Err(error) = std::thread::Builder::new()
-            .name("settings-activation".to_string())
+            .name("settings-window-create".to_string())
             .spawn(move || {
-                let activation_app = existing.clone();
-                if let Err(error) = existing.run_on_main_thread(move || {
+                let scheduler = activation_app.clone();
+                if let Err(error) = scheduler.run_on_main_thread(move || {
                     if let Err(error) = crate::tray::show_settings_window(&activation_app) {
-                        log::warn!("failed to activate existing Settings instance: {error}");
+                        log::warn!("failed to create existing Settings window: {error}");
                     }
                 }) {
-                    log::warn!("failed to schedule existing Settings activation: {error}");
+                    log::warn!("failed to schedule existing Settings window creation: {error}");
                 }
             })
         {
-            log::warn!("failed to start existing Settings activation: {error}");
+            log::warn!("failed to start existing Settings window creation: {error}");
         }
     })
 }
