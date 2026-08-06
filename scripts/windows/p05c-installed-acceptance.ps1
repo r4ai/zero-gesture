@@ -31,6 +31,7 @@ $measurements = [ordered]@{}
 Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
 
 public static class P05cWindowState
 {
@@ -53,6 +54,9 @@ public static class P05cWindowState
 
     [DllImport("user32.dll")]
     private static extern bool ShowWindowAsync(IntPtr window, int command);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowText(IntPtr window, StringBuilder text, int capacity);
 
     public static void Hide(long handle)
     {
@@ -77,7 +81,11 @@ public static class P05cWindowState
         {
             uint processId;
             GetWindowThreadProcessId(window, out processId);
-            if (processId == expectedProcessId && IsWindowVisible(window))
+            var title = new StringBuilder(256);
+            GetWindowText(window, title, title.Capacity);
+            if (processId == expectedProcessId &&
+                IsWindowVisible(window) &&
+                title.ToString() == "Zero Gesture")
             {
                 count += 1;
             }
