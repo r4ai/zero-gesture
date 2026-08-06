@@ -332,7 +332,7 @@ Wait-Condition {
     (Get-ItemProperty -LiteralPath $runKey -Name $productName -ErrorAction SilentlyContinue).$productName
 } "exact autostart registration"
 Wait-Condition {
-    Test-Path -LiteralPath $startupApprovedKey -and
+    (Test-Path -LiteralPath $startupApprovedKey) -and
         $null -ne (Get-ItemProperty -LiteralPath $startupApprovedKey -Name $productName -ErrorAction SilentlyContinue).$productName
 } "StartupApproved registration"
 Wait-Condition {
