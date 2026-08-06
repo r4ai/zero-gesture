@@ -205,6 +205,15 @@ jobs:
               windows = @{
                 certificateThumbprint = $certificate.Thumbprint
                 digestAlgorithm = "sha256"
+                signCommand = @{
+                  cmd = "pwsh"
+                  args = @(
+                    "-NoProfile"
+                    "-File"
+                    (Resolve-Path "scripts/windows/sign-p05c-acceptance.ps1").Path
+                    "%1"
+                  )
+                }
               }
             }
           } | ConvertTo-Json -Compress
@@ -226,17 +235,18 @@ jobs:
           if ($installers.Count -ne 1) {
             throw "Expected one NSIS installer, found $($installers.Count)."
           }
-          $certificate = Get-Item `
-            "Cert:\CurrentUser\My\$env:P05C_CERT_THUMBPRINT"
-          $signature = Set-AuthenticodeSignature `
-            -LiteralPath $installers[0].FullName `
-            -Certificate $certificate `
-            -HashAlgorithm SHA256
-          if (
-            $null -eq $signature.SignerCertificate -or
-            $signature.SignerCertificate.Thumbprint -ine $env:P05C_CERT_THUMBPRINT
-          ) {
-            throw "Explicit NSIS wrapper signing did not use the disposable identity."
+          $signedPaths = @(
+            (Resolve-Path "src-tauri/target/release/zero-gesture.exe").Path
+            $installers[0].FullName
+          )
+          foreach ($signedPath in $signedPaths) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $signedPath
+            if (
+              $null -eq $signature.SignerCertificate -or
+              $signature.SignerCertificate.Thumbprint -ine $env:P05C_CERT_THUMBPRINT
+            ) {
+              throw "Tauri custom signing did not sign with the disposable identity: $signedPath"
+            }
           }
 
       - name: Run disposable installed acceptance

@@ -6,8 +6,11 @@ use std::process::Command;
 use std::sync::OnceLock;
 
 fn acceptance_result() -> &'static Value {
-    static RESULT: OnceLock<Value> = OnceLock::new();
-    RESULT.get_or_init(run_acceptance)
+    static RESULT: OnceLock<Result<Value, String>> = OnceLock::new();
+    RESULT
+        .get_or_init(run_acceptance)
+        .as_ref()
+        .unwrap_or_else(|message| panic!("{message}"))
 }
 
 fn required_path(name: &str) -> PathBuf {
@@ -16,7 +19,7 @@ fn required_path(name: &str) -> PathBuf {
         .unwrap_or_else(|| panic!("{name} must be set by Windows installed acceptance CI"))
 }
 
-fn run_acceptance() -> Value {
+fn run_acceptance() -> Result<Value, String> {
     assert_eq!(
         std::env::var("GITHUB_ACTIONS").as_deref(),
         Ok("true"),
@@ -38,13 +41,14 @@ fn run_acceptance() -> Value {
         ])
         .output()
         .unwrap();
-    assert!(
-        output.status.success(),
-        "installed acceptance failed:\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    serde_json::from_slice(&std::fs::read(artifact).unwrap()).unwrap()
+    if !output.status.success() {
+        return Err(format!(
+            "installed acceptance failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(serde_json::from_slice(&std::fs::read(artifact).unwrap()).unwrap())
 }
 
 #[test]

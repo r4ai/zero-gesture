@@ -88,9 +88,10 @@ It does not represent a publisher identity, public trust, or SmartScreen
 reputation.
 Acceptance requires the exact ephemeral signer thumbprint, rejects an absent
 or hash-mismatched signature, and records the actual chain status.
-The release application executable uses Tauri's SHA-256 thumbprint
-configuration; CI explicitly signs the generated NSIS wrapper with the same
-ephemeral identity before installed acceptance.
+Tauri's standard `signCommand` invokes a bounded repository signer for every
+bundle signing target. The release application executable and generated NSIS
+wrapper therefore use the same ephemeral identity, and CI verifies both exact
+thumbprints before installed acceptance.
 
 One installed scenario directly verifies:
 
