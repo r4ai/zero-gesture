@@ -87,7 +87,8 @@ Settingsの成功したsetupは同一exeの`--engine` login起動をenableし、
 Run valueを`"absolute executable path" --engine`へ補正してexact readbackする。
 pluginと補正backendは同じpackage-derived value nameを使い、変更前のRun/
 StartupApprovedをquery/set-value権限だけでsnapshotする。enable/rewrite/read/
-mismatch失敗は両valueを元へ戻す。同時cold launchはSettings専用の短命owner
+mismatch失敗は両valueを元へ戻す。parent key不存在は空のprior stateとして扱い、
+registration write時だけ作成する。同時cold launchはSettings専用の短命owner
 threadがTauri build前から`RunEvent::Ready`まで保持するbounded current-user
 launch mutexで直列化する。mainとの同期は容量1のacquired/release channelだけで、
 Ready callbackはrelease signal後すぐreturnし、mutexは同じowner threadが
@@ -98,14 +99,36 @@ close中にplugin mutexだけが残る場合は新規Settingsを作らずfail cl
 Settings windowを閉じるとSettings
 processとWebView2は終了するが、Engine、hook、IPCは継続する。Engine trayの
 left-click/Open Settingsは同一exeを`--settings`で起動し、反復起動も一つの
-Settingsへ収束する。QuitはEngine workerを停止してprocessを終了するが、login
-autostartを操作するcapabilityを持たない。CIの明示的exit seamはwindowとWebView2
-観測後にSettings processを直接終了してOS cleanupとEngine生存を確認する。
+Settingsへ収束する。Windowsのsingle-instance receiverは、同期WM_COPYDATA
+callbackからcross-thread Tauri handle取得をせず、window表示後にWin32で記録した
+exact-title/same-process top-level HWNDへ`SW_SHOW`/`SW_RESTORE`をpostする。
+記録は同期window列挙をせず`FindWindowW`とPID一致だけで行う。content windowが未生成の
+debug-tested caseだけは、WebViewの再入生成を避けるため短命threadからTauri event
+loopへ生成を渡す。Quitは
+Engine workerを停止してprocessを終了するが、login
+autostartを操作するcapabilityを持たない。CIはwindowとWebView2の実process identity
+観測後、debug test専用の隔離WebView2 data directoryとsetup完了markerを用いて
+production Tauri window closeを駆動し、同じidentityの終了とEngine生存を確認する。
+`std::process::exit`による強制終了は使わない。
 
-実HKCU、installed bundle、Explorer、既存windowのminimize/focus、実close、
-installer/upgrade/reinstall/uninstall、署名はP05cの実機gateであり、debug/CI
-process testはautostart登録を明示的に迂回する。
-順序と非対象は[ADR 0019](./adr/0019-windows-first-runtime-shell.md)を正とする。
+P05cはcurrent-user NSISだけを配布対象にし、disposable Windows runnerでrelease
+installerをsilent installする。実HKCU Run/StartupApproved、single-instance、
+既存Settings windowのhide→forward→同一window show/unminimize、
+Settingsの実WM_CLOSEとWebView2 tree終了、Engine生存/typed Quit、
+Engine PIDの実descendant WebView2不在、missing/wrong acceptance tokenの拒否、
+stopped-Engine logのrelative path/byte/hash保持、正常shutdown時のcontrol secret削除、
+config sentinel保持、authenticated statusまでのstartup、installed release resource
+KPIを検証する。
+running-app uninstallのguarded cancellationはprogram/autostartを保持し、成功した
+uninstallのpost hookだけがdangling Run/StartupApprovedを削除する。成功後は
+package registration、registered uninstaller、installer-owned program directoryの
+不在も確認し、disposable cleanupはexact test-owned directory以外を削除しない。
+production Windows callback core（capture判定→NativeInputOwner→wakeup disposition）
+は100,000 eventのallocation 0、固定lane上限、fail-openをwall-clock非依存でgateする。
+CI署名はdisposable self-signedであり、実publisher Authenticodeと
+Explorer/physical inputはrelease blockerとしてtruthfulに残す。
+順序とruntime境界は[ADR 0019](./adr/0019-windows-first-runtime-shell.md)、
+配布契約は[ADR 0021](./adr/0021-windows-nsis-installed-acceptance.md)を正とする。
 
 #### Windows Settings control
 

@@ -113,6 +113,16 @@ fn open_windows_autostart_key(path: &str) -> std::io::Result<winreg::RegKey> {
 }
 
 #[cfg(windows)]
+fn create_windows_autostart_key(path: &str) -> std::io::Result<winreg::RegKey> {
+    use winreg::enums::HKEY_CURRENT_USER;
+    use winreg::RegKey;
+
+    RegKey::predef(HKEY_CURRENT_USER)
+        .create_subkey(path)
+        .map(|(key, _)| key)
+}
+
+#[cfg(windows)]
 fn read_optional_raw_value(
     path: &str,
     name: &str,
@@ -135,7 +145,7 @@ fn read_optional_raw_value(
 #[cfg(windows)]
 fn snapshot_windows_autostart(name: &str) -> std::io::Result<WindowsAutostartState> {
     Ok(WindowsAutostartState {
-        run: read_optional_raw_value(WINDOWS_RUN_KEY, name, false)?,
+        run: read_optional_raw_value(WINDOWS_RUN_KEY, name, true)?,
         startup_approved: read_optional_raw_value(WINDOWS_STARTUP_APPROVED_KEY, name, true)?,
     })
 }
@@ -170,7 +180,7 @@ fn restore_windows_autostart_value(
 
 #[cfg(windows)]
 fn restore_windows_autostart(name: &str, state: WindowsAutostartState) -> std::io::Result<()> {
-    let run = restore_windows_autostart_value(WINDOWS_RUN_KEY, name, state.run, false);
+    let run = restore_windows_autostart_value(WINDOWS_RUN_KEY, name, state.run, true);
     let startup = restore_windows_autostart_value(
         WINDOWS_STARTUP_APPROVED_KEY,
         name,
@@ -196,7 +206,7 @@ fn windows_autostart_command(executable: &Path) -> Result<String, &'static str> 
 
 #[cfg(windows)]
 fn write_windows_autostart_command(app_name: &str, command: &str) -> std::io::Result<()> {
-    let run = open_windows_autostart_key(WINDOWS_RUN_KEY)?;
+    let run = create_windows_autostart_key(WINDOWS_RUN_KEY)?;
     run.set_value(app_name, &command)
 }
 
@@ -223,21 +233,25 @@ pub(crate) fn autostart_plugin<R: tauri::Runtime>(
 #[cfg(windows)]
 pub(crate) fn single_instance_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
     tauri_plugin_single_instance::init(|app, _arguments, _working_directory| {
-        let existing = app.clone();
+        if crate::tray::restore_settings_window() {
+            return;
+        }
+
+        let activation_app = app.clone();
         if let Err(error) = std::thread::Builder::new()
-            .name("settings-activation".to_string())
+            .name("settings-window-create".to_string())
             .spawn(move || {
-                let activation_app = existing.clone();
-                if let Err(error) = existing.run_on_main_thread(move || {
+                let scheduler = activation_app.clone();
+                if let Err(error) = scheduler.run_on_main_thread(move || {
                     if let Err(error) = crate::tray::show_settings_window(&activation_app) {
-                        log::warn!("failed to activate existing Settings instance: {error}");
+                        log::warn!("failed to create existing Settings window: {error}");
                     }
                 }) {
-                    log::warn!("failed to schedule existing Settings activation: {error}");
+                    log::warn!("failed to schedule existing Settings window creation: {error}");
                 }
             })
         {
-            log::warn!("failed to start existing Settings activation: {error}");
+            log::warn!("failed to start existing Settings window creation: {error}");
         }
     })
 }

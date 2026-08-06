@@ -407,7 +407,6 @@ impl ContextWorker {
 impl Drop for ContextWorker {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
-        self.snapshots.publish(None);
         let _ = self.requests.wake.try_send(());
         if let Some(handle) = self.handle.take() {
             if self.preflight_complete.load(Ordering::Acquire) {

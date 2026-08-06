@@ -65,7 +65,7 @@
     },
     {
       "id": "P05A-SETTINGS-001",
-      "obligation": "A second actual Settings launch exits successfully and activates one content window in the existing Settings process while Engine remains alive.",
+      "obligation": "A second actual Settings launch exits successfully and activates one content window in the existing Settings process while Engine remains alive; the Windows receiver restores the exact-title same-process HWND without cross-thread Tauri handle access or synchronous window enumeration.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/tests/p03_engine_process.rs",
       "evidence_name": "second_settings_forwards_to_the_existing_window_and_exits"
@@ -79,7 +79,7 @@
     },
     {
       "id": "P05A-SETTINGS-003",
-      "obligation": "After observing a live Settings content window and WebView2 descendant, the explicit exit seam removes the Settings process and descendants while Engine remains running.",
+      "obligation": "After deterministic Settings setup and a newly-created WebView2 descendant are observed, the explicit debug seam closes the production Tauri window, removes the Settings process and observed WebView2 process identities, and leaves Engine running.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/tests/p03_engine_process.rs",
       "evidence_name": "settings_exit_seam_removes_webview_and_keeps_engine_running"

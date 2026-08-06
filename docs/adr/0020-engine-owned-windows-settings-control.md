@@ -148,3 +148,7 @@ fail-open callback budget as normal Windows input. The protocol adds explicit
 internal cases, short authenticated requests, and one bounded lease sweep, but
 no general actor/RPC framework, trait hierarchy, global coordinator, transport,
 dependency, or resident WebView.
+
+P05c distribution and installed lifecycle acceptance are resolved by
+[ADR 0021](./0021-windows-nsis-installed-acceptance.md) without changing this
+typed Settings/capture contract.

@@ -5,6 +5,8 @@
 //! settings) and menu actions.
 
 use log::warn;
+#[cfg(windows)]
+use std::sync::atomic::{AtomicIsize, Ordering};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{App, AppHandle, Manager, Runtime, WebviewUrl};
@@ -17,6 +19,8 @@ const MENU_OPEN_SETTINGS: &str = "open-settings";
 
 /// Menu item ID for the "Quit" action.
 const MENU_QUIT: &str = "quit";
+#[cfg(windows)]
+static SETTINGS_WINDOW_HWND: AtomicIsize = AtomicIsize::new(0);
 
 /// Managed state containing the tray toggle menu item handle.
 pub struct TrayToggleMenuItem<R: Runtime>(pub MenuItem<R>);
@@ -282,12 +286,28 @@ pub fn show_settings_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()>
         window.show()?;
         window.unminimize()?;
         window.set_focus()?;
+        #[cfg(windows)]
+        remember_settings_window();
         return Ok(());
     }
 
-    let builder = tauri::WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
+    #[cfg(all(windows, debug_assertions))]
+    let webview_url = if std::env::var_os("ZG_P03_TEST_CONFIG_DIR").is_some() {
+        WebviewUrl::External(tauri::Url::parse("about:blank").expect("valid test WebView URL"))
+    } else {
+        WebviewUrl::default()
+    };
+    #[cfg(not(all(windows, debug_assertions)))]
+    let webview_url = WebviewUrl::default();
+    let builder = tauri::WebviewWindowBuilder::new(app, "main", webview_url)
         .title("Zero Gesture")
         .inner_size(800.0, 600.0);
+    #[cfg(all(windows, debug_assertions))]
+    let builder = if let Some(config_dir) = std::env::var_os("ZG_P03_TEST_CONFIG_DIR") {
+        builder.data_directory(std::path::PathBuf::from(config_dir).join("webview2"))
+    } else {
+        builder
+    };
     let window = builder.build()?;
 
     #[cfg(windows)]
@@ -296,14 +316,60 @@ pub fn show_settings_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()>
         window.on_window_event(move |event| {
             exit_settings_if_requested(
                 matches!(event, tauri::WindowEvent::CloseRequested { .. }),
-                || settings.exit(0),
+                || {
+                    let exiting = settings.clone();
+                    if std::thread::Builder::new()
+                        .name("settings-exit".to_string())
+                        .spawn(move || exiting.exit(0))
+                        .is_err()
+                    {
+                        settings.exit(1);
+                    }
+                },
             );
         });
     }
 
     window.show()?;
     window.set_focus()?;
+    #[cfg(windows)]
+    remember_settings_window();
     Ok(())
+}
+
+#[cfg(windows)]
+fn remember_settings_window() {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::System::Threading::GetCurrentProcessId;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{FindWindowW, GetWindowThreadProcessId};
+
+    let title = std::ffi::OsStr::new("Zero Gesture")
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let window = unsafe { FindWindowW(std::ptr::null(), title.as_ptr()) };
+    let mut owner = 0;
+    unsafe {
+        GetWindowThreadProcessId(window, &mut owner);
+    }
+    if !window.is_null() && owner == unsafe { GetCurrentProcessId() } {
+        SETTINGS_WINDOW_HWND.store(window as isize, Ordering::Release);
+    }
+}
+
+#[cfg(windows)]
+pub(crate) fn restore_settings_window() -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{ShowWindowAsync, SW_RESTORE, SW_SHOW};
+
+    let hwnd = SETTINGS_WINDOW_HWND.load(Ordering::Acquire) as windows_sys::Win32::Foundation::HWND;
+    if hwnd.is_null() {
+        return false;
+    }
+    unsafe {
+        ShowWindowAsync(hwnd, SW_SHOW);
+        ShowWindowAsync(hwnd, SW_RESTORE);
+    }
+    true
 }
 
 #[cfg(test)]

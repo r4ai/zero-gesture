@@ -56,20 +56,25 @@ stored command. Settings therefore overwrites that same current-user Run value
 with `"absolute executable path" --engine` and reads it back for exact equality.
 The plugin and correction backend receive the same package-derived registration
 name. Before enable, Settings snapshots both Run and StartupApproved values
-using only query/set-value access. Enable, rewrite, read, and mismatch failures
-restore or delete both values to their prior state; rollback failure is also a
-hard setup failure. Repeated setup therefore preserves one named Run and one
-StartupApproved value. Debug process tests explicitly bypass OS registration;
-serializer and failure-atomic registry-map tests exercise the production leaf
-without writing HKCU.
+using only query/set-value access. A missing parent key is an empty prior state,
+and the backend creates it only when writing the registration. Enable, rewrite,
+read, and mismatch failures restore or delete both values to their prior state;
+rollback failure is also a hard setup failure. Repeated setup therefore
+preserves one named Run and one StartupApproved value. Debug process tests
+explicitly bypass OS registration; serializer and failure-atomic registry-map
+tests exercise the production leaf without writing HKCU.
 
 The single-instance plugin is registered first and only in Settings mode.
 Consequently it cannot exclude Engine. A second Settings process forwards to
-the first, exits, and schedules show/unminimize/focus on the Tauri main thread.
+the first and exits. After the content window is shown, Settings records its
+exact-title, same-process top-level HWND using `FindWindowW` rather than a
+cross-thread Tauri handle getter or synchronous enumeration. The receiver posts
+`SW_SHOW` and `SW_RESTORE` to that same HWND.
 The Windows plugin callback arrives inside a synchronous `WM_COPYDATA`;
-scheduling is initiated from a short-lived Settings activation thread so the
-callback can return before the main-thread task runs. No resident Engine
-thread or general process coordinator is introduced.
+the callback therefore does not wait for Tauri main-thread window dispatch.
+Only the debug-tested no-content-window case uses a short-lived thread to hand
+window construction to the Tauri event loop. There is no resident Engine thread
+or general process coordinator.
 
 The locked plugin creates its mutex before its hidden receiver window. A
 short-lived Settings-only gate-owner thread therefore acquires the bounded
@@ -111,10 +116,17 @@ child-process tests prove Engine/Settings coexistence, Engine window/WebView2
 zero while Settings is alive, simultaneous cold Settings launches converging
 on one process and at most one window, the same convergence across a delayed
 Engine-unavailable setup, second-Settings exit plus activation of one window
-in the existing process, and an explicit direct process-exit seam triggered
-only after observing a Settings window and WebView2 descendant. The production
-CloseRequested-to-exit leaf is unit-tested; minimizing/focusing an existing
-window and a real user close gesture remain installed P05c acceptance gates.
+in the existing process, and an explicit debug close trigger after observing
+completed Settings setup plus concrete, newly-created WebView2 process
+identities. Debug process tests use an isolated WebView2 data directory and
+`about:blank`, so they neither contend with an existing user Settings process
+nor depend on a development server. The trigger calls the production Tauri
+window close path instead of forcing `std::process::exit`; the process test
+waits on those identities and keeps the original 10-second lifecycle deadline.
+The plugin callback posts restore commands to the recorded HWND; window
+construction is handed to the Tauri event loop because constructing a WebView
+re-entrantly inside that WindowProc is unsupported. Showing an existing hidden
+window and a real installed user close remain P05c acceptance gates.
 
 The Windows gate runs formatting, lint, all Rust tests, rustdoc, the frontend,
 Tauri debug build, and every contract manifest. P05a may not increase the
@@ -138,3 +150,8 @@ Windows gains a bounded, Tauri-native runtime shell without changing the
 input callback, gesture algorithm, renderer, config schema, or publication
 protocol. CI proves only detectable process and wrapper behavior; it does not
 claim installed-bundle or Explorer evidence before P05c.
+
+P05c resolves the installed-bundle portions above through
+[ADR 0021](./0021-windows-nsis-installed-acceptance.md).
+Publisher Authenticode and physical/GUI input remain explicitly unclosed
+release gates.

@@ -12,9 +12,15 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use windows_sys::core::BOOL;
-use windows_sys::Win32::Foundation::{CloseHandle, HWND, INVALID_HANDLE_VALUE, LPARAM};
+use windows_sys::Win32::Foundation::{
+    CloseHandle, FILETIME, HANDLE, HWND, INVALID_HANDLE_VALUE, LPARAM, WAIT_OBJECT_0,
+};
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+};
+use windows_sys::Win32::System::Threading::{
+    GetProcessTimes, OpenProcess, WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION,
+    PROCESS_SYNCHRONIZE,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetClassNameW, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
@@ -29,6 +35,26 @@ static SETTINGS_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 struct EngineChild {
     child: Child,
+}
+
+struct ObservedProcess {
+    handle: HANDLE,
+    process_id: u32,
+}
+
+impl ObservedProcess {
+    fn open(process_id: u32) -> Option<Self> {
+        let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, process_id) };
+        (!handle.is_null()).then_some(Self { handle, process_id })
+    }
+}
+
+impl Drop for ObservedProcess {
+    fn drop(&mut self) {
+        unsafe {
+            CloseHandle(self.handle);
+        }
+    }
 }
 
 impl Drop for EngineChild {
@@ -141,10 +167,6 @@ impl EngineFixture {
         self.directory.path().join("settings-connected")
     }
 
-    fn settings_exit_trigger(&self) -> PathBuf {
-        self.directory.path().join("settings-exit-trigger")
-    }
-
     fn wait_for_path(&self, child: &mut Child, path: &std::path::Path, description: &str) {
         let deadline = Instant::now() + START_TIMEOUT;
         while Instant::now() < deadline {
@@ -232,10 +254,7 @@ fn actual_engine_child_starts_no_webview2_descendant() {
     let mut engine = fixture.spawn(false);
     fixture.wait_ready(&mut engine.child);
 
-    assert_eq!(
-        webview2_descendants(engine.child.id()),
-        Vec::<String>::new()
-    );
+    assert!(webview2_descendants(engine.child.id()).is_empty());
 }
 
 #[test]
@@ -413,7 +432,7 @@ fn second_settings_forwards_to_the_existing_window_and_exits() {
         thread::sleep(Duration::from_millis(20));
     };
 
-    assert!(status.success());
+    assert!(status.success(), "second Settings exited with {status}");
     wait_for_content_window(&mut first.child);
     assert!(first.child.try_wait().unwrap().is_none());
     assert!(engine.child.try_wait().unwrap().is_none());
@@ -427,15 +446,46 @@ fn settings_exit_seam_removes_webview_and_keeps_engine_running() {
     let fixture = EngineFixture::new(br#"{"enabled":false}"#);
     let mut engine = fixture.spawn(false);
     fixture.wait_ready(&mut engine.child);
-    let exit_trigger = fixture.settings_exit_trigger();
-    let mut settings = fixture.spawn_settings_with_envs(&[(
-        "ZG_P05A_TEST_EXIT_SETTINGS_TRIGGER",
-        exit_trigger.as_os_str(),
-    )]);
+    let close_trigger = fixture.directory.path().join("settings-close-trigger");
+    let setup_marker = fixture.directory.path().join("settings-setup");
+    let mut settings = fixture.spawn_settings_with_envs(&[
+        (
+            "ZG_P05A_TEST_CLOSE_SETTINGS_TRIGGER",
+            close_trigger.as_os_str(),
+        ),
+        (
+            "ZG_P05A_TEST_SETTINGS_SETUP_MARKER",
+            setup_marker.as_os_str(),
+        ),
+    ]);
     let settings_process_id = settings.child.id();
     wait_for_content_window(&mut settings.child);
+    let setup_deadline = Instant::now() + SETTINGS_RUNTIME_TIMEOUT;
+    while !setup_marker.exists() {
+        assert!(
+            settings.child.try_wait().unwrap().is_none(),
+            "Settings exited before completing setup"
+        );
+        assert!(
+            Instant::now() < setup_deadline,
+            "Settings did not complete setup"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    let settings_created = process_creation_ticks(settings_process_id).unwrap();
     let webview_deadline = Instant::now() + SETTINGS_RUNTIME_TIMEOUT;
-    while webview2_descendants(settings_process_id).is_empty() {
+    let webview_processes = loop {
+        let processes = webview2_descendants(settings_process_id)
+            .into_iter()
+            .filter(|(process_id, _)| {
+                process_creation_ticks(*process_id)
+                    .is_some_and(|created| created >= settings_created)
+            })
+            .filter_map(|(process_id, _)| ObservedProcess::open(process_id))
+            .collect::<Vec<_>>();
+        if !processes.is_empty() {
+            break processes;
+        }
         assert!(
             settings.child.try_wait().unwrap().is_none(),
             "Settings exited before creating a WebView2 descendant"
@@ -445,8 +495,8 @@ fn settings_exit_seam_removes_webview_and_keeps_engine_running() {
             "Settings did not create a WebView2 descendant"
         );
         thread::sleep(Duration::from_millis(20));
-    }
-    fs::write(&exit_trigger, b"exit").unwrap();
+    };
+    fs::write(&close_trigger, b"close").unwrap();
 
     let deadline = Instant::now() + SETTINGS_RUNTIME_TIMEOUT;
     let status = loop {
@@ -455,7 +505,9 @@ fn settings_exit_seam_removes_webview_and_keeps_engine_running() {
         }
         assert!(
             Instant::now() < deadline,
-            "Settings test exit seam did not terminate the process"
+            "Settings close seam did not terminate the process; window={}, webviews={}",
+            u32::from(settings_window(settings_process_id).is_some()),
+            webview2_descendants(settings_process_id).len()
         );
         thread::sleep(Duration::from_millis(20));
     };
@@ -466,12 +518,15 @@ fn settings_exit_seam_removes_webview_and_keeps_engine_running() {
         "Settings must connect to Engine before exercising its exit seam"
     );
     let deadline = Instant::now() + SETTINGS_RUNTIME_TIMEOUT;
-    while !webview2_descendants(settings_process_id).is_empty() {
-        assert!(
-            Instant::now() < deadline,
-            "WebView2 descendants remained after Settings exited"
+    for process in webview_processes {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let remaining_ms = remaining.as_millis().min(u128::from(u32::MAX)) as u32;
+        assert_eq!(
+            unsafe { WaitForSingleObject(process.handle, remaining_ms) },
+            WAIT_OBJECT_0,
+            "WebView2 process {} remained after Settings exited",
+            process.process_id
         );
-        thread::sleep(Duration::from_millis(20));
     }
     assert!(engine.child.try_wait().unwrap().is_none());
 }
@@ -542,6 +597,24 @@ fn settings_window(process_id: u32) -> Option<HWND> {
     (!context.window.is_null()).then_some(context.window)
 }
 
+fn process_creation_ticks(process_id: u32) -> Option<u64> {
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id) };
+    if handle.is_null() {
+        return None;
+    }
+    let mut creation = FILETIME::default();
+    let mut exit = FILETIME::default();
+    let mut kernel = FILETIME::default();
+    let mut user = FILETIME::default();
+    let succeeded =
+        unsafe { GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user) } != 0;
+    unsafe {
+        CloseHandle(handle);
+    }
+    succeeded
+        .then(|| (u64::from(creation.dwHighDateTime) << 32) | u64::from(creation.dwLowDateTime))
+}
+
 fn content_window_count(process_id: u32) -> u32 {
     struct Context {
         process_id: u32,
@@ -582,7 +655,7 @@ fn content_window_count(process_id: u32) -> u32 {
     context.count
 }
 
-fn webview2_descendants(root_process_id: u32) -> Vec<String> {
+fn webview2_descendants(root_process_id: u32) -> Vec<(u32, String)> {
     let processes = process_snapshot();
     let mut seen = HashSet::from([root_process_id]);
     let mut pending = VecDeque::from([root_process_id]);
@@ -592,7 +665,7 @@ fn webview2_descendants(root_process_id: u32) -> Vec<String> {
             if seen.insert(*process_id) {
                 pending.push_back(*process_id);
                 if name.eq_ignore_ascii_case("msedgewebview2.exe") {
-                    webviews.push(name.clone());
+                    webviews.push((*process_id, name.clone()));
                 }
             }
         }

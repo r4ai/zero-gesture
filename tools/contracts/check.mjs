@@ -4,7 +4,11 @@ import { existsSync, readFileSync, statSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 
-const ALLOWED_RUNNERS = new Set(["cargo-test", "macos-cargo-test"])
+const ALLOWED_RUNNERS = new Set([
+  "cargo-test",
+  "macos-cargo-test",
+  "windows-installed-acceptance",
+])
 const CASE_FIELDS = [
   "evidence_file",
   "evidence_name",
@@ -91,6 +95,14 @@ const MANIFESTS = [
     idPattern: /^P05B-(?:ERROR|IPC|CAPTURE|HOT|LIFECYCLE|MACOS)-\d{3}$/,
     idDescription:
       "P05B-ERROR-NNN, P05B-IPC-NNN, P05B-CAPTURE-NNN, P05B-HOT-NNN, P05B-LIFECYCLE-NNN, or P05B-MACOS-NNN",
+  },
+  {
+    label: "P05c",
+    path: "contracts/p05c-windows-distribution-acceptance.json",
+    idPattern:
+      /^P05C-(?:BUNDLE|IDENTITY|CONTROL|SECURITY|INSTALL|LIFECYCLE|RETENTION|KPI|HOT)-\d{3}$/,
+    idDescription:
+      "P05C-BUNDLE-NNN, P05C-IDENTITY-NNN, P05C-CONTROL-NNN, P05C-SECURITY-NNN, P05C-INSTALL-NNN, P05C-LIFECYCLE-NNN, P05C-RETENTION-NNN, P05C-KPI-NNN, or P05C-HOT-NNN",
   },
 ]
 const REPO_ROOT = path.resolve(fileURLToPath(new URL("../..", import.meta.url)))
