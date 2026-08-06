@@ -339,48 +339,21 @@ pub fn show_settings_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()>
 
 #[cfg(windows)]
 fn remember_settings_window() {
-    use windows_sys::core::BOOL;
-    use windows_sys::Win32::Foundation::{HWND, LPARAM};
+    use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::System::Threading::GetCurrentProcessId;
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetWindowTextW, GetWindowThreadProcessId,
-    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{FindWindowW, GetWindowThreadProcessId};
 
-    struct Search {
-        process_id: u32,
-        window: HWND,
-    }
-
-    unsafe extern "system" fn find(window: HWND, search: LPARAM) -> BOOL {
-        let search = unsafe { &mut *(search as *mut Search) };
-        let mut owner = 0;
-        unsafe {
-            GetWindowThreadProcessId(window, &mut owner);
-        }
-        if owner == search.process_id {
-            let mut title = [0_u16; 256];
-            let title_len =
-                unsafe { GetWindowTextW(window, title.as_mut_ptr(), title.len() as i32) };
-            if String::from_utf16_lossy(&title[..title_len as usize]) == "Zero Gesture" {
-                search.window = window;
-                return 0;
-            }
-        }
-        1
-    }
-
-    let mut search = Search {
-        process_id: unsafe { GetCurrentProcessId() },
-        window: std::ptr::null_mut(),
-    };
+    let title = std::ffi::OsStr::new("Zero Gesture")
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let window = unsafe { FindWindowW(std::ptr::null(), title.as_ptr()) };
+    let mut owner = 0;
     unsafe {
-        EnumWindows(
-            Some(find),
-            (&mut search as *mut Search).cast::<std::ffi::c_void>() as LPARAM,
-        );
+        GetWindowThreadProcessId(window, &mut owner);
     }
-    if !search.window.is_null() {
-        SETTINGS_WINDOW_HWND.store(search.window as isize, Ordering::Release);
+    if !window.is_null() && owner == unsafe { GetCurrentProcessId() } {
+        SETTINGS_WINDOW_HWND.store(window as isize, Ordering::Release);
     }
 }
 

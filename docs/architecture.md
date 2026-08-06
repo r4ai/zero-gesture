@@ -100,7 +100,8 @@ processとWebView2は終了するが、Engine、hook、IPCは継続する。Engi
 left-click/Open Settingsは同一exeを`--settings`で起動し、反復起動も一つの
 Settingsへ収束する。Windowsのsingle-instance receiverは、同期WM_COPYDATA
 callbackからcross-thread Tauri handle取得をせず、window表示後にWin32で記録した
-top-level HWNDへ`SW_SHOW`/`SW_RESTORE`をpostする。content windowが未生成の
+exact-title/same-process top-level HWNDへ`SW_SHOW`/`SW_RESTORE`をpostする。
+記録は同期window列挙をせず`FindWindowW`とPID一致だけで行う。content windowが未生成の
 debug-tested caseだけは、WebViewの再入生成を避けるため短命threadからTauri event
 loopへ生成を渡す。Quitは
 Engine workerを停止してprocessを終了するが、login

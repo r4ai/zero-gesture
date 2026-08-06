@@ -66,8 +66,9 @@ without writing HKCU.
 The single-instance plugin is registered first and only in Settings mode.
 Consequently it cannot exclude Engine. A second Settings process forwards to
 the first and exits. After the content window is shown, Settings records its
-top-level HWND using Win32 enumeration rather than a cross-thread Tauri handle
-getter. The receiver posts `SW_SHOW` and `SW_RESTORE` to that same HWND.
+exact-title, same-process top-level HWND using `FindWindowW` rather than a
+cross-thread Tauri handle getter or synchronous enumeration. The receiver posts
+`SW_SHOW` and `SW_RESTORE` to that same HWND.
 The Windows plugin callback arrives inside a synchronous `WM_COPYDATA`;
 the callback therefore does not wait for Tauri main-thread window dispatch.
 Only the debug-tested no-content-window case uses a short-lived thread to hand
