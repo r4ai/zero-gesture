@@ -56,12 +56,13 @@ stored command. Settings therefore overwrites that same current-user Run value
 with `"absolute executable path" --engine` and reads it back for exact equality.
 The plugin and correction backend receive the same package-derived registration
 name. Before enable, Settings snapshots both Run and StartupApproved values
-using only query/set-value access. Enable, rewrite, read, and mismatch failures
-restore or delete both values to their prior state; rollback failure is also a
-hard setup failure. Repeated setup therefore preserves one named Run and one
-StartupApproved value. Debug process tests explicitly bypass OS registration;
-serializer and failure-atomic registry-map tests exercise the production leaf
-without writing HKCU.
+using only query/set-value access. A missing parent key is an empty prior state,
+and the backend creates it only when writing the registration. Enable, rewrite,
+read, and mismatch failures restore or delete both values to their prior state;
+rollback failure is also a hard setup failure. Repeated setup therefore
+preserves one named Run and one StartupApproved value. Debug process tests
+explicitly bypass OS registration; serializer and failure-atomic registry-map
+tests exercise the production leaf without writing HKCU.
 
 The single-instance plugin is registered first and only in Settings mode.
 Consequently it cannot exclude Engine. A second Settings process forwards to

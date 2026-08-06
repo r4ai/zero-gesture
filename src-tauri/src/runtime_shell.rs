@@ -113,6 +113,16 @@ fn open_windows_autostart_key(path: &str) -> std::io::Result<winreg::RegKey> {
 }
 
 #[cfg(windows)]
+fn create_windows_autostart_key(path: &str) -> std::io::Result<winreg::RegKey> {
+    use winreg::enums::HKEY_CURRENT_USER;
+    use winreg::RegKey;
+
+    RegKey::predef(HKEY_CURRENT_USER)
+        .create_subkey(path)
+        .map(|(key, _)| key)
+}
+
+#[cfg(windows)]
 fn read_optional_raw_value(
     path: &str,
     name: &str,
@@ -135,7 +145,7 @@ fn read_optional_raw_value(
 #[cfg(windows)]
 fn snapshot_windows_autostart(name: &str) -> std::io::Result<WindowsAutostartState> {
     Ok(WindowsAutostartState {
-        run: read_optional_raw_value(WINDOWS_RUN_KEY, name, false)?,
+        run: read_optional_raw_value(WINDOWS_RUN_KEY, name, true)?,
         startup_approved: read_optional_raw_value(WINDOWS_STARTUP_APPROVED_KEY, name, true)?,
     })
 }
@@ -170,7 +180,7 @@ fn restore_windows_autostart_value(
 
 #[cfg(windows)]
 fn restore_windows_autostart(name: &str, state: WindowsAutostartState) -> std::io::Result<()> {
-    let run = restore_windows_autostart_value(WINDOWS_RUN_KEY, name, state.run, false);
+    let run = restore_windows_autostart_value(WINDOWS_RUN_KEY, name, state.run, true);
     let startup = restore_windows_autostart_value(
         WINDOWS_STARTUP_APPROVED_KEY,
         name,
@@ -196,7 +206,7 @@ fn windows_autostart_command(executable: &Path) -> Result<String, &'static str> 
 
 #[cfg(windows)]
 fn write_windows_autostart_command(app_name: &str, command: &str) -> std::io::Result<()> {
-    let run = open_windows_autostart_key(WINDOWS_RUN_KEY)?;
+    let run = create_windows_autostart_key(WINDOWS_RUN_KEY)?;
     run.set_value(app_name, &command)
 }
 

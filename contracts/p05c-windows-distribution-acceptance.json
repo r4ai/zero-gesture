@@ -58,7 +58,7 @@
     },
     {
       "id": "P05C-INSTALL-001",
-      "obligation": "A disposable runner validates self-signed Authenticode, silent current-user installation to a spaced path, exact Run quoting and StartupApproved, then successful removal of registration, registered uninstaller, and installer-owned program files.",
+      "obligation": "A disposable runner records whether the Run key pre-existed, validates self-signed Authenticode, silent current-user installation to a spaced path, exact Run quoting and StartupApproved, then successful removal of registration, registered uninstaller, and installer-owned program files.",
       "runner": "windows-installed-acceptance",
       "evidence_file": "src-tauri/tests/p05c_windows_installed.rs",
       "evidence_name": "signed_current_user_nsis_installs_to_a_spaced_path_and_cleans_registration"

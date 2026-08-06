@@ -367,6 +367,7 @@ Assert-Condition (-not (Test-Path -LiteralPath $configDirectory)) "A prior Zero 
 Assert-Condition (-not (Test-Path -LiteralPath $logDirectory)) "A prior Zero Gesture log directory exists on the runner."
 Assert-Condition (-not (Test-Path -LiteralPath $unrelatedLogRootSentinelPath)) `
     "The acceptance-owned unrelated-data sentinel already exists on the runner."
+$runKeyExistedBeforeInstall = Test-Path -LiteralPath $runKey
 Assert-Condition ($null -eq (Get-ItemProperty -LiteralPath $runKey -Name $productName -ErrorAction SilentlyContinue)) `
     "A prior Zero Gesture Run value exists on the runner."
 Assert-Condition ($null -eq (Get-ItemProperty -LiteralPath $startupApprovedKey -Name $productName -ErrorAction SilentlyContinue)) `
@@ -710,6 +711,7 @@ $result = [ordered]@{
         reinstalled_executable = $reinstalledBinarySignature
     }
     autostart_exact_quoted = $true
+    run_key_existed_before_install = $runKeyExistedBeforeInstall
     startup_approved_observed = $true
     rejected_acceptance_modes_preserved_state = $true
     engine_settings_coexisted = $true

@@ -87,7 +87,8 @@ Settingsの成功したsetupは同一exeの`--engine` login起動をenableし、
 Run valueを`"absolute executable path" --engine`へ補正してexact readbackする。
 pluginと補正backendは同じpackage-derived value nameを使い、変更前のRun/
 StartupApprovedをquery/set-value権限だけでsnapshotする。enable/rewrite/read/
-mismatch失敗は両valueを元へ戻す。同時cold launchはSettings専用の短命owner
+mismatch失敗は両valueを元へ戻す。parent key不存在は空のprior stateとして扱い、
+registration write時だけ作成する。同時cold launchはSettings専用の短命owner
 threadがTauri build前から`RunEvent::Ready`まで保持するbounded current-user
 launch mutexで直列化する。mainとの同期は容量1のacquired/release channelだけで、
 Ready callbackはrelease signal後すぐreturnし、mutexは同じowner threadが
