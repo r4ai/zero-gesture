@@ -104,7 +104,7 @@ One installed scenario directly verifies:
    StartupApproved value;
 4. rejected status/Quit process modes with missing and wrong environment
    tokens preserve Engine and autostart state;
-5. one Engine plus one Settings; after the first window is minimized, second
+5. one Engine plus one Settings; after the first window is hidden, second
    Settings forwarding shows and unminimizes that same window identity without
    leaving an extra Settings process or visible top-level window;
 6. WM_CLOSE removing Settings and its WebView tree while the same Engine PID

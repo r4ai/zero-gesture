@@ -54,9 +54,9 @@ public static class P05cWindowState
     [DllImport("user32.dll")]
     private static extern bool ShowWindowAsync(IntPtr window, int command);
 
-    public static void Minimize(long handle)
+    public static void Hide(long handle)
     {
-        ShowWindowAsync(new IntPtr(handle), 6);
+        ShowWindowAsync(new IntPtr(handle), 0);
     }
 
     public static bool IsExistingVisibleWindow(long handle)
@@ -520,10 +520,10 @@ Assert-Condition ($settings.WaitForInputIdle(10000)) `
     "First Settings did not reach an idle GUI message loop."
 $existingSettingsWindow = [int64]$settings.MainWindowHandle
 Assert-Condition ($existingSettingsWindow -ne 0) "First Settings has no observable window to forward."
-[P05cWindowState]::Minimize($existingSettingsWindow)
+[P05cWindowState]::Hide($existingSettingsWindow)
 Wait-Condition {
-    [P05cWindowState]::IsMinimized($existingSettingsWindow)
-} "first Settings window minimize"
+    -not [P05cWindowState]::IsExistingVisibleWindow($existingSettingsWindow)
+} "first Settings window hide"
 $second = Start-Settings -Executable $installedExecutable
 Assert-Condition ($second.WaitForExit(10000)) `
     "Second Settings did not complete single-instance forwarding."
@@ -558,7 +558,7 @@ $settingsForwardingEvidence = [ordered]@{
     forwarded_window_handle = $forwardedSettingsWindow
     visible_settings_process_count = $liveSettingsProcesses.Count
     visible_top_level_window_count = $visibleSettingsWindowCount
-    minimized_before_forward = $true
+    hidden_before_forward = $true
     visible_after_forward = $true
     minimized_after_forward = $false
 }

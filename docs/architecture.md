@@ -99,12 +99,13 @@ Settings windowを閉じるとSettings
 processとWebView2は終了するが、Engine、hook、IPCは継続する。Engine trayの
 left-click/Open Settingsは同一exeを`--settings`で起動し、反復起動も一つの
 Settingsへ収束する。QuitはEngine workerを停止してprocessを終了するが、login
-autostartを操作するcapabilityを持たない。CIの明示的exit seamはwindowとWebView2
-観測後にSettings processを直接終了してOS cleanupとEngine生存を確認する。
+autostartを操作するcapabilityを持たない。CIはwindowとWebView2の実process identity
+観測後、debug triggerからTauri main threadへ通常exitをscheduleし、同じidentityの
+終了とEngine生存を確認する。`std::process::exit`による強制終了は使わない。
 
 P05cはcurrent-user NSISだけを配布対象にし、disposable Windows runnerでrelease
 installerをsilent installする。実HKCU Run/StartupApproved、single-instance、
-既存Settings windowのminimize→forward→同一window show/unminimize、
+既存Settings windowのhide→forward→同一window show/unminimize、
 Settingsの実WM_CLOSEとWebView2 tree終了、Engine生存/typed Quit、
 Engine PIDの実descendant WebView2不在、missing/wrong acceptance tokenの拒否、
 stopped-Engine logのrelative path/byte/hash保持、正常shutdown時のcontrol secret削除、

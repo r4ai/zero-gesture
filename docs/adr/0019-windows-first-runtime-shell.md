@@ -111,10 +111,12 @@ child-process tests prove Engine/Settings coexistence, Engine window/WebView2
 zero while Settings is alive, simultaneous cold Settings launches converging
 on one process and at most one window, the same convergence across a delayed
 Engine-unavailable setup, second-Settings exit plus activation of one window
-in the existing process, and an explicit direct process-exit seam triggered
-only after observing a Settings window and WebView2 descendant. The production
-CloseRequested-to-exit leaf is unit-tested; minimizing/focusing an existing
-window and a real user close gesture remain installed P05c acceptance gates.
+in the existing process, and an explicit debug trigger after observing a
+Settings window and concrete WebView2 process identities. The trigger schedules
+normal Tauri application exit on the main thread instead of forcing
+`std::process::exit`; the process test waits on those identities and keeps the
+original 10-second lifecycle deadline. Showing/focusing an existing hidden
+window and a real installed user close remain P05c acceptance gates.
 
 The Windows gate runs formatting, lint, all Rust tests, rustdoc, the frontend,
 Tauri debug build, and every contract manifest. P05a may not increase the

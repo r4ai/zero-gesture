@@ -61,7 +61,7 @@ The CI test builds a release NSIS installer and performs:
    that reports the observed Engine PID;
 4. missing/wrong-token status and Quit rejection by installed production
    processes without status artifacts or state mutation;
-5. production process single-instance forwarding after minimizing the existing
+5. production process single-instance forwarding after hiding the existing
    Settings window, observation that the same window is shown and unminimized
    with no extra Settings process or visible window, WebView tree, Settings
    close, Engine survival, authenticated Engine status/Quit, and zero observed

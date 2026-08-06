@@ -776,10 +776,10 @@ fn run_settings() -> Result<(), String> {
             let skip_window = std::env::var_os("ZG_P05A_TEST_SKIP_SETTINGS_WINDOW").is_some();
             #[cfg(not(all(windows, debug_assertions)))]
             let skip_window = false;
-            #[cfg(all(windows, debug_assertions))]
-            schedule_settings_test_exit()?;
             if !skip_window {
                 tray::show_settings_window(app.handle())?;
+                #[cfg(all(windows, debug_assertions))]
+                schedule_settings_test_exit(app.handle())?;
             }
             Ok(())
         })
@@ -822,20 +822,26 @@ fn run_settings() -> Result<(), String> {
 }
 
 #[cfg(all(windows, debug_assertions))]
-fn schedule_settings_test_exit() -> std::io::Result<()> {
+fn schedule_settings_test_exit<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> std::io::Result<()> {
     let Some(trigger) = std::env::var_os("ZG_P05A_TEST_EXIT_SETTINGS_TRIGGER") else {
         return Ok(());
     };
+    let scheduler = app.clone();
     std::thread::Builder::new()
         .name("settings-test-exit".to_string())
         .spawn(move || {
             let trigger = PathBuf::from(trigger);
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
-            while !trigger.exists() && std::time::Instant::now() < deadline {
+            while !trigger.exists() {
                 std::thread::sleep(std::time::Duration::from_millis(20));
             }
-            if trigger.exists() {
-                std::process::exit(0);
+            let exiting = scheduler.clone();
+            if scheduler
+                .run_on_main_thread(move || exiting.exit(0))
+                .is_err()
+            {
+                scheduler.exit(1);
             }
         })?;
     Ok(())

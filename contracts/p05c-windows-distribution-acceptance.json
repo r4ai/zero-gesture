@@ -65,7 +65,7 @@
     },
     {
       "id": "P05C-LIFECYCLE-001",
-      "obligation": "Installed release Engine and Settings coexist; a second Settings shows and unminimizes the same existing window without leaving an extra Settings process or visible window; real close removes its WebView tree while Engine survives; and authenticated Quit stops Engine without changing autostart.",
+      "obligation": "Installed release Engine and Settings coexist; after the existing window is hidden, a second Settings shows and unminimizes that same window without leaving an extra Settings process or visible window; real close removes its WebView tree while Engine survives; and authenticated Quit stops Engine without changing autostart.",
       "runner": "windows-installed-acceptance",
       "evidence_file": "src-tauri/tests/p05c_windows_installed.rs",
       "evidence_name": "installed_settings_and_engine_lifecycle_uses_production_processes"

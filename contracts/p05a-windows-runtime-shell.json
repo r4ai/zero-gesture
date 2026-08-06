@@ -79,7 +79,7 @@
     },
     {
       "id": "P05A-SETTINGS-003",
-      "obligation": "After observing a live Settings content window and WebView2 descendant, the explicit exit seam removes the Settings process and descendants while Engine remains running.",
+      "obligation": "After observing a live Settings content window and WebView2 descendant, the explicit debug seam schedules normal Tauri application exit on the main thread, removes the Settings process and observed WebView2 process identities, and leaves Engine running.",
       "runner": "cargo-test",
       "evidence_file": "src-tauri/tests/p03_engine_process.rs",
       "evidence_name": "settings_exit_seam_removes_webview_and_keeps_engine_running"

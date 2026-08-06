@@ -484,7 +484,7 @@ fn settings_exit_seam_removes_webview_and_keeps_engine_running() {
         }
         assert!(
             Instant::now() < deadline,
-            "Settings test exit seam did not terminate the process"
+            "Settings main-thread exit seam did not terminate the process"
         );
         thread::sleep(Duration::from_millis(20));
     };
