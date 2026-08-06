@@ -104,24 +104,33 @@ One installed scenario directly verifies:
    StartupApproved value;
 4. rejected status/Quit process modes with missing and wrong environment
    tokens preserve Engine and autostart state;
-5. one Engine plus one Settings, second Settings forwarding, a real Settings
-   window and WebView2 tree;
+5. one Engine plus one Settings; after the first window is minimized, second
+   Settings forwarding shows and unminimizes that same window identity without
+   leaving an extra Settings process or visible top-level window;
 6. WM_CLOSE removing Settings and its WebView tree while the same Engine PID
    remains authenticated and alive;
 7. actual CIM descendants of that Engine PID contain no
    `msedgewebview2.exe`; typed status zero is corroborating evidence only;
 8. a running-app uninstall cancellation preserves package/autostart state,
-   while successful uninstall removes both owned values;
+   while successful uninstall removes both owned values, the uninstall
+   registration, its registered uninstaller, and the installer-owned program
+   directory;
 9. typed Quit stops workers/process, removes the process-owned secret, and
    does not mutate autostart;
 10. same-version reinstall as the compatible upgrade/reinstall case;
 11. exact config/sentinel bytes and every stopped-Engine log's relative path,
     byte count, SHA-256, and bytes remain unchanged across each installer
     operation; and
-12. disposable cleanup runs only after the retention assertions.
+12. disposable cleanup runs only after the retention assertions, recursively
+    removes only the exact test-owned config and log directories, removes the
+    log parent non-recursively only when empty, and preserves byte-exact
+    unrelated data beside the log directory.
 
 The script refuses non-GitHub runners, any pre-existing Zero Gesture install,
 config, or log directory, and any KPI artifact path outside `RUNNER_TEMP`.
+Artifact containment uses a normalized relative path, so a rooted relative
+result, parent traversal, or sibling-prefix escape is rejected before installer
+work.
 It therefore never snapshots, overwrites, or deletes a developer's existing
 installation.
 
@@ -132,7 +141,7 @@ The gates are:
 
 | Metric | Gate |
 | --- | ---: |
-| Engine startup | 5,000 ms |
+| Engine startup through first authenticated status for the observed PID | 5,000 ms |
 | Settings close/WebView cleanup | 10,000 ms |
 | Engine typed Quit | 3,000 ms |
 | Engine working set | 128 MiB |

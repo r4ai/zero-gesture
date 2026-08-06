@@ -18,12 +18,75 @@ $uninstallRoots = @(
 )
 $configDirectory = Join-Path $env:APPDATA "dev.r4ai.zero-gesture"
 $logDirectory = Join-Path $env:LOCALAPPDATA "dev.r4ai.zero-gesture\logs"
+$logRoot = Split-Path -Parent $logDirectory
 $configPath = Join-Path $configDirectory "zero-gesture.config.json"
 $secretPath = Join-Path $configDirectory "engine-control.secret"
 $sentinelPath = Join-Path $configDirectory "p05c-installer-retention.sentinel"
+$unrelatedLogRootSentinelPath = Join-Path $logRoot "p05c-unrelated-runner-data.sentinel"
+$unrelatedLogRootSentinelBytes = [byte[]]@(0x50, 0x05, 0x0C, 0x02, 0x55, 0xAA)
 $statusPath = Join-Path $env:RUNNER_TEMP "p05c-engine-status.json"
 $enabledStartupApproved = [byte[]]@(0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
 $measurements = [ordered]@{}
+
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+
+public static class P05cWindowState
+{
+    private delegate bool EnumWindowsProc(IntPtr window, IntPtr parameter);
+
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr parameter);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindow(IntPtr window);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr window);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsIconic(IntPtr window);
+
+    [DllImport("user32.dll")]
+    private static extern bool ShowWindowAsync(IntPtr window, int command);
+
+    public static void Minimize(long handle)
+    {
+        ShowWindowAsync(new IntPtr(handle), 6);
+    }
+
+    public static bool IsExistingVisibleWindow(long handle)
+    {
+        var window = new IntPtr(handle);
+        return IsWindow(window) && IsWindowVisible(window);
+    }
+
+    public static bool IsMinimized(long handle)
+    {
+        return IsIconic(new IntPtr(handle));
+    }
+
+    public static uint VisibleTopLevelWindowCount(uint expectedProcessId)
+    {
+        uint count = 0;
+        EnumWindows((window, _) =>
+        {
+            uint processId;
+            GetWindowThreadProcessId(window, out processId);
+            if (processId == expectedProcessId && IsWindowVisible(window))
+            {
+                count += 1;
+            }
+            return true;
+        }, IntPtr.Zero);
+        return count;
+    }
+}
+"@
 
 function Assert-Condition {
     param([bool]$Condition, [string]$Message)
@@ -282,18 +345,27 @@ function Close-Settings {
 Assert-Condition ($env:GITHUB_ACTIONS -eq "true") "Installed acceptance is restricted to a disposable GitHub Actions runner."
 $runnerRoot = [System.IO.Path]::GetFullPath($env:RUNNER_TEMP)
 $artifactFullPath = [System.IO.Path]::GetFullPath($ArtifactPath)
-Assert-Condition ($artifactFullPath.StartsWith($runnerRoot, [StringComparison]::OrdinalIgnoreCase)) `
+$relativeArtifactPath = [IO.Path]::GetRelativePath($runnerRoot, $artifactFullPath)
+$artifactEscapesRunner = [IO.Path]::IsPathRooted($relativeArtifactPath) -or
+    $relativeArtifactPath -eq "." -or
+    $relativeArtifactPath -eq ".." -or
+    $relativeArtifactPath.StartsWith("..$([IO.Path]::DirectorySeparatorChar)", [StringComparison]::Ordinal)
+Assert-Condition (-not $artifactEscapesRunner) `
     "Artifact path must stay below RUNNER_TEMP."
 $installerFullPath = [System.IO.Path]::GetFullPath($InstallerPath)
 Assert-Condition (Test-Path -LiteralPath $installerFullPath -PathType Leaf) "NSIS installer was not found."
 Assert-Condition ((Get-UninstallEntry) -eq $null) "A prior Zero Gesture installation exists on the runner."
 Assert-Condition (-not (Test-Path -LiteralPath $configDirectory)) "A prior Zero Gesture config directory exists on the runner."
 Assert-Condition (-not (Test-Path -LiteralPath $logDirectory)) "A prior Zero Gesture log directory exists on the runner."
+Assert-Condition (-not (Test-Path -LiteralPath $unrelatedLogRootSentinelPath)) `
+    "The acceptance-owned unrelated-data sentinel already exists on the runner."
 Assert-Condition ($null -eq (Get-ItemProperty -LiteralPath $runKey -Name $productName -ErrorAction SilentlyContinue)) `
     "A prior Zero Gesture Run value exists on the runner."
 Assert-Condition ($null -eq (Get-ItemProperty -LiteralPath $startupApprovedKey -Name $productName -ErrorAction SilentlyContinue)) `
     "A prior Zero Gesture StartupApproved value exists on the runner."
 New-Item -Path $startupApprovedKey -Force | Out-Null
+New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
+[IO.File]::WriteAllBytes($unrelatedLogRootSentinelPath, $unrelatedLogRootSentinelBytes)
 
 $expectedThumbprint = $env:P05C_CERT_THUMBPRINT
 Assert-Condition (-not [string]::IsNullOrWhiteSpace($expectedThumbprint)) `
@@ -350,8 +422,6 @@ Wait-Condition {
         $false
     }
 } "installed Engine process"
-$startupWatch.Stop()
-$measurements.engine_startup_ms = $startupWatch.ElapsedMilliseconds
 
 $expectedRun = "`"$installedExecutable`" --engine"
 $actualRun = (Get-ItemProperty -LiteralPath $runKey -Name $productName).$productName
@@ -384,6 +454,13 @@ foreach ($token in @($null, "wrong-token")) {
 $engineStatus = Invoke-AcceptanceStatus -Executable $installedExecutable
 Assert-Condition ($engineStatus.process_id -eq $engineProcessId) `
     "Authenticated status did not report the observed installed Engine PID."
+$startupWatch.Stop()
+$measurements.engine_startup_ms = $startupWatch.ElapsedMilliseconds
+$measurements.engine_startup_readiness = [ordered]@{
+    condition = "authenticated_status"
+    observed_pid = $engineProcessId
+    authenticated_status_pid = $engineStatus.process_id
+}
 Assert-Condition ($engineStatus.webview_count -eq 0) "Engine reported a managed WebView."
 $engineDescendantSamples = @()
 for ($sample = 0; $sample -lt 3; $sample += 1) {
@@ -441,11 +518,50 @@ Assert-Condition ($measurements.settings_open.handle_count -le 2048) "Settings t
 $settings.Refresh()
 Assert-Condition ($settings.WaitForInputIdle(10000)) `
     "First Settings did not reach an idle GUI message loop."
+$existingSettingsWindow = [int64]$settings.MainWindowHandle
+Assert-Condition ($existingSettingsWindow -ne 0) "First Settings has no observable window to forward."
+[P05cWindowState]::Minimize($existingSettingsWindow)
+Wait-Condition {
+    [P05cWindowState]::IsMinimized($existingSettingsWindow)
+} "first Settings window minimize"
 $second = Start-Settings -Executable $installedExecutable
 Assert-Condition ($second.WaitForExit(10000)) `
     "Second Settings did not complete single-instance forwarding."
 Assert-Condition ($second.ExitCode -eq 0) "Second Settings instance failed."
 Assert-Condition (-not $settings.HasExited) "First Settings instance did not survive forwarding."
+Wait-Condition {
+    [P05cWindowState]::IsExistingVisibleWindow($existingSettingsWindow) -and
+        -not [P05cWindowState]::IsMinimized($existingSettingsWindow)
+} "existing Settings window show and unminimize"
+$settings.Refresh()
+$forwardedSettingsWindow = [int64]$settings.MainWindowHandle
+Assert-Condition ($forwardedSettingsWindow -eq $existingSettingsWindow) `
+    "Settings forwarding replaced the existing window."
+$liveSettingsProcesses = @(
+    Get-CimInstance Win32_Process |
+        Where-Object {
+            $_.ExecutablePath -ieq $installedExecutable -and
+                $_.CommandLine -match '(?:^|\s)--settings(?:\s|$)'
+        }
+)
+Assert-Condition ($liveSettingsProcesses.Count -eq 1) `
+    "Settings forwarding left an extra installed Settings process."
+Assert-Condition ([uint32]$liveSettingsProcesses[0].ProcessId -eq [uint32]$settings.Id) `
+    "Settings forwarding did not preserve the original Settings process."
+$visibleSettingsWindowCount = [P05cWindowState]::VisibleTopLevelWindowCount([uint32]$settings.Id)
+Assert-Condition ($visibleSettingsWindowCount -eq 1) `
+    "Settings forwarding left an extra visible top-level Settings window."
+$settingsForwardingEvidence = [ordered]@{
+    existing_process_id = $settings.Id
+    second_process_id = $second.Id
+    existing_window_handle = $existingSettingsWindow
+    forwarded_window_handle = $forwardedSettingsWindow
+    visible_settings_process_count = $liveSettingsProcesses.Count
+    visible_top_level_window_count = $visibleSettingsWindowCount
+    minimized_before_forward = $true
+    visible_after_forward = $true
+    minimized_after_forward = $false
+}
 
 $closeWatch = [Diagnostics.Stopwatch]::StartNew()
 Close-Settings -Process $settings
@@ -546,6 +662,9 @@ $uninstallWatch.Stop()
 Assert-Condition ($uninstall.ExitCode -eq 0) "NSIS uninstaller exited with $($uninstall.ExitCode)."
 $measurements.uninstall_ms = $uninstallWatch.ElapsedMilliseconds
 Wait-Condition { -not (Test-Path -LiteralPath $installedExecutable) } "installed binary removal"
+Wait-Condition { $null -eq (Get-UninstallEntry) } "uninstall registration removal"
+Wait-Condition { -not (Test-Path -LiteralPath $uninstaller) } "registered uninstaller removal"
+Wait-Condition { -not (Test-Path -LiteralPath $installDirectory) } "installer-owned directory removal"
 Assert-Condition (Test-BytesEqual -Actual ([IO.File]::ReadAllBytes($configPath)) -Expected $retainedConfig) `
     "Uninstall changed retained config bytes."
 Assert-Condition (Test-BytesEqual -Actual ([IO.File]::ReadAllBytes($sentinelPath)) -Expected $sentinelBytes) `
@@ -587,6 +706,8 @@ $result = [ordered]@{
     rejected_acceptance_modes_preserved_state = $true
     engine_settings_coexisted = $true
     settings_single_instance = $true
+    settings_forwarded_show_and_unminimized_existing_window = $true
+    settings_forwarding_evidence = $settingsForwardingEvidence
     settings_close_removed_webview_tree = $true
     settings_close_kept_engine = $true
     cancelled_uninstall_exit_code = $cancelledUninstallExitCode
@@ -595,6 +716,9 @@ $result = [ordered]@{
     quit_preserved_autostart = $true
     clean_shutdown_removed_control_secret = $true
     uninstall_removed_autostart = $true
+    uninstall_removed_package_registration = $true
+    uninstall_removed_registered_uninstaller = $true
+    uninstall_removed_install_directory = $true
     config_retained_after_reinstall = $true
     config_retained_after_uninstall = $true
     sentinel_retained_after_reinstall = $true
@@ -608,11 +732,30 @@ $result = [ordered]@{
     kpi_gates_passed = $true
     measurements = $measurements
 }
-New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($artifactFullPath)) -Force | Out-Null
-$result | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $artifactFullPath -Encoding utf8NoBOM
 
 Remove-Item -LiteralPath $configDirectory -Recurse -Force
-$logRoot = Split-Path -Parent $logDirectory
+Remove-Item -LiteralPath $logDirectory -Recurse -Force
 if (Test-Path -LiteralPath $logRoot) {
-    Remove-Item -LiteralPath $logRoot -Recurse -Force
+    $logRootChildren = @(Get-ChildItem -LiteralPath $logRoot -Force)
+    if ($logRootChildren.Count -eq 0) {
+        Remove-Item -LiteralPath $logRoot -Force
+    }
 }
+Assert-Condition (Test-BytesEqual `
+        -Actual ([IO.File]::ReadAllBytes($unrelatedLogRootSentinelPath)) `
+        -Expected $unrelatedLogRootSentinelBytes) `
+    "Disposable cleanup changed unrelated data beside the exact log directory."
+$result["cleanup_preserved_unrelated_log_root_data"] = $true
+$result["cleanup_evidence"] = [ordered]@{
+    exact_log_directory_removed = -not (Test-Path -LiteralPath $logDirectory)
+    unrelated_parent_file = [ordered]@{
+        path = $unrelatedLogRootSentinelPath
+        byte_count = $unrelatedLogRootSentinelBytes.Length
+        sha256 = [Convert]::ToHexString(
+            [Security.Cryptography.SHA256]::HashData($unrelatedLogRootSentinelBytes)
+        )
+    }
+}
+
+New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($artifactFullPath)) -Force | Out-Null
+$result | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $artifactFullPath -Encoding utf8NoBOM

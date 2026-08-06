@@ -87,6 +87,9 @@ fn signed_current_user_nsis_installs_to_a_spaced_path_and_cleans_registration() 
         true
     );
     assert_eq!(result["uninstall_removed_autostart"], true);
+    assert_eq!(result["uninstall_removed_package_registration"], true);
+    assert_eq!(result["uninstall_removed_registered_uninstaller"], true);
+    assert_eq!(result["uninstall_removed_install_directory"], true);
 }
 
 #[test]
@@ -94,6 +97,17 @@ fn installed_settings_and_engine_lifecycle_uses_production_processes() {
     let result = acceptance_result();
     assert_eq!(result["engine_settings_coexisted"], true);
     assert_eq!(result["settings_single_instance"], true);
+    assert_eq!(
+        result["settings_forwarded_show_and_unminimized_existing_window"],
+        true
+    );
+    let forwarding = &result["settings_forwarding_evidence"];
+    assert_eq!(
+        forwarding["existing_window_handle"],
+        forwarding["forwarded_window_handle"]
+    );
+    assert_eq!(forwarding["visible_settings_process_count"], 1);
+    assert_eq!(forwarding["visible_top_level_window_count"], 1);
     assert_eq!(result["settings_close_removed_webview_tree"], true);
     assert_eq!(result["settings_close_kept_engine"], true);
     assert_eq!(result["quit_stopped_engine"], true);
@@ -128,6 +142,7 @@ fn reinstall_and_uninstall_retain_config_and_logs() {
         "logs_retained_after_uninstall",
         "sentinel_retained_after_reinstall",
         "sentinel_retained_after_uninstall",
+        "cleanup_preserved_unrelated_log_root_data",
     ] {
         assert_eq!(result[field], true, "{field}");
     }
@@ -137,6 +152,15 @@ fn reinstall_and_uninstall_retain_config_and_logs() {
     assert!(result["retained_log_evidence"]["before_uninstall"]
         .as_object()
         .is_some_and(|files| !files.is_empty()));
+    assert_eq!(
+        result["cleanup_evidence"]["exact_log_directory_removed"],
+        true
+    );
+    assert!(
+        result["cleanup_evidence"]["unrelated_parent_file"]["sha256"]
+            .as_str()
+            .is_some_and(|hash| !hash.is_empty())
+    );
 }
 
 #[test]
@@ -144,6 +168,14 @@ fn installed_release_resources_and_lifecycle_meet_kpi_gates() {
     let result = acceptance_result();
     assert_eq!(result["kpi_gates_passed"], true);
     let measurements = &result["measurements"];
+    assert_eq!(
+        measurements["engine_startup_readiness"]["condition"],
+        "authenticated_status"
+    );
+    assert_eq!(
+        measurements["engine_startup_readiness"]["observed_pid"],
+        measurements["engine_startup_readiness"]["authenticated_status_pid"]
+    );
     assert_eq!(measurements["engine"]["webview_count"], 0);
     assert_eq!(measurements["engine"]["descendant_webview_count"], 0);
     assert!(

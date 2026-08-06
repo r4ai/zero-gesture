@@ -1,6 +1,7 @@
 #![cfg(windows)]
 
 use serde_json::Value;
+use std::process::Command;
 
 fn json(path: &str) -> Value {
     serde_json::from_str(
@@ -55,4 +56,44 @@ fn uninstall_hook_removes_autostart_only_after_successful_uninstall() {
     assert!(post < delete);
     assert!(hooks[pre..post].contains("Abort"));
     assert!(!hooks[pre..post].contains("DeleteRegValue"));
+}
+
+#[test]
+fn installed_acceptance_rejects_sibling_prefix_artifact_path() {
+    let temp = std::env::temp_dir().join(format!(
+        "zero-gesture-p05c-containment-{}",
+        std::process::id()
+    ));
+    let runner = temp.join("runner");
+    let sibling_artifact = temp.join("runner-sibling").join("artifact.json");
+    let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
+    let output = Command::new("pwsh")
+        .args([
+            "-NoProfile",
+            "-File",
+            repository
+                .join("scripts/windows/p05c-installed-acceptance.ps1")
+                .to_str()
+                .unwrap(),
+            "-InstallerPath",
+            temp.join("missing-installer.exe").to_str().unwrap(),
+            "-ArtifactPath",
+            sibling_artifact.to_str().unwrap(),
+        ])
+        .env("GITHUB_ACTIONS", "true")
+        .env("RUNNER_TEMP", runner)
+        .output()
+        .unwrap();
+    let error = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!output.status.success());
+    assert!(
+        error.contains("Artifact path must stay below RUNNER_TEMP."),
+        "{error}"
+    );
 }

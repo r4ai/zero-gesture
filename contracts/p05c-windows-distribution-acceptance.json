@@ -50,15 +50,22 @@
       "evidence_name": "installed_release_rejects_unset_and_wrong_acceptance_tokens_without_state_change"
     },
     {
+      "id": "P05C-SECURITY-003",
+      "obligation": "The installed acceptance artifact must resolve to a real descendant of RUNNER_TEMP; a rooted relative result, parent traversal, or sibling-prefix escape is rejected before installer execution.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/tests/p05c_windows_distribution.rs",
+      "evidence_name": "installed_acceptance_rejects_sibling_prefix_artifact_path"
+    },
+    {
       "id": "P05C-INSTALL-001",
-      "obligation": "A disposable runner validates self-signed Authenticode, silent current-user installation to a spaced path, exact Run quoting, StartupApproved, and uninstall registration cleanup.",
+      "obligation": "A disposable runner validates self-signed Authenticode, silent current-user installation to a spaced path, exact Run quoting and StartupApproved, then successful removal of registration, registered uninstaller, and installer-owned program files.",
       "runner": "windows-installed-acceptance",
       "evidence_file": "src-tauri/tests/p05c_windows_installed.rs",
       "evidence_name": "signed_current_user_nsis_installs_to_a_spaced_path_and_cleans_registration"
     },
     {
       "id": "P05C-LIFECYCLE-001",
-      "obligation": "Installed release Engine and Settings coexist, Settings is single-instance, real close removes its WebView tree while Engine survives, and authenticated Quit stops Engine without changing autostart.",
+      "obligation": "Installed release Engine and Settings coexist; a second Settings shows and unminimizes the same existing window without leaving an extra Settings process or visible window; real close removes its WebView tree while Engine survives; and authenticated Quit stops Engine without changing autostart.",
       "runner": "windows-installed-acceptance",
       "evidence_file": "src-tauri/tests/p05c_windows_installed.rs",
       "evidence_name": "installed_settings_and_engine_lifecycle_uses_production_processes"
@@ -72,14 +79,14 @@
     },
     {
       "id": "P05C-RETENTION-001",
-      "obligation": "Stopped-Engine log snapshots retain every relative path and exact byte hash across reinstall and uninstall, clean shutdown removes its live secret, and an installer-unowned config sentinel remains byte-exact.",
+      "obligation": "Stopped-Engine log snapshots retain every relative path and exact byte hash across reinstall and uninstall, clean shutdown removes its live secret, installer-unowned config remains byte-exact, and disposable cleanup deletes only the exact test-owned log directory while preserving unrelated parent data.",
       "runner": "windows-installed-acceptance",
       "evidence_file": "src-tauri/tests/p05c_windows_installed.rs",
       "evidence_name": "reinstall_and_uninstall_retain_config_and_logs"
     },
     {
       "id": "P05C-KPI-001",
-      "obligation": "Installed release Engine resources and actual process descendants, Settings footprint, startup, close, and quit remain within recorded Windows KPI gates with no Engine WebView2 descendant.",
+      "obligation": "Installed release Engine resources and actual process descendants, Settings footprint, authenticated usable startup, close, and quit remain within recorded Windows KPI gates with no Engine WebView2 descendant; startup ends only at the first successful authenticated status reporting the observed Engine PID.",
       "runner": "windows-installed-acceptance",
       "evidence_file": "src-tauri/tests/p05c_windows_installed.rs",
       "evidence_name": "installed_release_resources_and_lifecycle_meet_kpi_gates"

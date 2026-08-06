@@ -56,20 +56,25 @@ The CI test builds a release NSIS installer and performs:
 2. exact ephemeral-signer thumbprint verification on the installer and
    installed/reinstalled executable, rejection of absent/hash-mismatched
    signatures, and recording of actual chain status;
-3. Settings launch, Engine readiness, exact quoted HKCU Run and
-   StartupApproved observation;
+3. Settings launch, exact quoted HKCU Run and StartupApproved observation, and
+   Engine readiness measured through the first successful authenticated status
+   that reports the observed Engine PID;
 4. missing/wrong-token status and Quit rejection by installed production
    processes without status artifacts or state mutation;
-5. production process single-instance, WebView tree, Settings close, Engine
-   survival, authenticated Engine status/Quit, and zero observed Engine
-   WebView2 descendants;
+5. production process single-instance forwarding after minimizing the existing
+   Settings window, observation that the same window is shown and unminimized
+   with no extra Settings process or visible window, WebView tree, Settings
+   close, Engine survival, authenticated Engine status/Quit, and zero observed
+   Engine WebView2 descendants;
 6. a guarded running-app uninstall cancellation that preserves executable and
    autostart registration;
 7. same-version reinstall as the upgrade/reinstall compatibility case;
 8. exact config/sentinel bytes plus per-relative-path stopped-Engine log
    byte/hash retention after reinstall and uninstall;
-9. successful uninstall of program files and autostart values followed by
-   disposable runner data cleanup; and
+9. successful uninstall of program files, registration, registered uninstaller,
+   and autostart values, followed by disposable cleanup limited to the exact
+   test-owned config/log directories while unrelated log-parent data remains
+   byte-exact; and
 10. a local JSON KPI artifact for startup, close, quit, working set, threads,
     handles, actual descendants, signatures, and retention hashes.
 
@@ -78,6 +83,8 @@ The production acceptance control is disabled unless
 It only reads authenticated Engine status into an explicit file or requests the
 existing typed Engine shutdown.
 It does not expose configuration, input, capture, or mutation operations.
+The artifact path must normalize to a real descendant of `RUNNER_TEMP`;
+sibling-prefix and traversal paths are rejected before installer execution.
 
 ## Authenticode release gate
 
