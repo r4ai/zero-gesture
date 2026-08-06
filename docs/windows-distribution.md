@@ -45,6 +45,9 @@ unconditional cleanup step.
 It does not weaken the protected-root policy to trust this ephemeral leaf.
 This proves that Tauri's Authenticode configuration and signed artifact path
 work; it is not publisher identity or SmartScreen reputation evidence.
+Tauri signs the application executable through the dynamic thumbprint and
+SHA-256 configuration, then CI explicitly signs the generated NSIS wrapper
+with the same ephemeral identity.
 
 The CI test builds a release NSIS installer and performs:
 
