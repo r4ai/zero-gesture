@@ -12,9 +12,14 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use windows_sys::core::BOOL;
-use windows_sys::Win32::Foundation::{CloseHandle, HWND, INVALID_HANDLE_VALUE, LPARAM};
+use windows_sys::Win32::Foundation::{
+    CloseHandle, HANDLE, HWND, INVALID_HANDLE_VALUE, LPARAM, WAIT_OBJECT_0,
+};
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+};
+use windows_sys::Win32::System::Threading::{
+    OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetClassNameW, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
@@ -29,6 +34,26 @@ static SETTINGS_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 struct EngineChild {
     child: Child,
+}
+
+struct ObservedProcess {
+    handle: HANDLE,
+    process_id: u32,
+}
+
+impl ObservedProcess {
+    fn open(process_id: u32) -> Option<Self> {
+        let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, process_id) };
+        (!handle.is_null()).then_some(Self { handle, process_id })
+    }
+}
+
+impl Drop for ObservedProcess {
+    fn drop(&mut self) {
+        unsafe {
+            CloseHandle(self.handle);
+        }
+    }
 }
 
 impl Drop for EngineChild {
@@ -232,10 +257,7 @@ fn actual_engine_child_starts_no_webview2_descendant() {
     let mut engine = fixture.spawn(false);
     fixture.wait_ready(&mut engine.child);
 
-    assert_eq!(
-        webview2_descendants(engine.child.id()),
-        Vec::<String>::new()
-    );
+    assert!(webview2_descendants(engine.child.id()).is_empty());
 }
 
 #[test]
@@ -435,7 +457,14 @@ fn settings_exit_seam_removes_webview_and_keeps_engine_running() {
     let settings_process_id = settings.child.id();
     wait_for_content_window(&mut settings.child);
     let webview_deadline = Instant::now() + SETTINGS_RUNTIME_TIMEOUT;
-    while webview2_descendants(settings_process_id).is_empty() {
+    let webview_processes = loop {
+        let processes = webview2_descendants(settings_process_id)
+            .into_iter()
+            .filter_map(|(process_id, _)| ObservedProcess::open(process_id))
+            .collect::<Vec<_>>();
+        if !processes.is_empty() {
+            break processes;
+        }
         assert!(
             settings.child.try_wait().unwrap().is_none(),
             "Settings exited before creating a WebView2 descendant"
@@ -445,7 +474,7 @@ fn settings_exit_seam_removes_webview_and_keeps_engine_running() {
             "Settings did not create a WebView2 descendant"
         );
         thread::sleep(Duration::from_millis(20));
-    }
+    };
     fs::write(&exit_trigger, b"exit").unwrap();
 
     let deadline = Instant::now() + SETTINGS_RUNTIME_TIMEOUT;
@@ -466,12 +495,15 @@ fn settings_exit_seam_removes_webview_and_keeps_engine_running() {
         "Settings must connect to Engine before exercising its exit seam"
     );
     let deadline = Instant::now() + SETTINGS_RUNTIME_TIMEOUT;
-    while !webview2_descendants(settings_process_id).is_empty() {
-        assert!(
-            Instant::now() < deadline,
-            "WebView2 descendants remained after Settings exited"
+    for process in webview_processes {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let remaining_ms = remaining.as_millis().min(u128::from(u32::MAX)) as u32;
+        assert_eq!(
+            unsafe { WaitForSingleObject(process.handle, remaining_ms) },
+            WAIT_OBJECT_0,
+            "WebView2 process {} remained after Settings exited",
+            process.process_id
         );
-        thread::sleep(Duration::from_millis(20));
     }
     assert!(engine.child.try_wait().unwrap().is_none());
 }
@@ -582,7 +614,7 @@ fn content_window_count(process_id: u32) -> u32 {
     context.count
 }
 
-fn webview2_descendants(root_process_id: u32) -> Vec<String> {
+fn webview2_descendants(root_process_id: u32) -> Vec<(u32, String)> {
     let processes = process_snapshot();
     let mut seen = HashSet::from([root_process_id]);
     let mut pending = VecDeque::from([root_process_id]);
@@ -592,7 +624,7 @@ fn webview2_descendants(root_process_id: u32) -> Vec<String> {
             if seen.insert(*process_id) {
                 pending.push_back(*process_id);
                 if name.eq_ignore_ascii_case("msedgewebview2.exe") {
-                    webviews.push(name.clone());
+                    webviews.push((*process_id, name.clone()));
                 }
             }
         }
