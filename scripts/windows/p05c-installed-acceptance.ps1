@@ -310,8 +310,11 @@ $measurements.install_ms = $installWatch.ElapsedMilliseconds
 $uninstallEntry = Get-UninstallEntry
 Assert-Condition ($null -ne $uninstallEntry) "NSIS did not register the current-user installation."
 $uninstaller = Resolve-Uninstaller -UninstallEntry $uninstallEntry
-$installDirectory = [string]$uninstallEntry.InstallLocation
-Assert-Condition (-not [string]::IsNullOrWhiteSpace($installDirectory)) "NSIS did not publish InstallLocation."
+$installLocation = [string]$uninstallEntry.InstallLocation
+Assert-Condition (-not [string]::IsNullOrWhiteSpace($installLocation)) "NSIS did not publish InstallLocation."
+$installDirectory = [IO.Path]::GetFullPath($installLocation.Trim().Trim('"'))
+Assert-Condition ([IO.Path]::IsPathFullyQualified($installDirectory)) `
+    "NSIS InstallLocation must resolve to an absolute path."
 Assert-Condition ($installDirectory -match "\s") "Installed path must include whitespace: $installDirectory"
 $installedExecutable = Join-Path $installDirectory $executableName
 Assert-Condition (Test-Path -LiteralPath $installedExecutable -PathType Leaf) "Installed executable was not found."

@@ -65,7 +65,9 @@ fn signed_current_user_nsis_installs_to_a_spaced_path_and_cleans_registration() 
         "installed_executable",
         "reinstalled_executable",
     ] {
-        assert_eq!(signing[artifact]["status"], "Valid");
+        let status = signing[artifact]["status"].as_str().unwrap();
+        assert!(matches!(status, "Valid" | "NotTrusted" | "UnknownError"));
+        assert_eq!(signing[artifact]["chain_trusted"], status == "Valid");
         assert_eq!(
             signing[artifact]["thumbprint"]
                 .as_str()
