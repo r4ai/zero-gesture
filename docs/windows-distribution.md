@@ -47,8 +47,8 @@ This proves that Tauri's Authenticode configuration and signed artifact path
 work; it is not publisher identity or SmartScreen reputation evidence.
 Tauri's standard `signCommand` invokes a bounded repository signer for every
 bundle signing target. The release application executable and generated NSIS
-wrapper therefore use the same ephemeral identity, and CI verifies both exact
-thumbprints immediately after bundling.
+wrapper therefore use the same ephemeral identity. CI verifies the wrapper
+immediately after bundling and the packaged executable after silent install.
 
 The CI test builds a release NSIS installer and performs:
 

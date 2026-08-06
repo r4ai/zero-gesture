@@ -90,8 +90,8 @@ Acceptance requires the exact ephemeral signer thumbprint, rejects an absent
 or hash-mismatched signature, and records the actual chain status.
 Tauri's standard `signCommand` invokes a bounded repository signer for every
 bundle signing target. The release application executable and generated NSIS
-wrapper therefore use the same ephemeral identity, and CI verifies both exact
-thumbprints before installed acceptance.
+wrapper therefore use the same ephemeral identity. CI verifies the wrapper
+after bundling and the packaged executable after silent install.
 
 One installed scenario directly verifies:
 

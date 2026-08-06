@@ -245,18 +245,13 @@ jobs:
           if ($installers.Count -ne 1) {
             throw "Expected one NSIS installer, found $($installers.Count)."
           }
-          $signedPaths = @(
-            (Resolve-Path "src-tauri/target/release/zero-gesture.exe").Path
-            $installers[0].FullName
-          )
-          foreach ($signedPath in $signedPaths) {
-            $signature = Get-AuthenticodeSignature -LiteralPath $signedPath
-            if (
-              $null -eq $signature.SignerCertificate -or
-              $signature.SignerCertificate.Thumbprint -ine $env:P05C_CERT_THUMBPRINT
-            ) {
-              throw "Tauri custom signing did not sign with the disposable identity: $signedPath"
-            }
+          $signature = Get-AuthenticodeSignature `
+            -LiteralPath $installers[0].FullName
+          if (
+            $null -eq $signature.SignerCertificate -or
+            $signature.SignerCertificate.Thumbprint -ine $env:P05C_CERT_THUMBPRINT
+          ) {
+            throw "Tauri custom signing did not sign the NSIS wrapper with the disposable identity."
           }
 
       - name: Run disposable installed acceptance
