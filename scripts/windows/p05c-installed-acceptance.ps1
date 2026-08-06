@@ -438,8 +438,12 @@ Assert-Condition ($measurements.settings_open.working_set_bytes -le 536870912) "
 Assert-Condition ($measurements.settings_open.thread_count -le 128) "Settings tree thread gate exceeded."
 Assert-Condition ($measurements.settings_open.handle_count -le 2048) "Settings tree handle gate exceeded."
 
+$settings.Refresh()
+Assert-Condition ($settings.WaitForInputIdle(10000)) `
+    "First Settings did not reach an idle GUI message loop."
 $second = Start-Settings -Executable $installedExecutable
-Wait-Condition { $second.HasExited } "second Settings single-instance forwarding"
+Assert-Condition ($second.WaitForExit(10000)) `
+    "Second Settings did not complete single-instance forwarding."
 Assert-Condition ($second.ExitCode -eq 0) "Second Settings instance failed."
 Assert-Condition (-not $settings.HasExited) "First Settings instance did not survive forwarding."
 
