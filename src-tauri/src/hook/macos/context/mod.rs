@@ -13,8 +13,8 @@ use std::{ffi::c_void, ptr::NonNull};
 
 use crossbeam_channel::{bounded, Receiver, Sender};
 
-use super::owner::{ContextView, CONTEXT_MAX_AGE_MS};
-use super::HookFailure;
+use super::super::owner::{ContextView, CONTEXT_MAX_AGE_MS};
+use super::super::HookFailure;
 use crate::config::ConfigSnapshotReader;
 use crate::domain::input::TargetToken;
 use crate::domain::{BindingSetId, MouseEvent, Point};

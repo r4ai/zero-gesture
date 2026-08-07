@@ -6,8 +6,6 @@
 
 #[cfg(any(target_os = "macos", test))]
 mod macos;
-#[cfg(any(target_os = "macos", test))]
-mod macos_context;
 mod owner;
 #[cfg(windows)]
 mod win32;
