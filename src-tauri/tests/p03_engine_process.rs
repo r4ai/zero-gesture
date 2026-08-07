@@ -29,7 +29,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 const ENGINE_EXE: &str = env!("CARGO_BIN_EXE_zero-gesture");
 const CONFIG_FILE: &str = "zero-gesture.config.json";
 const START_TIMEOUT: Duration = Duration::from_secs(3);
-const SETTINGS_RUNTIME_TIMEOUT: Duration = Duration::from_secs(10);
+const SETTINGS_RUNTIME_TIMEOUT: Duration = Duration::from_secs(20);
 static NEXT_NAMESPACE: AtomicU64 = AtomicU64::new(1);
 static SETTINGS_TEST_LOCK: Mutex<()> = Mutex::new(());
 

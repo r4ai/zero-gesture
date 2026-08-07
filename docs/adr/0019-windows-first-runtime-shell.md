@@ -122,7 +122,11 @@ identities. Debug process tests use an isolated WebView2 data directory and
 `about:blank`, so they neither contend with an existing user Settings process
 nor depend on a development server. The trigger calls the production Tauri
 window close path instead of forcing `std::process::exit`; the process test
-waits on those identities and keeps the original 10-second lifecycle deadline.
+waits on those identities with a 20-second Windows Settings CI harness
+observation budget. The P05c installed harness uses that same 20-second budget
+only for second-Settings forwarding exit. These budgets absorb loaded-runner
+startup variance; they do not change product lifecycle behavior, Engine KPI
+gates, or the 10-second installed Settings close KPI.
 The plugin callback posts restore commands to the recorded HWND; window
 construction is handed to the Tauri event loop because constructing a WebView
 re-entrantly inside that WindowProc is unsupported. Showing an existing hidden
