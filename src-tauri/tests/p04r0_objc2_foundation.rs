@@ -21,7 +21,7 @@ fn visit_objc2_dependencies(
 }
 
 fn parsed_manifest() -> toml::Value {
-    MANIFEST.parse().expect("Cargo.toml must be valid TOML")
+    toml::from_str(MANIFEST).expect("Cargo.toml must be valid TOML")
 }
 
 #[test]
