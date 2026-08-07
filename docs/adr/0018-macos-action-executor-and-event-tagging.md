@@ -101,10 +101,11 @@ macOS virtual-key names:
 The worker resolves every key before creating an event. It creates all
 key-down events in configured order and all key-up events in reverse order.
 Every event for one repeat must be non-NULL and tagged before any event in
-that repeat is posted. Created `CGEventRef` values are held by one `NonNull`
-owner and released exactly once with `CFRelease`; NULL is never released.
-This leaf uses Core Foundation ownership only and creates no autoreleased
-Objective-C object.
+that repeat is posted. ADR 0025 replaces the original manual owner with
+generated `Option<CFRetained<CGEvent>>`; every created reference is still
+released exactly once and NULL is never represented as an owner. This leaf
+uses Core Foundation ownership only and creates no autoreleased Objective-C
+object.
 
 F21 through F24 have no unambiguous key-code mapping in the selected leaf and
 fail before injection. Mouse actions and trigger replay require
@@ -188,7 +189,8 @@ manual integration evidence and are not inferred from seam tests.
 - [`CGEventPost`](https://developer.apple.com/documentation/coregraphics/cgevent/post(tap:))
   inserts an event before taps at the selected location.
 - [`CFRelease`](https://developer.apple.com/documentation/corefoundation/cfrelease)
-  must receive a non-NULL owned reference.
+  must receive a non-NULL owned reference; ADR 0025 delegates this rule to
+  generated `CFRetained`.
 
 ## Deferrals
 

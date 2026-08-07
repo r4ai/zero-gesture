@@ -28,7 +28,8 @@ ADRは実装の詳細設計ではなく、後続PRが守る外部契約、不変
 | [0021](./0021-windows-nsis-installed-acceptance.md) | Accepted | current-user NSIS、retention、installed release acceptance、KPI、Authenticode blockerを固定する |
 | [0022](./0022-objc2-macos-library-foundation.md) | Accepted | P04R0 foundationからcontext・Event Tap・action移行、Active Input、Native Overlay、shell、distributionへ進むmacOS順序とobjc2不変条件を固定する |
 | [0023](./0023-objc2-macos-context-native-leaf.md) | Accepted | P04R1 context owner split、objc2所有権、nullable AX Create例外、既存worker/cache契約とKPIを固定する |
-| [0024](./0024-objc2-macos-event-tap-owner.md) | Accepted | P04R2 Event Tap owner split、generated CG/CF ownership、callback ABI、暫定marker fieldとrollback境界を固定する |
+| [0024](./0024-objc2-macos-event-tap-owner.md) | Accepted | P04R2 Event Tap owner split、generated CG/CF ownership、callback ABI、P04R3 named marker field統合とrollback境界を固定する |
+| [0025](./0025-objc2-macos-action-native-leaf.md) | Accepted | P04R3 action executor split、generated CGEvent/CFRetained所有権、named self-event field、既存worker契約とKPIを固定する |
 
 ## Reading order
 
@@ -61,8 +62,11 @@ nullable AX application Createだけに限定したtyped raw leaf、維持した
 局所KPIを記録する。
 ADR 0024はP04R2で実装した`hook::macos`のprivate module分離、generated
 CGEventTap/CFMachPort/CFRunLoop所有権、元event pointerを常に返すcallback ABI、
-P04R3でreader/writerを同時移行する暫定marker field、維持したP04b2 obligationsと
+P04R3でreader/writerを同時移行したnamed marker field、維持したP04b2 obligationsと
 局所KPIを記録する。
+ADR 0025はP04R3で実装した`executor::macos`のworker/native/keymap分離、
+generated `CFRetained<CGEvent>`所有権、named source-user-data fieldへの原子的な
+reader/writer移行、維持した17 obligationsと局所KPIを記録する。
 
 ## Status policy
 

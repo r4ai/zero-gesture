@@ -25,63 +25,63 @@
       "id": "P04B3B-TAG-004",
       "obligation": "Every generated keyboard event receives the process marker before it is posted.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/executor/macos.rs",
+      "evidence_file": "src-tauri/src/executor/macos/native.rs",
       "evidence_name": "generated_keyboard_events_all_carry_process_marker"
     },
     {
       "id": "P04B3B-ORDER-001",
       "obligation": "A keyboard action generates key-down events in configured order and key-up events in reverse order.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/executor/macos.rs",
+      "evidence_file": "src-tauri/src/executor/macos/native.rs",
       "evidence_name": "keyboard_action_posts_key_downs_then_reverse_key_ups"
     },
     {
       "id": "P04B3B-FAILURE-001",
       "obligation": "Unavailable post-event access fails before any event generation or injection.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/executor/macos.rs",
+      "evidence_file": "src-tauri/src/executor/macos/mod.rs",
       "evidence_name": "unavailable_post_access_fails_before_injection"
     },
     {
       "id": "P04B3B-FAILURE-002",
       "obligation": "A NULL event creation releases only already-owned events and posts no partial keyboard chord.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/executor/macos.rs",
+      "evidence_file": "src-tauri/src/executor/macos/native.rs",
       "evidence_name": "nullable_event_creation_releases_only_owned_events_and_posts_nothing"
     },
     {
       "id": "P04B3B-FAILURE-003",
       "obligation": "A later repeat generation failure is classified after injection once an earlier repeat was posted.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/executor/macos.rs",
+      "evidence_file": "src-tauri/src/executor/macos/mod.rs",
       "evidence_name": "later_repeat_generation_failure_is_failed_after_injection"
     },
     {
       "id": "P04B3B-ACTION-001",
       "obligation": "Keys without an unambiguous current macOS virtual-key mapping are rejected before event generation.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/executor/macos.rs",
+      "evidence_file": "src-tauri/src/executor/macos/mod.rs",
       "evidence_name": "unsupported_macos_keys_fail_before_generating_an_event"
     },
     {
       "id": "P04B3B-OVERLOAD-001",
       "obligation": "The action mailbox has fixed capacity, preserves accepted FIFO order, and drops a new action on overload.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/executor/macos.rs",
+      "evidence_file": "src-tauri/src/executor/macos/mod.rs",
       "evidence_name": "executor_mailbox_overload_is_bounded_and_preserves_fifo_order"
     },
     {
       "id": "P04B3B-LIFECYCLE-001",
       "obligation": "A stopped action worker rejects new work without blocking the input owner.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/executor/macos.rs",
+      "evidence_file": "src-tauri/src/executor/macos/mod.rs",
       "evidence_name": "worker_stop_rejects_new_actions_without_blocking_input_owner"
     },
     {
       "id": "P04B3B-LIFECYCLE-002",
       "obligation": "Executor shutdown remains bounded when an in-flight OS leaf does not return.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/executor/macos.rs",
+      "evidence_file": "src-tauri/src/executor/macos/mod.rs",
       "evidence_name": "executor_shutdown_is_bounded_while_os_leaf_is_in_flight"
     },
     {

@@ -72,22 +72,20 @@ Permission loss, nullable setup, non-timeout run-loop return, and overload all
 preserve physical input. Active suppression, replay, and rendering remain
 deferred.
 
-### Provisional source-user-data field and P04R3 boundary
+### Source-user-data field and P04R3 completion
 
-The existing callback and action executor both use numeric field `55` for
-their process marker. Generated
-`CGEventField::EventSourceUserData` is `42`; `55` is **not** claimed to be the
-Apple constant. Changing only the callback would break reader/writer parity in
-this Event Tap-only phase.
+P04R2 initially preserved reader/writer parity with one provisional
+crate-private numeric field `55`. Generated
+`CGEventField::EventSourceUserData` is `42`, so P04R3 removes that project
+constant and changes the callback reader and action writer atomically to the
+generated named field. The callback's real-CGEvent self-filter test and the
+executor's generated-event marker test now exercise the same framework value.
 
-P04R2 therefore moves `55` to one crate-private executor constant and has the
-callback import that same fact. P04R3 must migrate the action writer and
-callback reader atomically to generated
-`CGEventField::EventSourceUserData`, then validate real self-event filtering.
-The rollback boundary is the four private input files, three added Core
-Foundation features, the shared provisional constant, and evidence-path-only
-manifest edits. Reverting that set restores the prior raw owner without a
-data, protocol, or Windows migration.
+The P04R2-only rollback boundary was the four private input files, three added
+Core Foundation features, provisional shared constant, and evidence-path-only
+manifest edits. The integrated P04R3 state no longer has that constant; a
+rollback across this boundary must keep reader and writer on the same field
+rather than reverting only one side.
 
 ### Retained raw leaf
 
@@ -151,14 +149,14 @@ The authoritative macOS 26 arm64 job must run Clippy, all library/contract
 tests, application packaging, and packaged process/UDS acceptance.
 Noninteractive CI still cannot prove a live TCC grant, physical
 cross-application event delivery, disable/re-enable delivery, or actual
-Mach-port invalidation timing. It also cannot validate the provisional marker
-field against physical self-posted events; that is an explicit P04R3/manual
-acceptance item.
+Mach-port invalidation timing. It also cannot validate physical self-posted
+event filtering across the real tap and action worker; that remains manual
+acceptance.
 
 ## Consequences
 
 Generated types now encode Event Tap, Mach-port, source, run-loop, callback,
 and retain/release contracts behind the existing input-owner interface. The
 hot path remains small and fail open, and active suppression remains out of
-scope. P04R3 has one explicit atomic marker-field migration before it replaces
+scope. P04R3 completed the atomic named marker-field migration while replacing
 the action executor's remaining raw Core Graphics implementation.

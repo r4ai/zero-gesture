@@ -124,14 +124,16 @@ Core Graphics for the entire tap lifetime.
    Accessibility/AppKit leaf to objc2. Preserve prompt-free preflight,
    timeout, identity, freshness, and Unknown failure semantics. ADR 0023
    records the one nullable raw leaf retained by this phase.
-3. **P04R2 — Event Tap split and migration:** split the input owner into
+3. **P04R2 — Event Tap split and migration (complete):** split the input owner into
    `hook/macos/{mod,callback,run_loop,consumer}` and migrate its Core Graphics
    leaf to objc2. Preserve callback ABI, bounded work, lifecycle, and the
-   listen-only behavior proven by P04b2/P04b3b.
-4. **P04R3 — Action executor split and migration:** split the executor into
+   listen-only behavior proven by P04b2/P04b3b. ADR 0024 records its generated
+   ownership and the P04R3 named-field integration.
+4. **P04R3 — Action executor split and migration (complete):** split the executor into
    `executor/macos/{mod,native,keymap}` and migrate tagged Core Graphics event
    creation/posting to objc2. Preserve marker, ordering, bounded queue, and
-   fail-open behavior.
+   fail-open behavior. ADR 0025 records the generated ownership and atomic
+   named-field integration requirement.
 5. **P04b3c-a — Active Input:** add active suppression, trigger replay, and
    target revalidation/activation only after the migrated input/action leaves
    retain their existing contracts.
@@ -210,8 +212,10 @@ physical/manual release evidence.
 
 ## Consequences
 
-The context migration now has a reviewed private native leaf without changing
-its worker/cache interface. The next migration applies the same policy to the
-Event Tap owner. Windows does not resolve or compile these dependencies.
-P04R0 added dependency compile cost and support checks; P04R1 changes only
-the context implementation behind the existing worker boundary.
+The context, Event Tap, and action migrations now have reviewed private native
+leaves without changing their existing owner interfaces. Windows does not
+resolve or compile these dependencies. P04R0 added dependency compile cost and
+support checks; P04R1-R3 changed implementation and ownership only behind the
+existing private seams. ADRs 0024 and 0025 are authoritative for the completed
+atomic named-field integration. The next behavior phase is P04b3c-a Active
+Input.

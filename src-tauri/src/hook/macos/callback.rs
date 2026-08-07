@@ -11,8 +11,6 @@ use objc2_core_graphics::{CGEvent, CGEventField, CGEventTapProxy, CGEventType};
 use super::{RawInput, TapState};
 #[cfg(target_os = "macos")]
 use super::{EVENT_OTHER_MOUSE_DOWN, EVENT_OTHER_MOUSE_UP, EVENT_SCROLL_WHEEL};
-#[cfg(target_os = "macos")]
-use crate::executor::macos::EVENT_FIELD_SOURCE_USER_DATA;
 
 pub(super) fn capture_callback_event(
     state: &TapState,
@@ -47,7 +45,7 @@ pub(super) unsafe extern "C-unwind" fn event_tap_callback(
     // valid for the callback duration; it is never retained or stored.
     let event_ref = unsafe { event.as_ref() };
     let source_marker =
-        CGEvent::integer_value_field(Some(event_ref), CGEventField(EVENT_FIELD_SOURCE_USER_DATA));
+        CGEvent::integer_value_field(Some(event_ref), CGEventField::EventSourceUserData);
     capture_callback_event(state, source_marker, || {
         read_raw_event(event_type.0, event_ref)
     });
