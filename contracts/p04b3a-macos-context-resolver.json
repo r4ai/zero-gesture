@@ -4,7 +4,7 @@
       "id": "P04B3A-PERMISSION-001",
       "obligation": "The Engine Accessibility preflight supplies no options dictionary and therefore cannot request a trust prompt.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos/context/mod.rs",
+      "evidence_file": "src-tauri/src/hook/macos/context/native.rs",
       "evidence_name": "accessibility_preflight_uses_no_prompt_options_dictionary"
     },
     {
@@ -74,7 +74,7 @@
       "id": "P04B3A-FAILURE-005",
       "obligation": "A nullable CF Create or Copy result is rejected before an owned reference can run CFRelease.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos/context/mod.rs",
+      "evidence_file": "src-tauri/src/hook/macos/context/native.rs",
       "evidence_name": "nullable_cf_create_is_rejected_before_owned_drop"
     },
     {

@@ -12,7 +12,7 @@ fn visit_objc2_dependencies(
     };
     for (key, value) in table {
         path.push(key.clone());
-        if key.starts_with("objc2-") {
+        if key == "objc2" || key.starts_with("objc2-") {
             visitor(path, value);
         }
         visit_objc2_dependencies(value, path, visitor);
@@ -74,6 +74,8 @@ fn required_objc2_framework_symbols_compile() {
 
     type_exists::<objc2_core_graphics::CGEvent>();
     type_exists::<objc2_application_services::AXUIElement>();
-    type_exists::<objc2_app_kit::NSApplication>();
+    type_exists::<objc2_app_kit::NSRunningApplication>();
+    type_exists::<objc2_app_kit::NSWorkspace>();
+    type_exists::<objc2_core_foundation::CFString>();
     type_exists::<objc2_quartz_core::CALayer>();
 }
