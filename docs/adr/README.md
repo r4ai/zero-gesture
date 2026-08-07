@@ -48,7 +48,7 @@ ADR 0018はP04b3bで接続したrun-loop context consumer、bounded keyboard act
 ADR 0019はP04b3b後の順序をWindows-firstへ変更し、P05aのautostart、Settings-only single instance、close/tray/Quit境界とP05b/P05cへの分割を記録する。
 ADR 0020はP05bで接続したtyped Settings failure、revision conflict時のdraft保持、既存native callbackからEngine IPCへ至るcapture id/epoch境界を記録する。
 ADR 0021はP05cで固定したcurrent-user NSIS、設定/log保持、installed production lifecycle/KPI、self-signed CIと実署名blocker、実GUI/physical gateを記録する。
-ADR 0022はP04R0で固定したmacOS-only objc2依存、既存deep module seam、callback safety、段階移行、behavior-neutral KPI基準を記録する。
+ADR 0022はP04R0で固定したmacOS-only objc2依存、既存deep module seam、callback safety、段階移行、behavior-neutral KPI基準を記録する。R0はruntime contractを追加せず、既存5 manifestの95 obligationsを継承する。
 
 ## Status policy
 

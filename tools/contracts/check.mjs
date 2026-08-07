@@ -83,14 +83,6 @@ const MANIFESTS = [
       "P04B3B-TAG-NNN, P04B3B-ACTION-NNN, P04B3B-ORDER-NNN, P04B3B-OVERLOAD-NNN, P04B3B-FAILURE-NNN, P04B3B-CONTEXT-NNN, or P04B3B-LIFECYCLE-NNN",
   },
   {
-    label: "P04R0",
-    path: "contracts/p04r0-objc2-foundation.json",
-    idPattern:
-      /^P04R0-(?:DEPENDENCY|BEHAVIOR|CALLBACK|TARGET|QUALITY)-\d{3}$/,
-    idDescription:
-      "P04R0-DEPENDENCY-NNN, P04R0-BEHAVIOR-NNN, P04R0-CALLBACK-NNN, P04R0-TARGET-NNN, or P04R0-QUALITY-NNN",
-  },
-  {
     label: "P05a",
     path: "contracts/p05a-windows-runtime-shell.json",
     idPattern: /^P05A-(?:AUTOSTART|PROCESS|SETTINGS|TRAY|LIFECYCLE)-\d{3}$/,

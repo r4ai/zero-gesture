@@ -105,9 +105,9 @@ Core Graphics for the entire tap lifetime.
 
 ## Phased migration
 
-1. **P04R0:** add target-scoped dependencies, contract/ADR, representative
-   symbol smoke, and Apple Silicon compile/package gate; change no production
-   behavior.
+1. **P04R0:** add target-scoped dependencies, this ADR, support checks, a
+   representative symbol smoke, and the Apple Silicon compile/package gate;
+   change no production behavior or runtime contract.
 2. **P04R1:** replace Core Graphics Event Tap/action raw declarations inside
    the existing hook/executor leaves. Preserve callback ABI, marker, ordering,
    ownership, and all P04b2/P04b3b tests.
@@ -118,15 +118,21 @@ Core Graphics for the entire tap lifetime.
    real owner seam using AppKit/Core Animation. This phase must define the
    second concrete renderer behavior before introducing any shared seam.
 
-Each phase has its own contract manifest, static quality comparison, Apple
-Silicon compile/test/package evidence, and manual TCC limitations.
+Each behavior-changing migration phase has its own contract manifest, static
+quality comparison, Apple Silicon compile/test/package evidence, and manual
+TCC limitations. P04R0 adds no runtime behavior, failure mode, or interface,
+so it adds no contract manifest.
 
 ## Contract and KPI record
 
-`contracts/p04r0-objc2-foundation.json` maps six independent obligations to
-six unique tests: `O = 6`, `O_v = 6`, `U = 0`, `T = 6`, `T_r = 0`, `P = 0`,
-`D = 0`, and `F = 0`. The five inherited P04 manifests remain unchanged at
-`8 + 38 + 8 + 24 + 17 = 95` obligations.
+P04R0 adds no external runtime contract and therefore adds no obligation.
+The five unchanged P04 manifests remain the single source of truth:
+`8 + 38 + 8 + 24 + 17 = 95`, so the inherited inventory remains `O = 95`,
+`O_v = 95`, `U = 0`, `T = 95`, and `T_r = 0`. The inherited phase records
+also retain `P = 0`, `D = 0`, and `F = 0`; those values describe that
+inherited contract inventory only. The Cargo target-policy checks and
+representative-symbol compile smoke are support checks, not external
+obligations, and are not added to `O` or `T`.
 
 The P04R0 review fixes `8e72da8` as the comparison base. The measurement scope
 and analyzer remain ADR 0006's tracked Rust/TypeScript product and test
@@ -144,8 +150,8 @@ The source/unsafe claims are established by an empty
 `8e72da8..P04R0` diff under `src-tauri/src`; the cognitive, cyclomatic,
 function, and PLOC claims follow from that unchanged canonical product scope
 and are confirmed by the PR's canonical base/head quality comparison. The new
-contract smoke is test-only, so its test PLOC/function and complexity increase
-is reported by that comparison rather than hidden.
+support checks are test-only, so their test PLOC/function and complexity
+increase is reported by that comparison rather than hidden.
 These are historical P04R0 measurements, not ceilings that prohibit P04R1+
 production migration.
 
@@ -158,8 +164,9 @@ beyond the macOS leaf modules.
 
 ## Verification and limits
 
-Windows-host contract tests verify target scoping, disabled default features,
-the inherited 95-case count, the recorded neutral delta, and the CI gate.
+Windows-host support checks verify target scoping and disabled default
+features. The existing contract checker continues to validate the inherited
+five P04 manifests without a P04R0 registration.
 The macOS 26 arm64 job compiles and runs representative `CGEvent`,
 `AXUIElement`, `NSApplication`, and `CALayer` type references, runs Clippy for
 every target, runs the existing macOS library tests, creates the ad-hoc signed
@@ -176,5 +183,5 @@ physical/manual release evidence.
 The next migration has a reviewed, minimal binding surface and can replace
 raw implementation locally without changing the module interfaces. Windows
 does not resolve or compile these dependencies. P04R0 adds dependency compile
-cost and one contract smoke, but no resident process, state, thread, queue,
+cost and three support checks, but no resident process, state, thread, queue,
 callback work, or runtime failure mode.

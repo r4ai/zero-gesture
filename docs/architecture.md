@@ -226,6 +226,9 @@ AppKit、QuartzCoreのobjc2 framework crateをmacOS target限定かつ
 Settings WebView、command、tray、packagingを所有し、native input callbackや
 AX/action/renderingのinterfaceにはしない。callback不変条件、段階移行、
 library選定と却下案は[ADR 0022](./adr/0022-objc2-macos-library-foundation.md)を正とする。
+R0は新しいruntime contractを追加しない。既存5 manifestの95 obligationsを
+唯一の契約在庫として維持し、Cargo target policyと代表symbol compileは
+obligationへ数えないsupport checkとして扱う。
 
 ### 3.3. Overlay Thread (The "Visuals")
 
