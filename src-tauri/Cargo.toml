@@ -64,6 +64,11 @@ windows-sys = { version = "0.61", features = [
 
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSApplication", "NSResponder"] }
+objc2-application-services = { version = "0.3.2", default-features = false, features = ["AXError", "AXUIElement", "HIServices"] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["CGEvent", "CGEventTypes", "CGRemoteOperation"] }
+objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["CALayer"] }
 
 [dev-dependencies]
 tempfile = "3"
+toml = "0.9"

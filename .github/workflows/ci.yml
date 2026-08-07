@@ -347,8 +347,8 @@ jobs:
       - name: Lint macOS target
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin --all-targets -- -D warnings -A dead-code
 
-      - name: Test macOS UDS, native input, context, and action owners
-        run: cargo test --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin --lib -- --test-threads=1
+      - name: Test macOS UDS, native input, context, action, and objc2 foundation
+        run: cargo test --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin --lib --test p04r0_objc2_foundation -- --test-threads=1
 
       - name: Build ad-hoc signed application bundle
         env:

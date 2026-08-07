@@ -26,6 +26,7 @@ ADRは実装の詳細設計ではなく、後続PRが守る外部契約、不変
 | [0019](./0019-windows-first-runtime-shell.md) | Accepted | Windows完成を先行し、P05a runtime shell・P05b Settings control・P05c distributionの順序と契約を固定する |
 | [0020](./0020-engine-owned-windows-settings-control.md) | Accepted | typed Settings error、conflict-safe draft、Engine-owned Windows capture protocolを固定する |
 | [0021](./0021-windows-nsis-installed-acceptance.md) | Accepted | current-user NSIS、retention、installed release acceptance、KPI、Authenticode blockerを固定する |
+| [0022](./0022-objc2-macos-library-foundation.md) | Accepted | P04R0 foundationからcontext・Event Tap・action移行、Active Input、Native Overlay、shell、distributionへ進むmacOS順序とobjc2不変条件を固定する |
 
 ## Reading order
 
@@ -47,6 +48,11 @@ ADR 0018はP04b3bで接続したrun-loop context consumer、bounded keyboard act
 ADR 0019はP04b3b後の順序をWindows-firstへ変更し、P05aのautostart、Settings-only single instance、close/tray/Quit境界とP05b/P05cへの分割を記録する。
 ADR 0020はP05bで接続したtyped Settings failure、revision conflict時のdraft保持、既存native callbackからEngine IPCへ至るcapture id/epoch境界を記録する。
 ADR 0021はP05cで固定したcurrent-user NSIS、設定/log保持、installed production lifecycle/KPI、self-signed CIと実署名blocker、実GUI/physical gateを記録する。
+ADR 0022はP04R0 Foundationで固定したmacOS-only objc2依存とcallback safety、
+P04R1 context、P04R2 listen-only Event Tap、P04R3 action executorの分割移行、
+P04b3c-a Active Input、P04b3c-b Native Overlay、P05m shell/permissions/autostart、
+P06m distribution/physical acceptanceの順序を記録する。UDS分割は任意の後続作業とし、
+R0はruntime contractを追加せず既存5 manifestの95 obligationsを継承する。
 
 ## Status policy
 

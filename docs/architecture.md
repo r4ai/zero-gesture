@@ -1,7 +1,8 @@
 # Zero Gesture Architecture Design Document
 
 > [!NOTE]
-> この文書はP05bのWindows Settings controlとP04b3bまでのmacOS入力・context/action境界を説明する。
+> この文書はP05bのWindows Settings control、P04b3bまでのmacOS入力・context/action境界、
+> P04R0のobjc2 library policyを説明する。
 > マルチプラットフォーム目標設計と後続移行ゲートは
 > [ADR index](./adr/README.md) を正とする。
 
@@ -214,8 +215,24 @@ markerはtap install前に生成し、restartごとに変わる。
 Event Tapはlisten-onlyのままで、kernelのSuppress結果、Replay、renderer effectは
 P04b3bではOSへ適用しない。mailbox満杯、context/permission喪失、unsupported
 key、NULL生成、worker停止はactionをdrop/fail-openし、物理inputを待たせない。
-active suppression、mouse replay、target再検証/activation、native overlayは
-P04b3cへdeferする。
+active suppression、mouse replay、target再検証/activationはP04b3c-a Active Input、
+native overlayはP04b3c-b Native Overlayへdeferする。
+
+P04R0 Foundationはruntime behaviorを変えず、Core Graphics、
+ApplicationServices、AppKit、QuartzCoreのobjc2 framework crateをmacOS
+target限定かつ`default-features = false`で追加する。P04R1はcontext ownerを
+`hook/macos/context/{mod,native}`へ分割して移行し、P04R2はlisten-only Event Tapを
+`hook/macos/{mod,callback,run_loop,consumer}`へ分割して移行する。P04R3はaction
+executorを`executor/macos/{mod,native,keymap}`へ分割して移行する。その後に
+P04b3c-a Active Input、P04b3c-b Native Overlay、P05m shell/permissions/autostart、
+P06m distribution/physical acceptanceを進める。UDS分割は必要なら後で行う任意作業
+であり、この順序のcritical pathには含めない。Tauriはprocess、Settings WebView、
+command、tray、packagingを所有し、native input callbackやAX/action/renderingの
+interfaceにはしない。callback不変条件、段階移行、library選定と却下案は
+[ADR 0022](./adr/0022-objc2-macos-library-foundation.md)を正とする。
+R0は新しいruntime contractを追加しない。既存5 manifestの95 obligationsを
+唯一の契約在庫として維持し、Cargo target policyと代表symbol compileは
+obligationへ数えないsupport checkとして扱う。
 
 ### 3.3. Overlay Thread (The "Visuals")
 
@@ -270,8 +287,9 @@ TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成
 | :------------------- | :--------------------------------- | :----------------------------------------------- |
 | **App Framework**    | `tauri` v2                         | アプリケーションシェル、設定UI、ビルドシステム   |
 | **Windows API**      | `windows-sys`                      | Win32 APIへのRawアクセス (Hooks, GDI, Input)     |
-| **macOS Input**      | Core Graphics / Core Foundation FFI | listen-only Event Tapとrun-loop ownership       |
-| **macOS Context**    | AppKit / Accessibility FFI          | frontmost appとfocused windowのbounded worker解決 |
+| **macOS Input**      | objc2 Core Graphics（raw FFIから段階移行） | listen-only Event Tapとrun-loop ownership       |
+| **macOS Context**    | objc2 AppKit / ApplicationServices（raw FFIから段階移行） | frontmost appとfocused windowのbounded worker解決 |
+| **macOS Rendering**  | objc2 AppKit / QuartzCore（後続phase） | owner-thread限定のnative overlay                 |
 | **Concurrency**      | `std::thread`, `crossbeam-channel` | スレッド管理と高速なメッセージパッシング         |
 | **State Mngt**       | Engine owner + fixed two-slot publication | 設定mutationの単一所有とlock-free snapshot read |
 | **Serialization**    | `serde`, `serde_json`              | 設定ファイルの保存・読み込み                     |
