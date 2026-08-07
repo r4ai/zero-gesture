@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > この文書はP05bのWindows Settings control、P04b3bまでのmacOS入力・context/action境界、
-> P04R1のobjc2 context native leafを説明する。
+> P04R3のobjc2 context/action native leafを説明する。
 > マルチプラットフォーム目標設計と後続移行ゲートは
 > [ADR index](./adr/README.md) を正とする。
 
@@ -231,9 +231,13 @@ nullableなtyped raw leafを残し、NULLを`TargetExited`へ変換する。proc
 `hook/macos/{mod,callback,run_loop,consumer}`へ分割し、generated
 CGEvent/CFMachPort/CFRunLoop型と`CFRetained` ownershipへ移行した。callbackは
 generated `C-unwind` ABIでborrowed eventを読み、同じpointerを必ず返す。
-既存executorとのmarker reader/writer parityのため数値55を一つの共有定数として
-暫定維持し、Appleのgenerated field 42への切替はP04R3で両側を同時に行う。P04R3はaction
-executorを`executor/macos/{mod,native,keymap}`へ分割して移行する。その後に
+P04R3はaction executorを`executor/macos/{mod,native,keymap}`へ分割した。worker/control policyは
+`mod.rs`、closedなvirtual-key mappingは`keymap.rs`、generated
+`CGEvent`/`CFRetained` creation、named source-user-data tagging、session-tap
+postingはprivateな`native.rs`へ局所化する。handwritten Core Graphics宣言、
+manual `CFRelease` owner、action module内の`unsafe`は残さない。callback readerと
+writerは同じ`CGEventField::EventSourceUserData`へ原子的に
+切り替える。その後に
 P04b3c-a Active Input、P04b3c-b Native Overlay、P05m shell/permissions/autostart、
 P06m distribution/physical acceptanceを進める。UDS分割は必要なら後で行う任意作業
 であり、この順序のcritical pathには含めない。Tauriはprocess、Settings WebView、
@@ -241,7 +245,8 @@ command、tray、packagingを所有し、native input callbackやAX/action/rende
 interfaceにはしない。callback不変条件、段階移行、library選定と却下案は
 [ADR 0022](./adr/0022-objc2-macos-library-foundation.md)、context実装境界は
 [ADR 0023](./adr/0023-objc2-macos-context-native-leaf.md)、Event Tap実装境界は
-[ADR 0024](./adr/0024-objc2-macos-event-tap-owner.md)を正とする。
+[ADR 0024](./adr/0024-objc2-macos-event-tap-owner.md)、action実装境界とfield統合gateは
+[ADR 0025](./adr/0025-objc2-macos-action-native-leaf.md)を正とする。
 R0は新しいruntime contractを追加しない。既存5 manifestの95 obligationsを
 唯一の契約在庫として維持し、Cargo target policyと代表symbol compileは
 obligationへ数えないsupport checkとして扱う。
@@ -324,7 +329,10 @@ TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成
 │   │   ├── commands.rs         // Tauri IPC コマンドハンドラ
 │   │   ├── executor.rs         // Windowsアクション実行 (SendInput)
 │   │   ├── executor/
-│   │   │   └── macos.rs       // bounded tagged CGEvent keyboard worker
+│   │   │   └── macos/
+│   │   │       ├── mod.rs     // bounded action worker/control contract
+│   │   │       ├── keymap.rs  // closed macOS virtual-key mapping
+│   │   │       └── native.rs  // private objc2 CGEvent/CFRetained leaf
 │   │   ├── hook/
 │   │   │   ├── owner.rs       // InputKernel、config pin、固定action/renderer lane
 │   │   │   ├── macos/

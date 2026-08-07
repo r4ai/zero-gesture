@@ -1,4 +1,5 @@
 const MANIFEST: &str = include_str!("../Cargo.toml");
+const MACOS_ACTION_NATIVE: &str = include_str!("../src/executor/macos/native.rs");
 
 const MACOS_DEPENDENCY_PATH: [&str; 3] = ["target", "cfg(target_os = \"macos\")", "dependencies"];
 
@@ -65,6 +66,45 @@ fn objc2_direct_dependencies_disable_default_features() {
         found > 0,
         "at least one direct objc2 dependency is required"
     );
+}
+
+#[test]
+fn macos_action_native_uses_generated_ownership_and_named_self_event_field() {
+    for required in [
+        "CFRetained<CGEvent>",
+        "CGEvent::new_keyboard_event",
+        "CGEvent::set_integer_value_field",
+        "CGEventField::EventSourceUserData",
+        "CGEvent::post",
+    ] {
+        assert!(
+            MACOS_ACTION_NATIVE.contains(required),
+            "macOS action native leaf must use {required}"
+        );
+    }
+    for forbidden in ["CFRelease", "NonNull", "extern \"C\" {"] {
+        assert!(
+            !MACOS_ACTION_NATIVE.contains(forbidden),
+            "macOS action native leaf must not contain {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn macos_action_native_generated_seam_and_doubles_are_c_unwind() {
+    for function in [
+        "create_keyboard_event",
+        "set_integer_value",
+        "post_event",
+        "record_create",
+        "record_tag",
+        "record_post",
+    ] {
+        assert!(
+            MACOS_ACTION_NATIVE.contains(&format!("extern \"C-unwind\" fn {function}")),
+            "{function} must retain the generated binding ABI"
+        );
+    }
 }
 
 #[cfg(target_os = "macos")]

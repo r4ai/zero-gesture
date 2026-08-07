@@ -270,8 +270,6 @@ mod tests {
     };
     use crate::domain::input::tests::count_allocations;
     use crate::domain::{BindingSetId, TriggerButton as DomainTriggerButton};
-    #[cfg(target_os = "macos")]
-    use crate::executor::macos::EVENT_FIELD_SOURCE_USER_DATA;
     use crate::executor::macos::{ExecutionOutcome, MacosActionExecutor};
     use crossbeam_channel::Sender;
     #[cfg(target_os = "macos")]
@@ -384,7 +382,7 @@ mod tests {
             .unwrap();
             CGEvent::set_integer_value_field(
                 Some(&event),
-                CGEventField(EVENT_FIELD_SOURCE_USER_DATA),
+                CGEventField::EventSourceUserData,
                 marker,
             );
             Self(event)
