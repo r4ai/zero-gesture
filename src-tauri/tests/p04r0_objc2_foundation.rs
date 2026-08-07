@@ -1,35 +1,70 @@
 const MANIFEST: &str = include_str!("../Cargo.toml");
 
-fn dependency_sections() -> (&'static str, &'static str, &'static str) {
-    let (before_macos, from_macos) = MANIFEST
-        .split_once("[target.'cfg(target_os = \"macos\")'.dependencies]")
-        .unwrap();
-    let (macos, after_macos) = from_macos.split_once("[dev-dependencies]").unwrap();
-    (before_macos, macos, after_macos)
+const MACOS_DEPENDENCY_PATH: [&str; 3] = ["target", "cfg(target_os = \"macos\")", "dependencies"];
+
+fn visit_objc2_dependencies(
+    value: &toml::Value,
+    path: &mut Vec<String>,
+    visitor: &mut impl FnMut(&[String], &toml::Value),
+) {
+    let Some(table) = value.as_table() else {
+        return;
+    };
+    for (key, value) in table {
+        path.push(key.clone());
+        if key.starts_with("objc2-") {
+            visitor(path, value);
+        }
+        visit_objc2_dependencies(value, path, visitor);
+        path.pop();
+    }
+}
+
+fn parsed_manifest() -> toml::Value {
+    MANIFEST.parse().expect("Cargo.toml must be valid TOML")
 }
 
 #[test]
 fn objc2_direct_dependencies_are_macos_only() {
-    let (before_macos, macos, after_macos) = dependency_sections();
+    let manifest = parsed_manifest();
+    let mut found = 0;
 
-    assert!(macos.lines().any(|line| line.trim().starts_with("objc2-")));
-    assert!(!before_macos.contains("objc2-"));
-    assert!(!after_macos.contains("objc2-"));
+    visit_objc2_dependencies(&manifest, &mut Vec::new(), &mut |path, _| {
+        found += 1;
+        assert_eq!(
+            &path[..path.len() - 1],
+            MACOS_DEPENDENCY_PATH,
+            "{} must be a direct macOS-only dependency",
+            path.last().unwrap()
+        );
+    });
+    assert!(
+        found > 0,
+        "at least one direct objc2 dependency is required"
+    );
 }
 
 #[test]
 fn objc2_direct_dependencies_disable_default_features() {
-    let objc2_dependencies = dependency_sections()
-        .1
-        .lines()
-        .map(str::trim)
-        .filter(|line| line.starts_with("objc2-"))
-        .collect::<Vec<_>>();
+    let manifest = parsed_manifest();
+    let mut found = 0;
 
-    assert!(!objc2_dependencies.is_empty());
-    assert!(objc2_dependencies
-        .iter()
-        .all(|line| line.contains("default-features = false")));
+    visit_objc2_dependencies(&manifest, &mut Vec::new(), &mut |path, dependency| {
+        found += 1;
+        assert_eq!(
+            dependency
+                .as_table()
+                .and_then(|table| table.get("default-features"))
+                .and_then(toml::Value::as_bool),
+            Some(false),
+            "{} must set default-features = false",
+            path.last().unwrap()
+        );
+    });
+    assert!(
+        found > 0,
+        "at least one direct objc2 dependency is required"
+    );
 }
 
 #[cfg(target_os = "macos")]

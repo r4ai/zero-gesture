@@ -105,18 +105,35 @@ Core Graphics for the entire tap lifetime.
 
 ## Phased migration
 
-1. **P04R0:** add target-scoped dependencies, this ADR, support checks, a
-   representative symbol smoke, and the Apple Silicon compile/package gate;
-   change no production behavior or runtime contract.
-2. **P04R1:** replace Core Graphics Event Tap/action raw declarations inside
-   the existing hook/executor leaves. Preserve callback ABI, marker, ordering,
-   ownership, and all P04b2/P04b3b tests.
-3. **P04R2:** replace Accessibility/AppKit context-query declarations inside
-   `hook::macos_context`. Preserve prompt-free preflight, timeout, identity,
-   freshness, and Unknown failure semantics.
-4. **P04R3:** introduce the already-deferred native macOS renderer behind its
-   real owner seam using AppKit/Core Animation. This phase must define the
-   second concrete renderer behavior before introducing any shared seam.
+1. **P04R0 — Foundation:** add target-scoped dependencies, this ADR, support
+   checks, a representative symbol smoke, and the Apple Silicon
+   compile/package gate; change no production behavior or runtime contract.
+2. **P04R1 — Context split and migration:** split the existing context owner
+   into `hook/macos/context/{mod,native}` and migrate its
+   Accessibility/AppKit leaf to objc2. Preserve prompt-free preflight,
+   timeout, identity, freshness, and Unknown failure semantics.
+3. **P04R2 — Event Tap split and migration:** split the input owner into
+   `hook/macos/{mod,callback,run_loop,consumer}` and migrate its Core Graphics
+   leaf to objc2. Preserve callback ABI, bounded work, lifecycle, and the
+   listen-only behavior proven by P04b2/P04b3b.
+4. **P04R3 — Action executor split and migration:** split the executor into
+   `executor/macos/{mod,native,keymap}` and migrate tagged Core Graphics event
+   creation/posting to objc2. Preserve marker, ordering, bounded queue, and
+   fail-open behavior.
+5. **P04b3c-a — Active Input:** add active suppression, trigger replay, and
+   target revalidation/activation only after the migrated input/action leaves
+   retain their existing contracts.
+6. **P04b3c-b — Native Overlay:** add the deferred native renderer behind its
+   real owner seam using AppKit/Core Animation. Define the second concrete
+   renderer behavior before introducing any shared renderer seam.
+7. **P05m — Shell and permissions:** complete the macOS runtime shell,
+   permission UI, and login autostart.
+8. **P06m — Distribution and physical acceptance:** complete signing,
+   notarization, installation lifecycle, physical-input, permission, and
+   cross-application acceptance.
+
+A UDS module split is optional later work. It is not on the critical path for
+the native-leaf migrations above and does not move into P04R0-R3 implicitly.
 
 Each behavior-changing migration phase has its own contract manifest, static
 quality comparison, Apple Silicon compile/test/package evidence, and manual
