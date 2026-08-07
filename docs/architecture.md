@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > この文書はP05bのWindows Settings control、P04b3bまでのmacOS入力・context/action境界、
-> P04R0のobjc2 library policyを説明する。
+> P04R1のobjc2 context native leafを説明する。
 > マルチプラットフォーム目標設計と後続移行ゲートは
 > [ADR index](./adr/README.md) を正とする。
 
@@ -220,8 +220,14 @@ native overlayはP04b3c-b Native Overlayへdeferする。
 
 P04R0 Foundationはruntime behaviorを変えず、Core Graphics、
 ApplicationServices、AppKit、QuartzCoreのobjc2 framework crateをmacOS
-target限定かつ`default-features = false`で追加する。P04R1はcontext ownerを
-`hook/macos/context/{mod,native}`へ分割して移行し、P04R2はlisten-only Event Tapを
+target限定かつ`default-features = false`で追加した。P04R1はcontext ownerを
+`hook/macos/context/{mod,native}`へ分割し、worker/cache/mailbox契約を`mod.rs`、
+AppKit・Accessibility・Core Foundation所有権をprivateな`native.rs`へ局所化した。
+promptなしpreflight、各AX read前の50 ms timeout、focused window・title・focused
+windowの再読、厳密な型/UTF境界、PID start identity、Unknown劣化は維持する。
+生成`AXUIElement::new_application`がNULLでpanicするため、このCreate関数だけは
+nullableなtyped raw leafを残し、NULLを`TargetExited`へ変換する。process identity/path
+は引き続きlibcを使う。P04R2はlisten-only Event Tapを
 `hook/macos/{mod,callback,run_loop,consumer}`へ分割して移行する。P04R3はaction
 executorを`executor/macos/{mod,native,keymap}`へ分割して移行する。その後に
 P04b3c-a Active Input、P04b3c-b Native Overlay、P05m shell/permissions/autostart、
@@ -229,7 +235,8 @@ P06m distribution/physical acceptanceを進める。UDS分割は必要なら後�
 であり、この順序のcritical pathには含めない。Tauriはprocess、Settings WebView、
 command、tray、packagingを所有し、native input callbackやAX/action/renderingの
 interfaceにはしない。callback不変条件、段階移行、library選定と却下案は
-[ADR 0022](./adr/0022-objc2-macos-library-foundation.md)を正とする。
+[ADR 0022](./adr/0022-objc2-macos-library-foundation.md)、context実装境界は
+[ADR 0023](./adr/0023-objc2-macos-context-native-leaf.md)を正とする。
 R0は新しいruntime contractを追加しない。既存5 manifestの95 obligationsを
 唯一の契約在庫として維持し、Cargo target policyと代表symbol compileは
 obligationへ数えないsupport checkとして扱う。
@@ -288,7 +295,7 @@ TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成
 | **App Framework**    | `tauri` v2                         | アプリケーションシェル、設定UI、ビルドシステム   |
 | **Windows API**      | `windows-sys`                      | Win32 APIへのRawアクセス (Hooks, GDI, Input)     |
 | **macOS Input**      | objc2 Core Graphics（raw FFIから段階移行） | listen-only Event Tapとrun-loop ownership       |
-| **macOS Context**    | objc2 AppKit / ApplicationServices（raw FFIから段階移行） | frontmost appとfocused windowのbounded worker解決 |
+| **macOS Context**    | objc2 AppKit / ApplicationServices / Core Foundation | frontmost appとfocused windowのbounded worker解決 |
 | **macOS Rendering**  | objc2 AppKit / QuartzCore（後続phase） | owner-thread限定のnative overlay                 |
 | **Concurrency**      | `std::thread`, `crossbeam-channel` | スレッド管理と高速なメッセージパッシング         |
 | **State Mngt**       | Engine owner + fixed two-slot publication | 設定mutationの単一所有とlock-free snapshot read |
@@ -316,7 +323,10 @@ TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成
 │   │   ├── hook/
 │   │   │   ├── owner.rs       // InputKernel、config pin、固定action/renderer lane
 │   │   │   ├── macos.rs       // listen-only CGEventTapとrun-loop consumer
-│   │   │   ├── macos_context.rs // bounded AX context worker/cache
+│   │   │   ├── macos/
+│   │   │   │   └── context/
+│   │   │   │       ├── mod.rs    // bounded AX worker/cache/mailbox contract
+│   │   │   │       └── native.rs // private objc2 AppKit/AX/CF ownership leaf
 │   │   │   └── win32.rs       // WH_MOUSE_LL、context worker、owner message loop
 │   │   ├── domain/
 │   │   │   ├── mod.rs         // portable gesture module interface

@@ -19,14 +19,16 @@ use crossbeam_channel::Sender;
 #[cfg(target_os = "macos")]
 use log::warn;
 
-#[cfg(target_os = "macos")]
-use super::macos_context::ContextWorker;
+mod context;
+
 use super::owner::{ActionWork, ContextRoute, ContextView, NativeInputOwner};
 use super::{HookEvent, HookFailure};
 use crate::config::ConfigSnapshotReader;
 use crate::domain::input::SessionId;
 use crate::domain::{MouseEvent, Point, TriggerButton};
 use crate::executor::macos::{ExecutionOutcome, MacosActionExecutor};
+#[cfg(target_os = "macos")]
+use context::ContextWorker;
 
 const EVENT_QUEUE_CAPACITY: usize = 64;
 #[cfg(target_os = "macos")]

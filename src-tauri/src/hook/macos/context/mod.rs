@@ -8,13 +8,14 @@ use std::sync::atomic::{fence, AtomicBool, AtomicI32, AtomicU32, AtomicU64, Orde
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
-#[cfg(target_os = "macos")]
-use std::{ffi::c_void, ptr::NonNull};
 
 use crossbeam_channel::{bounded, Receiver, Sender};
 
-use super::owner::{ContextView, CONTEXT_MAX_AGE_MS};
-use super::HookFailure;
+#[cfg(target_os = "macos")]
+mod native;
+
+use super::super::owner::{ContextView, CONTEXT_MAX_AGE_MS};
+use super::super::HookFailure;
 use crate::config::ConfigSnapshotReader;
 use crate::domain::input::TargetToken;
 use crate::domain::{BindingSetId, MouseEvent, Point};
@@ -24,42 +25,6 @@ const WORKER_POLL: Duration = Duration::from_millis(10);
 const READY_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_CONTEXT_UTF16_UNITS: usize = 512;
 const MAX_CONTEXT_UTF8_BYTES: usize = MAX_CONTEXT_UTF16_UNITS * 4;
-#[cfg(target_os = "macos")]
-const AX_MESSAGING_TIMEOUT_SECONDS: f32 = 0.05;
-#[cfg(target_os = "macos")]
-const AX_ERROR_CANNOT_COMPLETE: i32 = -25204;
-
-#[cfg(target_os = "macos")]
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct AxQuerySpec {
-    attribute: &'static [u8],
-    timeout_seconds: f32,
-}
-
-#[cfg(target_os = "macos")]
-const FOCUSED_WINDOW_QUERY: AxQuerySpec = AxQuerySpec {
-    attribute: b"AXFocusedWindow",
-    timeout_seconds: AX_MESSAGING_TIMEOUT_SECONDS,
-};
-
-#[cfg(target_os = "macos")]
-const WINDOW_TITLE_QUERY: AxQuerySpec = AxQuerySpec {
-    attribute: b"AXTitle",
-    timeout_seconds: AX_MESSAGING_TIMEOUT_SECONDS,
-};
-
-#[cfg(target_os = "macos")]
-#[derive(Clone, Copy)]
-struct AxFunctions {
-    set_messaging_timeout: unsafe fn(*mut c_void, f32) -> i32,
-    copy_attribute_value: unsafe fn(*mut c_void, *const c_void, *mut *const c_void) -> i32,
-}
-
-#[cfg(target_os = "macos")]
-const SYSTEM_AX_FUNCTIONS: AxFunctions = AxFunctions {
-    set_messaging_timeout: system_set_messaging_timeout,
-    copy_attribute_value: system_copy_attribute_value,
-};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ContextRequest {
@@ -303,7 +268,7 @@ pub(super) struct ContextWorker {
 impl ContextWorker {
     #[cfg(target_os = "macos")]
     pub(super) fn spawn(reader: ConfigSnapshotReader) -> Result<Self, HookFailure> {
-        Self::spawn_with(reader, accessibility_preflight, resolve_native)
+        Self::spawn_with(reader, native::accessibility_preflight, native::resolve)
     }
 
     fn spawn_with<R>(
@@ -539,127 +504,6 @@ fn executable_name_from_path(path: &[u8]) -> Result<String, ResolveFailure> {
     bounded_utf8(name, name.len(), name.len()).map(|name| name.to_lowercase())
 }
 
-#[cfg(target_os = "macos")]
-fn accessibility_preflight_options() -> *const std::ffi::c_void {
-    std::ptr::null()
-}
-
-#[cfg(all(test, not(target_os = "macos")))]
-fn accessibility_preflight_options() -> *const std::ffi::c_void {
-    std::ptr::null()
-}
-
-#[cfg(target_os = "macos")]
-fn accessibility_preflight() -> bool {
-    unsafe { AXIsProcessTrustedWithOptions(accessibility_preflight_options()) != 0 }
-}
-
-#[cfg(target_os = "macos")]
-fn resolve_native(reader: &ConfigSnapshotReader, request: ContextRequest) -> Resolution {
-    let snapshot = reader.read().ok_or(ResolveFailure::Unavailable)?;
-    if !snapshot.enabled {
-        return Err(ResolveFailure::Unavailable);
-    }
-    let observation = unsafe { native_observation()? };
-    let binding_set = snapshot
-        .match_macos_app(
-            &observation.process_name,
-            observation.bundle_identifier.as_deref(),
-            &observation.title,
-        )
-        .unwrap_or_else(|| snapshot.default_binding_set());
-    let identity = ContextIdentity {
-        process: observation.process,
-        window_fingerprint: observation.window_fingerprint,
-    };
-    Ok(ResolvedContext {
-        request_id: request.request_id,
-        view: ContextView {
-            generation: snapshot.generation(),
-            binding_set,
-            target: target_token(identity),
-            point: request.point,
-            updated_tick: request.tick,
-        },
-        identity,
-    })
-}
-
-#[cfg(target_os = "macos")]
-struct NativeObservation {
-    process: ProcessIdentity,
-    window_fingerprint: u64,
-    process_name: String,
-    bundle_identifier: Option<String>,
-    title: String,
-}
-
-#[cfg(target_os = "macos")]
-struct OwnedCf(NonNull<c_void>);
-
-#[cfg(target_os = "macos")]
-impl OwnedCf {
-    unsafe fn from_create(
-        value: *const c_void,
-        failure: ResolveFailure,
-    ) -> Result<Self, ResolveFailure> {
-        NonNull::new(value.cast_mut()).map(Self).ok_or(failure)
-    }
-
-    fn as_ptr(&self) -> *const c_void {
-        self.0.as_ptr().cast_const()
-    }
-
-    fn as_mut_ptr(&self) -> *mut c_void {
-        self.0.as_ptr()
-    }
-}
-
-#[cfg(target_os = "macos")]
-impl Drop for OwnedCf {
-    fn drop(&mut self) {
-        unsafe {
-            CFRelease(self.as_ptr());
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-struct AutoreleasePool(*mut std::ffi::c_void);
-
-#[cfg(target_os = "macos")]
-impl AutoreleasePool {
-    unsafe fn new() -> Result<Self, ResolveFailure> {
-        let class = objc_getClass(c"NSAutoreleasePool".as_ptr());
-        let allocated = send_id(class, selector(b"alloc\0"));
-        let pool = send_id(allocated, selector(b"init\0"));
-        if pool.is_null() {
-            Err(ResolveFailure::Unavailable)
-        } else {
-            Ok(Self(pool))
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-impl Drop for AutoreleasePool {
-    fn drop(&mut self) {
-        unsafe {
-            send_void(self.0, selector(b"drain\0"));
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn run_ax_query<T>(
-    spec: AxQuerySpec,
-    set_timeout: impl FnOnce(f32) -> Result<(), ResolveFailure>,
-    copy_attribute: impl FnOnce(&[u8]) -> Result<T, ResolveFailure>,
-) -> Result<T, ResolveFailure> {
-    set_timeout(spec.timeout_seconds)?;
-    copy_attribute(spec.attribute)
-}
-
 fn resolve_consistent_window<W, T>(
     mut focused_window: impl FnMut() -> Result<W, ResolveFailure>,
     window_title: impl FnOnce(&W) -> Result<T, ResolveFailure>,
@@ -672,339 +516,6 @@ fn resolve_consistent_window<W, T>(
         return Err(ResolveFailure::TargetExited);
     }
     Ok((window, title))
-}
-
-#[cfg(target_os = "macos")]
-unsafe fn native_observation() -> Result<NativeObservation, ResolveFailure> {
-    let _pool = AutoreleasePool::new()?;
-    let (pid, process, process_name, bundle_identifier) = frontmost_process()?;
-    let (window, title) = resolve_consistent_window(
-        || focused_window(pid, SYSTEM_AX_FUNCTIONS),
-        |window| window_title(window, SYSTEM_AX_FUNCTIONS),
-        |first, current| CFEqual(first.as_ptr(), current.as_ptr()) != 0,
-    )?;
-    let window_fingerprint = CFHash(window.as_ptr()) as u64;
-    verify_frontmost_identity(pid, process)?;
-    Ok(NativeObservation {
-        process,
-        window_fingerprint,
-        process_name,
-        bundle_identifier,
-        title,
-    })
-}
-
-#[cfg(target_os = "macos")]
-unsafe fn frontmost_process(
-) -> Result<(i32, ProcessIdentity, String, Option<String>), ResolveFailure> {
-    let application = frontmost_application()?;
-    let pid = send_pid(application, selector(b"processIdentifier\0"));
-    if pid <= 0 {
-        return Err(ResolveFailure::TargetExited);
-    }
-    let process = process_identity(pid)?;
-    let process_name = process_name(pid)?;
-    let bundle = send_id(application, selector(b"bundleIdentifier\0"));
-    let bundle_identifier = if bundle.is_null() {
-        None
-    } else {
-        Some(copy_cf_string(bundle.cast_const())?)
-    };
-    Ok((pid, process, process_name, bundle_identifier))
-}
-
-#[cfg(target_os = "macos")]
-unsafe fn focused_window(pid: i32, functions: AxFunctions) -> Result<OwnedCf, ResolveFailure> {
-    let ax_application = OwnedCf::from_create(
-        AXUIElementCreateApplication(pid).cast_const(),
-        ResolveFailure::TargetExited,
-    )?;
-    let window = copy_timed_ax_attribute(
-        ax_application.as_mut_ptr(),
-        FOCUSED_WINDOW_QUERY,
-        AXUIElementGetTypeID(),
-        functions,
-    )?;
-    let mut window_pid = 0;
-    require_ax(AXUIElementGetPid(window.as_mut_ptr(), &mut window_pid))?;
-    if window_pid != pid {
-        return Err(ResolveFailure::TargetExited);
-    }
-    Ok(window)
-}
-
-#[cfg(target_os = "macos")]
-unsafe fn window_title(window: &OwnedCf, functions: AxFunctions) -> Result<String, ResolveFailure> {
-    let title = copy_timed_ax_attribute(
-        window.as_mut_ptr(),
-        WINDOW_TITLE_QUERY,
-        CFStringGetTypeID(),
-        functions,
-    )?;
-    copy_cf_string(title.as_ptr())
-}
-
-#[cfg(target_os = "macos")]
-unsafe fn copy_timed_ax_attribute(
-    element: *mut c_void,
-    spec: AxQuerySpec,
-    expected_type: usize,
-    functions: AxFunctions,
-) -> Result<OwnedCf, ResolveFailure> {
-    run_ax_query(
-        spec,
-        |timeout| require_ax((functions.set_messaging_timeout)(element, timeout)),
-        |attribute| {
-            let attribute = create_cf_string(attribute)?;
-            copy_ax_attribute(element, attribute.as_ptr(), expected_type, functions)
-        },
-    )
-}
-
-#[cfg(target_os = "macos")]
-unsafe fn system_set_messaging_timeout(element: *mut c_void, timeout: f32) -> i32 {
-    AXUIElementSetMessagingTimeout(element, timeout)
-}
-
-#[cfg(target_os = "macos")]
-unsafe fn system_copy_attribute_value(
-    element: *mut c_void,
-    attribute: *const c_void,
-    value: *mut *const c_void,
-) -> i32 {
-    AXUIElementCopyAttributeValue(element, attribute, value)
-}
-
-#[cfg(target_os = "macos")]
-unsafe fn verify_frontmost_identity(
-    pid: i32,
-    process: ProcessIdentity,
-) -> Result<(), ResolveFailure> {
-    if process_identity(pid)? != process
-        || send_pid(frontmost_application()?, selector(b"processIdentifier\0")) != pid
-    {
-        return Err(ResolveFailure::TargetExited);
-    }
-    Ok(())
-}
-
-#[cfg(target_os = "macos")]
-unsafe fn create_cf_string(bytes: &[u8]) -> Result<OwnedCf, ResolveFailure> {
-    let value = CFStringCreateWithBytes(
-        std::ptr::null(),
-        bytes.as_ptr(),
-        bytes.len() as isize,
-        0x0800_0100,
-        0,
-    );
-    OwnedCf::from_create(value, ResolveFailure::InvalidData)
-}
-
-#[cfg(target_os = "macos")]
-unsafe fn frontmost_application() -> Result<*mut std::ffi::c_void, ResolveFailure> {
-    let workspace_class = objc_getClass(c"NSWorkspace".as_ptr());
-    let workspace = send_id(workspace_class, selector(b"sharedWorkspace\0"));
-    let application = send_id(workspace, selector(b"frontmostApplication\0"));
-    if application.is_null() {
-        Err(ResolveFailure::Unavailable)
-    } else {
-        Ok(application)
-    }
-}
-
-#[cfg(target_os = "macos")]
-unsafe fn process_identity(pid: i32) -> Result<ProcessIdentity, ResolveFailure> {
-    let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::uninit();
-    let expected = std::mem::size_of::<libc::proc_bsdinfo>() as i32;
-    let actual = libc::proc_pidinfo(
-        pid,
-        libc::PROC_PIDTBSDINFO,
-        0,
-        info.as_mut_ptr().cast(),
-        expected,
-    );
-    if actual != expected {
-        return Err(ResolveFailure::TargetExited);
-    }
-    let info = info.assume_init();
-    if info.pbi_pid != pid as u32 {
-        return Err(ResolveFailure::TargetExited);
-    }
-    Ok(ProcessIdentity {
-        pid,
-        started_seconds: info.pbi_start_tvsec,
-        started_microseconds: info.pbi_start_tvusec,
-    })
-}
-
-#[cfg(target_os = "macos")]
-unsafe fn process_name(pid: i32) -> Result<String, ResolveFailure> {
-    let mut bytes = [0_u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
-    let length = libc::proc_pidpath(pid, bytes.as_mut_ptr().cast(), bytes.len() as u32);
-    if length <= 0 {
-        return Err(ResolveFailure::TargetExited);
-    }
-    if length as usize >= bytes.len() {
-        return Err(ResolveFailure::Oversized);
-    }
-    let path = std::ffi::CStr::from_ptr(bytes.as_ptr().cast()).to_bytes();
-    executable_name_from_path(path)
-}
-
-#[cfg(target_os = "macos")]
-unsafe fn copy_ax_attribute(
-    element: *mut std::ffi::c_void,
-    attribute: *const std::ffi::c_void,
-    expected_type: usize,
-    functions: AxFunctions,
-) -> Result<OwnedCf, ResolveFailure> {
-    let mut value = std::ptr::null();
-    require_ax((functions.copy_attribute_value)(
-        element, attribute, &mut value,
-    ))?;
-    let value = OwnedCf::from_create(value, ResolveFailure::InvalidData)?;
-    if CFGetTypeID(value.as_ptr()) != expected_type {
-        return Err(ResolveFailure::InvalidData);
-    }
-    Ok(value)
-}
-
-#[cfg(target_os = "macos")]
-unsafe fn copy_cf_string(value: *const std::ffi::c_void) -> Result<String, ResolveFailure> {
-    if value.is_null() || CFGetTypeID(value) != CFStringGetTypeID() {
-        return Err(ResolveFailure::InvalidData);
-    }
-    let length = CFStringGetLength(value);
-    if length < 0 || length as usize > MAX_CONTEXT_UTF16_UNITS {
-        return Err(ResolveFailure::Oversized);
-    }
-    let mut bytes = [0_u8; MAX_CONTEXT_UTF8_BYTES];
-    let mut used = 0_isize;
-    let converted = CFStringGetBytes(
-        value,
-        CFRange {
-            location: 0,
-            length,
-        },
-        0x0800_0100,
-        0,
-        0,
-        bytes.as_mut_ptr(),
-        bytes.len() as isize,
-        &mut used,
-    );
-    if used < 0 {
-        return Err(ResolveFailure::InvalidData);
-    }
-    bounded_utf8(
-        bytes
-            .get(..used as usize)
-            .ok_or(ResolveFailure::InvalidData)?,
-        converted as usize,
-        length as usize,
-    )
-}
-
-#[cfg(target_os = "macos")]
-fn require_ax(error: i32) -> Result<(), ResolveFailure> {
-    match error {
-        0 => Ok(()),
-        AX_ERROR_CANNOT_COMPLETE => Err(ResolveFailure::Timeout),
-        _ => Err(ResolveFailure::Accessibility),
-    }
-}
-
-#[cfg(target_os = "macos")]
-unsafe fn selector(name: &[u8]) -> *const std::ffi::c_void {
-    sel_registerName(name.as_ptr().cast())
-}
-
-#[cfg(target_os = "macos")]
-unsafe fn send_id(
-    receiver: *mut std::ffi::c_void,
-    selector: *const std::ffi::c_void,
-) -> *mut std::ffi::c_void {
-    let send: unsafe extern "C" fn(
-        *mut std::ffi::c_void,
-        *const std::ffi::c_void,
-    ) -> *mut std::ffi::c_void = std::mem::transmute(objc_msgSend as *const ());
-    send(receiver, selector)
-}
-
-#[cfg(target_os = "macos")]
-unsafe fn send_pid(receiver: *mut std::ffi::c_void, selector: *const std::ffi::c_void) -> i32 {
-    let send: unsafe extern "C" fn(*mut std::ffi::c_void, *const std::ffi::c_void) -> i32 =
-        std::mem::transmute(objc_msgSend as *const ());
-    send(receiver, selector)
-}
-
-#[cfg(target_os = "macos")]
-unsafe fn send_void(receiver: *mut std::ffi::c_void, selector: *const std::ffi::c_void) {
-    let send: unsafe extern "C" fn(*mut std::ffi::c_void, *const std::ffi::c_void) =
-        std::mem::transmute(objc_msgSend as *const ());
-    send(receiver, selector);
-}
-
-#[cfg(target_os = "macos")]
-#[repr(C)]
-struct CFRange {
-    location: isize,
-    length: isize,
-}
-
-#[cfg(target_os = "macos")]
-#[link(name = "AppKit", kind = "framework")]
-extern "C" {}
-
-#[cfg(target_os = "macos")]
-#[link(name = "objc")]
-extern "C" {
-    fn objc_getClass(name: *const std::ffi::c_char) -> *mut std::ffi::c_void;
-    fn sel_registerName(name: *const std::ffi::c_char) -> *const std::ffi::c_void;
-    fn objc_msgSend();
-}
-
-#[cfg(target_os = "macos")]
-#[link(name = "ApplicationServices", kind = "framework")]
-extern "C" {
-    fn AXIsProcessTrustedWithOptions(options: *const std::ffi::c_void) -> u8;
-    fn AXUIElementCreateApplication(pid: i32) -> *mut std::ffi::c_void;
-    fn AXUIElementSetMessagingTimeout(element: *mut std::ffi::c_void, seconds: f32) -> i32;
-    fn AXUIElementCopyAttributeValue(
-        element: *mut std::ffi::c_void,
-        attribute: *const std::ffi::c_void,
-        value: *mut *const std::ffi::c_void,
-    ) -> i32;
-    fn AXUIElementGetPid(element: *mut std::ffi::c_void, pid: *mut i32) -> i32;
-    fn AXUIElementGetTypeID() -> usize;
-}
-
-#[cfg(target_os = "macos")]
-#[link(name = "CoreFoundation", kind = "framework")]
-extern "C" {
-    fn CFRelease(value: *const std::ffi::c_void);
-    fn CFEqual(left: *const std::ffi::c_void, right: *const std::ffi::c_void) -> u8;
-    fn CFGetTypeID(value: *const std::ffi::c_void) -> usize;
-    fn CFHash(value: *const std::ffi::c_void) -> usize;
-    fn CFStringGetTypeID() -> usize;
-    fn CFStringGetLength(value: *const std::ffi::c_void) -> isize;
-    fn CFStringGetBytes(
-        value: *const std::ffi::c_void,
-        range: CFRange,
-        encoding: u32,
-        loss_byte: u8,
-        external_representation: u8,
-        buffer: *mut u8,
-        max_buffer_length: isize,
-        used_buffer_length: *mut isize,
-    ) -> isize;
-    fn CFStringCreateWithBytes(
-        allocator: *const std::ffi::c_void,
-        bytes: *const u8,
-        length: isize,
-        encoding: u32,
-        external_representation: u8,
-    ) -> *const std::ffi::c_void;
 }
 
 #[cfg(test)]
@@ -1026,15 +537,10 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[derive(Debug, PartialEq)]
-    enum RecordedAxCall {
-        Timeout(f32),
-        Attribute(String),
+    enum QueryStep {
+        Timeout(u32),
+        Attribute(&'static str),
         Equal,
-    }
-
-    #[cfg(target_os = "macos")]
-    thread_local! {
-        static RECORDED_AX_CALLS: RefCell<Vec<RecordedAxCall>> = const { RefCell::new(Vec::new()) };
     }
 
     fn identity(pid: i32, started_seconds: u64, window_fingerprint: u64) -> ContextIdentity {
@@ -1153,19 +659,6 @@ mod tests {
     }
 
     #[test]
-    fn accessibility_preflight_uses_no_prompt_options_dictionary() {
-        assert!(accessibility_preflight_options().is_null());
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn nullable_cf_create_is_rejected_before_owned_drop() {
-        let result = unsafe { OwnedCf::from_create(std::ptr::null(), ResolveFailure::InvalidData) };
-
-        assert!(matches!(result, Err(ResolveFailure::InvalidData)));
-    }
-
-    #[test]
     fn worker_readiness_precedes_the_capability_ffi_boundary() {
         RELEASE_CAPABILITY.store(false, Ordering::Release);
         thread::spawn(|| {
@@ -1208,68 +701,60 @@ mod tests {
     }
 
     #[cfg(target_os = "macos")]
-    unsafe fn record_ax_timeout(_: *mut c_void, timeout: f32) -> i32 {
-        RECORDED_AX_CALLS.with(|calls| {
-            calls.borrow_mut().push(RecordedAxCall::Timeout(timeout));
-        });
-        0
-    }
-
-    #[cfg(target_os = "macos")]
-    unsafe fn record_ax_attribute(
-        _: *mut c_void,
-        attribute: *const c_void,
-        value: *mut *const c_void,
-    ) -> i32 {
-        let attribute = copy_cf_string(attribute).unwrap();
-        RECORDED_AX_CALLS.with(|calls| {
-            calls
-                .borrow_mut()
-                .push(RecordedAxCall::Attribute(attribute.clone()));
-        });
-        *value = match attribute.as_str() {
-            "AXFocusedWindow" => {
-                AXUIElementCreateApplication(std::process::id() as i32).cast_const()
-            }
-            "AXTitle" => {
-                CFStringCreateWithBytes(std::ptr::null(), b"title".as_ptr(), 5, 0x0800_0100, 0)
-            }
-            _ => std::ptr::null(),
-        };
-        0
-    }
-
-    #[cfg(target_os = "macos")]
     #[test]
     fn consistent_window_query_applies_the_exact_timed_ax_sequence() {
-        RECORDED_AX_CALLS.with(|calls| calls.borrow_mut().clear());
-        let functions = AxFunctions {
-            set_messaging_timeout: record_ax_timeout,
-            copy_attribute_value: record_ax_attribute,
-        };
-        let pid = std::process::id() as i32;
-        let result = unsafe {
-            resolve_consistent_window(
-                || focused_window(pid, functions),
-                |window| window_title(window, functions),
-                |_, _| {
-                    RECORDED_AX_CALLS.with(|calls| calls.borrow_mut().push(RecordedAxCall::Equal));
-                    true
-                },
-            )
-        };
+        assert_eq!(native::AX_MESSAGING_TIMEOUT_SECONDS, 0.05);
+        assert_eq!(native::FOCUSED_WINDOW_ATTRIBUTE, "AXFocusedWindow");
+        assert_eq!(native::WINDOW_TITLE_ATTRIBUTE, "AXTitle");
+        let calls = RefCell::new(Vec::new());
+        let result = resolve_consistent_window(
+            || {
+                native::timed_ax_query(
+                    native::FOCUSED_WINDOW_ATTRIBUTE,
+                    |timeout| {
+                        calls
+                            .borrow_mut()
+                            .push(QueryStep::Timeout(timeout.to_bits()));
+                        Ok(())
+                    },
+                    |attribute| {
+                        calls.borrow_mut().push(QueryStep::Attribute(attribute));
+                        Ok(7_u64)
+                    },
+                )
+            },
+            |_| {
+                native::timed_ax_query(
+                    native::WINDOW_TITLE_ATTRIBUTE,
+                    |timeout| {
+                        calls
+                            .borrow_mut()
+                            .push(QueryStep::Timeout(timeout.to_bits()));
+                        Ok(())
+                    },
+                    |attribute| {
+                        calls.borrow_mut().push(QueryStep::Attribute(attribute));
+                        Ok("title")
+                    },
+                )
+            },
+            |first, current| {
+                calls.borrow_mut().push(QueryStep::Equal);
+                first == current
+            },
+        );
 
-        assert_eq!(result.map(|(_, title)| title), Ok("title".to_string()));
+        assert_eq!(result.map(|(_, title)| title), Ok("title"));
         assert_eq!(
-            RECORDED_AX_CALLS.with(|calls| calls.take()),
+            calls.into_inner(),
             [
-                RecordedAxCall::Timeout(0.05),
-                RecordedAxCall::Attribute("AXFocusedWindow".to_string()),
-                RecordedAxCall::Timeout(0.05),
-                RecordedAxCall::Attribute("AXTitle".to_string()),
-                RecordedAxCall::Timeout(0.05),
-                RecordedAxCall::Attribute("AXFocusedWindow".to_string()),
-                RecordedAxCall::Equal,
+                QueryStep::Timeout(0.05_f32.to_bits()),
+                QueryStep::Attribute("AXFocusedWindow"),
+                QueryStep::Timeout(0.05_f32.to_bits()),
+                QueryStep::Attribute("AXTitle"),
+                QueryStep::Timeout(0.05_f32.to_bits()),
+                QueryStep::Attribute("AXFocusedWindow"),
+                QueryStep::Equal,
             ]
         );
     }
@@ -1328,8 +813,6 @@ mod tests {
 
     #[test]
     fn accessibility_error_clears_the_latest_context() {
-        #[cfg(target_os = "macos")]
-        assert_eq!(require_ax(-25201), Err(ResolveFailure::Accessibility));
         assert_failure_clears(ResolveFailure::Accessibility);
     }
 
@@ -1337,13 +820,9 @@ mod tests {
     fn accessibility_timeout_clears_the_latest_context() {
         #[cfg(target_os = "macos")]
         {
-            let timeout = std::hint::black_box(AX_MESSAGING_TIMEOUT_SECONDS);
+            let timeout = std::hint::black_box(native::AX_MESSAGING_TIMEOUT_SECONDS);
             assert!(timeout.is_sign_positive());
             assert!(timeout <= 0.05);
-            assert_eq!(
-                require_ax(AX_ERROR_CANNOT_COMPLETE),
-                Err(ResolveFailure::Timeout)
-            );
         }
         assert_failure_clears(ResolveFailure::Timeout);
     }
@@ -1352,7 +831,7 @@ mod tests {
     fn target_exit_clears_the_latest_context() {
         #[cfg(target_os = "macos")]
         assert_eq!(
-            unsafe { process_identity(i32::MAX) },
+            native::process_identity(i32::MAX),
             Err(ResolveFailure::TargetExited)
         );
         assert_failure_clears(ResolveFailure::TargetExited);
@@ -1399,7 +878,7 @@ mod tests {
             .to_lowercase();
 
         assert_eq!(
-            unsafe { process_name(std::process::id() as i32) },
+            native::process_name(std::process::id() as i32),
             Ok(expected)
         );
     }

@@ -44,7 +44,7 @@ boundary.
 
 ### Threading, ownership, and OS leaf
 
-`hook/macos_context.rs` is one concrete private macOS leaf. It adds no public
+`hook/macos/context` is one concrete private macOS leaf. It adds no public
 API, platform trait, generic context model, observer graph, actor runtime, or
 crate. The existing public and serialized `ForegroundWindowInfo` remains its
 three-field Windows shape. Bundle identity enters only the private config

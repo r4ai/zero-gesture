@@ -4,7 +4,7 @@
       "id": "P04B3A-PERMISSION-001",
       "obligation": "The Engine Accessibility preflight supplies no options dictionary and therefore cannot request a trust prompt.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_file": "src-tauri/src/hook/macos/context/native.rs",
       "evidence_name": "accessibility_preflight_uses_no_prompt_options_dictionary"
     },
     {
@@ -25,105 +25,105 @@
       "id": "P04B3A-REQUEST-001",
       "obligation": "The context wake capacity is one and multiple pending observations coalesce to the latest complete request.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_file": "src-tauri/src/hook/macos/context/mod.rs",
       "evidence_name": "request_mailbox_is_bounded_and_coalesces_to_the_latest_request"
     },
     {
       "id": "P04B3A-REQUEST-002",
       "obligation": "The request cadence seam accepts button-down immediately, rate-limits only mouse movement, and rejects button-up, wheel, and other events.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_file": "src-tauri/src/hook/macos/context/mod.rs",
       "evidence_name": "mouse_move_is_rate_limited_button_down_is_immediate_and_other_events_are_rejected"
     },
     {
       "id": "P04B3A-REQUEST-003",
       "obligation": "The private AX query seam applies the 50 ms timeout before exact AXFocusedWindow and AXTitle reads in focused-title-refocused order.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_file": "src-tauri/src/hook/macos/context/mod.rs",
       "evidence_name": "consistent_window_query_applies_the_exact_timed_ax_sequence"
     },
     {
       "id": "P04B3A-FAILURE-001",
       "obligation": "The production worker invalidates a prior successful context when resolution returns Accessibility permission denial.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_file": "src-tauri/src/hook/macos/context/mod.rs",
       "evidence_name": "permission_denial_clears_the_latest_context"
     },
     {
       "id": "P04B3A-FAILURE-002",
       "obligation": "The production worker invalidates a prior successful context when resolution returns a non-timeout Accessibility error.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_file": "src-tauri/src/hook/macos/context/mod.rs",
       "evidence_name": "accessibility_error_clears_the_latest_context"
     },
     {
       "id": "P04B3A-FAILURE-003",
       "obligation": "The production worker invalidates a prior successful context when resolution returns the AX cannot-complete timeout class.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_file": "src-tauri/src/hook/macos/context/mod.rs",
       "evidence_name": "accessibility_timeout_clears_the_latest_context"
     },
     {
       "id": "P04B3A-FAILURE-004",
       "obligation": "The production worker invalidates a prior successful context when resolution returns target exit or invalid process identity.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_file": "src-tauri/src/hook/macos/context/mod.rs",
       "evidence_name": "target_exit_clears_the_latest_context"
     },
     {
       "id": "P04B3A-FAILURE-005",
       "obligation": "A nullable CF Create or Copy result is rejected before an owned reference can run CFRelease.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_file": "src-tauri/src/hook/macos/context/native.rs",
       "evidence_name": "nullable_cf_create_is_rejected_before_owned_drop"
     },
     {
       "id": "P04B3A-STRING-001",
       "obligation": "An oversized context string is rejected before snapshot publication.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_file": "src-tauri/src/hook/macos/context/mod.rs",
       "evidence_name": "oversized_context_string_is_rejected_before_publication"
     },
     {
       "id": "P04B3A-STRING-002",
       "obligation": "A malformed context string is rejected before snapshot publication.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_file": "src-tauri/src/hook/macos/context/mod.rs",
       "evidence_name": "malformed_context_string_is_rejected_before_publication"
     },
     {
       "id": "P04B3A-IDENTITY-001",
       "obligation": "A reused PID with a different process start identity replaces the prior cached window and target token.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_file": "src-tauri/src/hook/macos/context/mod.rs",
       "evidence_name": "same_pid_with_a_new_process_identity_replaces_the_cached_window"
     },
     {
       "id": "P04B3A-IDENTITY-002",
       "obligation": "A focused-window change during title resolution is rejected instead of publishing a mixed window context.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_file": "src-tauri/src/hook/macos/context/mod.rs",
       "evidence_name": "focus_change_during_resolution_degrades_to_unknown"
     },
     {
       "id": "P04B3A-IDENTITY-003",
       "obligation": "The CFHash window fingerprint is not treated as a unique target identity.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_file": "src-tauri/src/hook/macos/context/mod.rs",
       "evidence_name": "window_fingerprint_is_not_used_as_unique_target_identity"
     },
     {
       "id": "P04B3A-CACHE-001",
       "obligation": "A cached context is usable only at its exact sampled point and through the fixed freshness boundary.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_file": "src-tauri/src/hook/macos/context/mod.rs",
       "evidence_name": "cache_requires_exact_point_and_bounded_freshness"
     },
     {
       "id": "P04B3A-CACHE-002",
       "obligation": "Resolution that exceeds the cache freshness budget is discarded and invalidates prior context.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_file": "src-tauri/src/hook/macos/context/mod.rs",
       "evidence_name": "worker_delay_beyond_freshness_invalidates_the_latest_context"
     },
     {
@@ -137,28 +137,28 @@
       "id": "P04B3A-MATCH-002",
       "obligation": "macOS process matching derives the complete bounded executable basename instead of the truncated process comm name.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_file": "src-tauri/src/hook/macos/context/mod.rs",
       "evidence_name": "process_name_matches_the_current_executable_basename"
     },
     {
       "id": "P04B3A-LIFECYCLE-001",
       "obligation": "The resolver worker stops within its bounded wait and invalidates its latest snapshot.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_file": "src-tauri/src/hook/macos/context/mod.rs",
       "evidence_name": "resolver_worker_stops_deterministically_and_invalidates_its_snapshot"
     },
     {
       "id": "P04B3A-LIFECYCLE-002",
       "obligation": "Worker readiness is published before capability FFI so startup readiness cannot wait on a hung preflight.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_file": "src-tauri/src/hook/macos/context/mod.rs",
       "evidence_name": "worker_readiness_precedes_the_capability_ffi_boundary"
     },
     {
       "id": "P04B3A-LIFECYCLE-003",
       "obligation": "Shutdown during a blocked capability preflight returns without joining, invalidates immediately, and releases worker resources after the preflight returns.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos_context.rs",
+      "evidence_file": "src-tauri/src/hook/macos/context/mod.rs",
       "evidence_name": "blocked_capability_does_not_block_shutdown_and_releases_resources_after_return"
     },
     {
