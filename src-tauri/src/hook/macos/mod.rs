@@ -599,30 +599,51 @@ mod tests {
         let state = TapState::with_marker(41);
         let self_event = OwnedTestEvent::mouse_move(41, 1.0, 2.0);
         let foreign_event = OwnedTestEvent::mouse_move(42, 3.0, 4.0);
+        let self_pointer = std::ptr::NonNull::from(&*self_event.0);
+        let foreign_pointer = std::ptr::NonNull::from(&*foreign_event.0);
 
-        unsafe {
+        let returned = unsafe {
             event_tap_callback(
                 std::ptr::null_mut(),
                 CGEventType::MouseMoved,
-                std::ptr::NonNull::from(&*self_event.0),
+                self_pointer,
                 std::ptr::from_ref(&state).cast_mut().cast(),
-            );
-        }
+            )
+        };
+        assert_eq!(returned, self_pointer.as_ptr());
         assert!(state.queue.pop().is_none());
         assert_eq!(state.snapshot().received, 0);
 
-        unsafe {
+        let returned = unsafe {
             event_tap_callback(
                 std::ptr::null_mut(),
                 CGEventType::MouseMoved,
-                std::ptr::NonNull::from(&*foreign_event.0),
+                foreign_pointer,
                 std::ptr::from_ref(&state).cast_mut().cast(),
-            );
-        }
+            )
+        };
+        assert_eq!(returned, foreign_pointer.as_ptr());
         let input = state.queue.pop().unwrap();
         assert_eq!(input.event, MouseEvent::MouseMove);
         assert_eq!(input.point, Point::new(3, 4));
         assert_eq!(state.snapshot().received, 1);
+
+        for event_type in [
+            CGEventType::TapDisabledByTimeout,
+            CGEventType::TapDisabledByUserInput,
+        ] {
+            let returned = unsafe {
+                event_tap_callback(
+                    std::ptr::null_mut(),
+                    event_type,
+                    foreign_pointer,
+                    std::ptr::from_ref(&state).cast_mut().cast(),
+                )
+            };
+            assert_eq!(returned, foreign_pointer.as_ptr());
+        }
+        assert_eq!(state.snapshot().disabled, 2);
+        assert!(state.take_reenable_request());
     }
 
     #[cfg(target_os = "macos")]
@@ -639,15 +660,17 @@ mod tests {
             calls: Rc::clone(&worker_calls),
         };
         let mut clock = OwnerClock::new();
+        let event_pointer = std::ptr::NonNull::from(&*event.0);
 
-        unsafe {
+        let returned = unsafe {
             event_tap_callback(
                 std::ptr::null_mut(),
                 CGEventType::MouseMoved,
-                std::ptr::NonNull::from(&*event.0),
+                event_pointer,
                 std::ptr::from_ref(&state).cast_mut().cast(),
-            );
-        }
+            )
+        };
+        assert_eq!(returned, event_pointer.as_ptr());
         assert!(worker_calls.borrow().is_empty());
 
         drain_input(
