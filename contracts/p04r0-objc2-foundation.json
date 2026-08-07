@@ -1,0 +1,46 @@
+{
+  "cases": [
+    {
+      "id": "P04R0-DEPENDENCY-001",
+      "obligation": "Direct objc2 framework dependencies are confined to the macOS target section and disable default features, while libc remains available to the existing UDS implementation.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/tests/p04r0_objc2_foundation.rs",
+      "evidence_name": "objc2_dependencies_are_macos_only_and_disable_defaults"
+    },
+    {
+      "id": "P04R0-BEHAVIOR-001",
+      "obligation": "The P04R0 decision record fixes the reviewed base and records that this foundation phase changed no production Rust behavior.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/tests/p04r0_objc2_foundation.rs",
+      "evidence_name": "p04r0_behavior_neutral_delta_is_recorded"
+    },
+    {
+      "id": "P04R0-CALLBACK-001",
+      "obligation": "All 95 existing P04 obligations, including the allocation-free listen-only callback, fail-open overload, self-event filtering, and callback exclusion invariants, remain independently mapped and unchanged.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/tests/p04r0_objc2_foundation.rs",
+      "evidence_name": "existing_p04_contracts_remain_95_obligations"
+    },
+    {
+      "id": "P04R0-TARGET-001",
+      "obligation": "Apple Silicon CI compiles and runs the objc2 symbol smoke alongside the existing arm64 clippy, tests, ad-hoc application packaging, and packaged process-mode gates.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/tests/p04r0_objc2_foundation.rs",
+      "evidence_name": "apple_silicon_ci_keeps_compile_and_packaging_gates"
+    },
+    {
+      "id": "P04R0-DEPENDENCY-002",
+      "obligation": "The enabled objc2 features expose representative CGEvent, AXUIElement, NSApplication, and CALayer types on the Apple Silicon target without calling an operating-system API.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/tests/p04r0_objc2_foundation.rs",
+      "evidence_name": "required_objc2_framework_symbols_compile"
+    },
+    {
+      "id": "P04R0-QUALITY-001",
+      "obligation": "The P04R0 decision record fixes the measurement scope and records zero production cognitive, cyclomatic, function, source-line, and unsafe-site deltas without constraining later migration phases.",
+      "runner": "cargo-test",
+      "evidence_file": "src-tauri/tests/p04r0_objc2_foundation.rs",
+      "evidence_name": "p04r0_quality_delta_is_recorded"
+    }
+  ]
+}
