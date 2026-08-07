@@ -146,7 +146,7 @@ impl RenderLane {
     }
 }
 
-/// Actual native input owner used by the Windows low-level hook callback.
+/// Actual native input owner used by the Windows and macOS native callbacks.
 ///
 /// The callback-facing method performs only fixed atomic snapshot reads,
 /// fixed-capacity transitions, and bounded lane insertion.
@@ -213,11 +213,24 @@ impl NativeInputOwner {
     }
 
     pub(super) fn callback(&mut self, event: MouseEvent, point: Point, tick: u32) -> Disposition {
+        self.callback_with_start_reservation(event, point, tick, true)
+    }
+
+    pub(super) fn callback_with_start_reservation(
+        &mut self,
+        event: MouseEvent,
+        point: Point,
+        tick: u32,
+        start_reserved: bool,
+    ) -> Disposition {
         let active_generation = self
             .kernel
             .as_ref()
             .and_then(InputKernel::pinned_generation);
         if active_generation.is_none() {
+            if !start_reserved {
+                return Disposition::Pass;
+            }
             self.refresh_config();
         }
         let facts = if active_generation.is_some() {
@@ -305,6 +318,20 @@ impl NativeInputOwner {
         self.replay_reserved = false;
         self.session_runtime = None;
         self.action_wakeup = false;
+        self.render_wakeup = false;
+    }
+
+    #[cfg(any(target_os = "macos", test))]
+    pub(super) fn shutdown_with_replay(&mut self) {
+        self.actions = FixedLane::new();
+        self.action_wakeup = false;
+        // The active macOS tap may already have suppressed the trigger while
+        // activation or recognition is still pending. Degrade that session
+        // before shutdown so the kernel materializes its reserved replay.
+        self.handle_owner_event(InputEvent::ExecutorFault);
+        self.handle_owner_event(InputEvent::Shutdown);
+        self.renderer = RenderLane::new();
+        self.session_runtime = None;
         self.render_wakeup = false;
     }
 

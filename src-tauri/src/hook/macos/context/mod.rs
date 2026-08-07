@@ -135,6 +135,7 @@ impl RequestMailbox {
 struct SnapshotMailbox {
     sequence: AtomicU64,
     valid: AtomicBool,
+    completed_request_id: AtomicU64,
     request_id: AtomicU64,
     generation: AtomicU64,
     binding_set: AtomicU64,
@@ -152,6 +153,7 @@ impl SnapshotMailbox {
         Self {
             sequence: AtomicU64::new(0),
             valid: AtomicBool::new(false),
+            completed_request_id: AtomicU64::new(0),
             request_id: AtomicU64::new(0),
             generation: AtomicU64::new(0),
             binding_set: AtomicU64::new(0),
@@ -169,6 +171,8 @@ impl SnapshotMailbox {
         let writing = self.sequence.fetch_add(1, Ordering::AcqRel) + 1;
         debug_assert_eq!(writing & 1, 1);
         if let Some(context) = context {
+            self.completed_request_id
+                .store(context.request_id, Ordering::Relaxed);
             self.request_id.store(context.request_id, Ordering::Relaxed);
             let view = context.view;
             let identity = context.identity;
@@ -189,6 +193,15 @@ impl SnapshotMailbox {
         } else {
             self.valid.store(false, Ordering::Relaxed);
         }
+        self.sequence.store(writing + 1, Ordering::Release);
+    }
+
+    fn publish_failure(&self, request_id: u64) {
+        let writing = self.sequence.fetch_add(1, Ordering::AcqRel) + 1;
+        debug_assert_eq!(writing & 1, 1);
+        self.completed_request_id
+            .store(request_id, Ordering::Relaxed);
+        self.valid.store(false, Ordering::Relaxed);
         self.sequence.store(writing + 1, Ordering::Release);
     }
 
@@ -241,6 +254,42 @@ impl SnapshotMailbox {
         }
         None
     }
+
+    fn activation_result(
+        &self,
+        request_id: u64,
+        target: TargetToken,
+        point: Point,
+        tick: u32,
+    ) -> Option<bool> {
+        for _ in 0..4 {
+            let before = self.sequence.load(Ordering::Acquire);
+            if before & 1 != 0 {
+                continue;
+            }
+            let completed = self.completed_request_id.load(Ordering::Relaxed);
+            let valid = self.valid.load(Ordering::Relaxed);
+            let resolved_request = self.request_id.load(Ordering::Relaxed);
+            let resolved_target = self.target.load(Ordering::Relaxed);
+            let resolved_point = unpack_point(self.point.load(Ordering::Relaxed));
+            let updated_tick = self.tick.load(Ordering::Relaxed);
+            fence(Ordering::Acquire);
+            if self.sequence.load(Ordering::Relaxed) != before {
+                continue;
+            }
+            if completed < request_id {
+                return None;
+            }
+            return Some(
+                valid
+                    && resolved_request >= request_id
+                    && resolved_target == target.0
+                    && resolved_point == point
+                    && tick.wrapping_sub(updated_tick) <= CONTEXT_MAX_AGE_MS,
+            );
+        }
+        None
+    }
 }
 
 struct WorkerExit {
@@ -260,6 +309,7 @@ pub(super) struct ContextWorker {
     preflight_complete: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
     last_request_tick: Option<u32>,
+    last_request_point: Option<Point>,
     next_request_id: u64,
     minimum_request_id: u64,
     needed: bool,
@@ -319,6 +369,7 @@ impl ContextWorker {
             preflight_complete,
             handle: Some(handle),
             last_request_tick: None,
+            last_request_point: None,
             next_request_id: 0,
             minimum_request_id: 0,
             needed: true,
@@ -332,6 +383,7 @@ impl ContextWorker {
         self.needed = needed;
         self.last_request_tick = None;
         if !needed {
+            self.last_request_point = None;
             self.minimum_request_id = self.next_request_id;
         }
     }
@@ -353,6 +405,7 @@ impl ContextWorker {
                 tick,
             });
             self.last_request_tick = Some(tick);
+            self.last_request_point = Some(point);
         }
     }
 
@@ -364,6 +417,61 @@ impl ContextWorker {
             .latest(point, tick)
             .filter(|context| context.request_id > self.minimum_request_id)
             .map(|context| context.view)
+    }
+
+    pub(super) fn last_request_id(&self) -> u64 {
+        self.next_request_id
+    }
+
+    pub(super) fn latest_observed(&mut self, tick: u32) -> Option<ContextView> {
+        self.last_request_point
+            .and_then(|point| self.latest(point, tick))
+    }
+
+    pub(super) fn activation_result(
+        &self,
+        request_id: u64,
+        target: TargetToken,
+        point: Point,
+        tick: u32,
+    ) -> Option<bool> {
+        self.snapshots
+            .activation_result(request_id, target, point, tick)
+    }
+
+    #[cfg(test)]
+    pub(super) fn spawn_test(
+        reader: ConfigSnapshotReader,
+        resolved_target: Option<TargetToken>,
+    ) -> Self {
+        Self::spawn_with(
+            reader,
+            || true,
+            move |reader, request| {
+                let target = resolved_target.ok_or(ResolveFailure::PermissionDenied)?;
+                let snapshot = reader.read().ok_or(ResolveFailure::Unavailable)?;
+                let identity = ContextIdentity {
+                    process: ProcessIdentity {
+                        pid: 1,
+                        started_seconds: target.0,
+                        started_microseconds: 0,
+                    },
+                    window_fingerprint: 0,
+                };
+                Ok(ResolvedContext {
+                    request_id: request.request_id,
+                    view: ContextView {
+                        generation: snapshot.generation(),
+                        binding_set: snapshot.default_binding_set(),
+                        target,
+                        point: request.point,
+                        updated_tick: request.tick,
+                    },
+                    identity,
+                })
+            },
+        )
+        .expect("test context worker must start")
     }
 
     pub(super) fn shutdown(self) {}
@@ -416,8 +524,9 @@ fn worker_loop<R>(
         }
         while matches!(resources.receiver.try_recv(), Ok(())) {}
         let started = Instant::now();
+        let request = resources.requests.latest();
         let resolution = if trusted {
-            let resolution = resolver(&resources.reader, resources.requests.latest());
+            let resolution = resolver(&resources.reader, request);
             discard_slow_resolution(resolution, started.elapsed())
         } else {
             Err(ResolveFailure::PermissionDenied)
@@ -427,7 +536,7 @@ fn worker_loop<R>(
         } else {
             unknown += 1;
         }
-        publish_resolution(&resources.snapshots, resolution);
+        publish_resolution(&resources.snapshots, request.request_id, resolution);
     }
     #[cfg(target_os = "macos")]
     log::info!("macOS context worker stopped (resolved={resolved}, unknown={unknown})");
@@ -435,8 +544,11 @@ fn worker_loop<R>(
     let _ = (resolved, unknown);
 }
 
-fn publish_resolution(mailbox: &SnapshotMailbox, resolution: Resolution) {
-    mailbox.publish(resolution.ok());
+fn publish_resolution(mailbox: &SnapshotMailbox, request_id: u64, resolution: Resolution) {
+    match resolution {
+        Ok(context) => mailbox.publish(Some(context)),
+        Err(_) => mailbox.publish_failure(request_id),
+    }
 }
 
 fn discard_slow_resolution(resolution: Resolution, elapsed: Duration) -> Resolution {
@@ -942,6 +1054,7 @@ mod tests {
         let next = resolved(identity(41, 100, 10), Point::new(1, 2), 20);
         publish_resolution(
             &mailbox,
+            next.request_id,
             discard_slow_resolution(
                 Ok(next),
                 Duration::from_millis(u64::from(CONTEXT_MAX_AGE_MS) + 1),

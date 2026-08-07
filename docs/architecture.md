@@ -1,7 +1,7 @@
 # Zero Gesture Architecture Design Document
 
 > [!NOTE]
-> この文書はP05bのWindows Settings control、P04b3bまでのmacOS入力・context/action境界、
+> この文書はP05bのWindows Settings control、P04b3c-aまでのmacOS active input・context/action境界、
 > P04R3のobjc2 context/action native leafを説明する。
 > マルチプラットフォーム目標設計と後続移行ゲートは
 > [ADR index](./adr/README.md) を正とする。
@@ -169,13 +169,10 @@ UIスレッドのブロックを防ぐため、独立したスレッドでマウ
 
 ### 3.2.1. macOS Event Tap Owner
 
-macOS Engineは専用native threadでlisten-only `CGEventTap`と`CFRunLoop`を
-所有する。callbackはevent内のmouse情報を既存`MouseEvent`/`Point`へ正規化し、
-64件の固定SPSC queueへenqueueするだけで、常に元eventをOSへ返す。
-permission拒否、tap生成失敗、disable、queue overloadはすべてfail-openである。
-
-P04b2ではcontext、`InputKernel`、抑止/replay、action、rendererへ接続しない。
-Listen Event permissionのpromptもEngineから表示せず、後続Settings UIへ委ねる。
+macOS Engineは専用native threadでsuppress-capable `CGEventTap`と`CFRunLoop`を
+所有する。P04b2ではlisten-only tapとして導入し、context、`InputKernel`、
+抑止/replay、action、rendererへ接続しなかった。Listen Event permissionのpromptも
+Engineから表示せず、後続Settings UIへ委ねる。
 
 P04b3aでは後続consumerがまだ存在しないため、run-loop ownerは正規化queueを
 drainするだけでcontext workerを起動せず、Accessibility preflightやAX/process
@@ -186,8 +183,7 @@ capacity-one coalescing、MouseMoveだけの25 ms rate limit、ButtonDown即時�
 start時刻によるcache invalidationをdeterministic testで固定する。
 nullable CF値、denied/error/timeout、focus/target変更、不正文字列はUnknownへ
 劣化し、P04b3bが実consumerと同時にworkerを接続する。
-`ForegroundWindowInfo`の既存Windows payloadは変更せず、P04b2同様の
-listen-only通過を維持する。
+`ForegroundWindowInfo`の既存Windows payloadは変更しない。
 
 P04b3bではrun-loop consumerが初めて`ConfigSnapshotReader`を保持し、
 `ContextWorker`をproduction起動する。Event Tap callbackはresolverやexecutorを
@@ -212,11 +208,35 @@ markerを設定して`CGEventPost`する。callbackはraw event field読取の�
 `kCGEventSourceUserData`の単一整数比較を行い、同markerをqueueへ入れない。
 markerはtap install前に生成し、restartごとに変わる。
 
-Event Tapはlisten-onlyのままで、kernelのSuppress結果、Replay、renderer effectは
-P04b3bではOSへ適用しない。mailbox満杯、context/permission喪失、unsupported
-key、NULL生成、worker停止はactionをdrop/fail-openし、物理inputを待たせない。
-active suppression、mouse replay、target再検証/activationはP04b3c-a Active Input、
-native overlayはP04b3c-b Native Overlayへdeferする。
+P04b3bではEvent Tapをlisten-onlyのままとし、kernelのSuppress結果、Replay、
+renderer effectをOSへ適用しなかった。mailbox満杯、context/permission喪失、
+unsupported key、NULL生成、worker停止はactionをdrop/fail-openし、物理inputを
+待たせない境界を固定した。
+
+P04b3c-aではEvent Tapをsuppress-capableへ切り替える。callbackはself markerを
+先に除外し、eventを正規化して64件SPSCへenqueueし、そのreservation結果とownerの
+固定lane reservationだけでpass/suppressを同期決定する。新規sessionでSPSCが
+満杯ならkernel評価前にpassし、抑止を開始しない。callbackはexplicitなSuppress
+だけNULLを返し、それ以外は元event pointerを返す。allocation、lock、blocking
+send、I/O、IPC、OS context query、event posting、Tauri/WebView callを行わない。
+
+macOSの`Activate`はforeground activationではなく再検証gateである。consumerは
+resolver完了のrequest id、target token、exact point、100 ms freshnessを確認し、
+同一targetだけをaction dispatchへ進める。`NSRunningApplication`のactivate、
+AX window raise/focus書込み、focus clickなどforegroundを変更する操作は行わない。
+変更・Unknown・stale・mismatch・未完了はactionを送らず、抑止済みtriggerを
+replayする。
+
+replayは既存8件executor mailboxの別work kindとし、捕捉したbutton/down/up point
+からdown/up eventを両方生成してprocess markerを付け終えてから順にpostする。
+permission拒否または片方のNULL生成では一件もpostしない。queue rejectionや
+worker lossをcallbackは待たない。shutdownはactive inputを先にdisableして
+pass-throughへ戻し、ownerに残る通常action/render workを捨てたうえで、既存kernelの
+failure/shutdown phaseが選ぶ場合だけ予約済みreplayを一件生成する。executorがすでに
+受理したactionはFIFOに残し、replayを同時に受理できない場合は二重実行せずdegrade
+する。その後tap disable/invalidate、owner detach、executor sender closeによる
+accepted FIFO drain、context shutdownの順でteardownする。executor joinは既存の
+100 ms boundを維持する。native overlayはP04b3c-b Native Overlayへdeferする。
 
 P04R0 Foundationはruntime behaviorを変えず、Core Graphics、
 ApplicationServices、AppKit、QuartzCoreのobjc2 framework crateをmacOS
@@ -230,15 +250,17 @@ nullableなtyped raw leafを残し、NULLを`TargetExited`へ変換する。proc
 は引き続きlibcを使う。P04R2はlisten-only Event Tapを
 `hook/macos/{mod,callback,run_loop,consumer}`へ分割し、generated
 CGEvent/CFMachPort/CFRunLoop型と`CFRetained` ownershipへ移行した。callbackは
-generated `C-unwind` ABIでborrowed eventを読み、同じpointerを必ず返す。
+generated `C-unwind` ABIでborrowed eventを読む。P04R2時点では同じpointerを必ず
+返し、P04b3c-aでexplicitなSuppressだけNULLを返す契約へ更新した。
 P04R3はaction executorを`executor/macos/{mod,native,keymap}`へ分割した。worker/control policyは
 `mod.rs`、closedなvirtual-key mappingは`keymap.rs`、generated
 `CGEvent`/`CFRetained` creation、named source-user-data tagging、session-tap
 postingはprivateな`native.rs`へ局所化する。handwritten Core Graphics宣言、
 manual `CFRelease` owner、action module内の`unsafe`は残さない。callback readerと
 writerは同じ`CGEventField::EventSourceUserData`へ原子的に
-切り替える。その後に
-P04b3c-a Active Input、P04b3c-b Native Overlay、P05m shell/permissions/autostart、
+切り替える。P04b3c-a Active Inputはこのowner/executor境界へsuppression、
+revalidation-only activation、mouse replayを接続した。その後に
+P04b3c-b Native Overlay、P05m shell/permissions/autostart、
 P06m distribution/physical acceptanceを進める。UDS分割は必要なら後で行う任意作業
 であり、この順序のcritical pathには含めない。Tauriはprocess、Settings WebView、
 command、tray、packagingを所有し、native input callbackやAX/action/renderingの
@@ -246,9 +268,10 @@ interfaceにはしない。callback不変条件、段階移行、library選定�
 [ADR 0022](./adr/0022-objc2-macos-library-foundation.md)、context実装境界は
 [ADR 0023](./adr/0023-objc2-macos-context-native-leaf.md)、Event Tap実装境界は
 [ADR 0024](./adr/0024-objc2-macos-event-tap-owner.md)、action実装境界とfield統合gateは
-[ADR 0025](./adr/0025-objc2-macos-action-native-leaf.md)を正とする。
-R0は新しいruntime contractを追加しない。既存5 manifestの95 obligationsを
-唯一の契約在庫として維持し、Cargo target policyと代表symbol compileは
+[ADR 0025](./adr/0025-objc2-macos-action-native-leaf.md)、active inputの現行契約は
+[ADR 0026](./adr/0026-macos-active-input.md)を正とする。
+R0時点の5 manifest/95 obligationsを継承し、P04b3c-aの9 obligationsを加えた
+現行P04 inventoryは104件である。Cargo target policyと代表symbol compileは
 obligationへ数えないsupport checkとして扱う。
 
 ### 3.3. Overlay Thread (The "Visuals")
@@ -304,7 +327,7 @@ TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成
 | :------------------- | :--------------------------------- | :----------------------------------------------- |
 | **App Framework**    | `tauri` v2                         | アプリケーションシェル、設定UI、ビルドシステム   |
 | **Windows API**      | `windows-sys`                      | Win32 APIへのRawアクセス (Hooks, GDI, Input)     |
-| **macOS Input**      | objc2 Core Graphics / Core Foundation | generated listen-only Event Tapとrun-loop ownership |
+| **macOS Input**      | objc2 Core Graphics / Core Foundation | suppress-capable Event Tap、run-loop ownership、tagged mouse replay |
 | **macOS Context**    | objc2 AppKit / ApplicationServices / Core Foundation | frontmost appとfocused windowのbounded worker解決 |
 | **macOS Rendering**  | objc2 AppKit / QuartzCore（後続phase） | owner-thread限定のnative overlay                 |
 | **Concurrency**      | `std::thread`, `crossbeam-channel` | スレッド管理と高速なメッセージパッシング         |
@@ -370,6 +393,6 @@ TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成
 ## 7. Performance Considerations
 
 - **Blocking:** 現行Hook callbackはnormalize/evaluate、fixed atomic snapshot/context read、fixed-capacity lane reserve、coalesced nonblocking wakeup、pass/suppress returnに限定する。OS context query、activation/action実行、renderer lifecycle/joinはcallbackとHook pumpの外へ分離済みである。
-- **macOS fail-open:** Event Tap callbackはself markerの単一整数比較、event fieldの正規化、固定SPSC enqueue、atomic KPIだけを行う。context queryとaction postingはowner drain後の各専用workerだけが行い、permission/timeout/cache/mailbox/生成/worker失敗でも入力はlisten-onlyで通過する。
+- **macOS fail-open:** Event Tap callbackはself markerの単一整数比較、event fieldの正規化、固定SPSC enqueue、固定lane reservation、bounded owner evaluate、pass/suppress判断、atomic KPIだけを行う。新規sessionはSPSC満杯やcontext不成立時に抑止を開始せずpassする。抑止後のaccepted sessionは予約済みterminal pathでactionまたはtagged replayへ進む。context queryとaction/replay postingはowner drain後の専用workerだけが行い、callbackはOS query/postを行わない。
 - **Memory Safety:** `unsafe` ブロックを多用するWin32 API部分は、Rustのラッパー関数で適切に抽象化し、メモリリークや未定義動作を防ぐ。
 - **Drawing:** 現在とWindows移行中はGDI（`Polyline` + バックバッファ）を使用する。`direct2d.rs`は未実装stubであり、性能契約の未達を測定した場合だけ別ADR/PRでrenderer変更を検討する。macOSのAppKit/Core Animation adapterはこのWindows判断と分離する。

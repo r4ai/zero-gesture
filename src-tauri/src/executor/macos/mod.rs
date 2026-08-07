@@ -1,5 +1,5 @@
 use std::io;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -8,6 +8,7 @@ use crossbeam_channel::{bounded, Receiver, RecvTimeoutError, Sender, TryRecvErro
 
 use crate::config::Action;
 use crate::domain::input::SessionId;
+use crate::domain::{Point, TriggerButton};
 
 mod keymap;
 #[cfg(target_os = "macos")]
@@ -28,13 +29,41 @@ pub(crate) enum ExecutionOutcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ExecutorResult {
     pub(crate) session: SessionId,
+    pub(crate) kind: ExecutorWorkKind,
     pub(crate) outcome: ExecutionOutcome,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExecutorWorkKind {
+    Action,
+    Replay,
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) enum ExecutorWork {
+    Keyboard {
+        action: Action,
+        repeat: u16,
+    },
+    Replay {
+        trigger: TriggerButton,
+        down_at: Point,
+        up_at: Point,
+    },
+}
+
+impl ExecutorWork {
+    fn kind(&self) -> ExecutorWorkKind {
+        match self {
+            Self::Keyboard { .. } => ExecutorWorkKind::Action,
+            Self::Replay { .. } => ExecutorWorkKind::Replay,
+        }
+    }
 }
 
 struct ExecutorCommand {
     session: SessionId,
-    action: Action,
-    repeat: u16,
+    work: ExecutorWork,
 }
 
 #[derive(Default)]
@@ -84,7 +113,6 @@ impl ExecutorKpis {
 pub(crate) struct MacosActionExecutor {
     commands: Option<Sender<ExecutorCommand>>,
     results: Receiver<ExecutorResult>,
-    stop: Arc<AtomicBool>,
     completed: Receiver<()>,
     handle: Option<JoinHandle<()>>,
     kpis: Arc<ExecutorKpis>,
@@ -98,32 +126,22 @@ impl MacosActionExecutor {
 
     pub(crate) fn spawn_with<P>(marker: i64, post: P) -> io::Result<Self>
     where
-        P: Fn(&Action, i64, u16) -> ExecutionOutcome + Send + 'static,
+        P: Fn(&ExecutorWork, i64) -> ExecutionOutcome + Send + 'static,
     {
         let (commands, command_rx) = bounded(ACTION_MAILBOX_CAPACITY);
         let (result_tx, results) = bounded(RESULT_MAILBOX_CAPACITY);
         let (completion_tx, completed) = bounded(1);
-        let stop = Arc::new(AtomicBool::new(false));
         let kpis = Arc::new(ExecutorKpis::default());
-        let thread_stop = Arc::clone(&stop);
         let thread_kpis = Arc::clone(&kpis);
         let handle = thread::Builder::new()
             .name("macos-action".to_string())
             .spawn(move || {
-                worker_loop(
-                    marker,
-                    thread_stop,
-                    command_rx,
-                    result_tx,
-                    thread_kpis,
-                    post,
-                );
+                worker_loop(marker, command_rx, result_tx, thread_kpis, post);
                 let _ = completion_tx.send(());
             })?;
         Ok(Self {
             commands: Some(commands),
             results,
-            stop,
             completed,
             handle: Some(handle),
             kpis,
@@ -133,9 +151,29 @@ impl MacosActionExecutor {
     pub(crate) fn try_dispatch(&self, session: SessionId, action: Action, repeat: u16) -> bool {
         let command = ExecutorCommand {
             session,
-            action,
-            repeat,
+            work: ExecutorWork::Keyboard { action, repeat },
         };
+        self.try_send(command)
+    }
+
+    pub(crate) fn try_replay(
+        &self,
+        session: SessionId,
+        trigger: TriggerButton,
+        down_at: Point,
+        up_at: Point,
+    ) -> bool {
+        self.try_send(ExecutorCommand {
+            session,
+            work: ExecutorWork::Replay {
+                trigger,
+                down_at,
+                up_at,
+            },
+        })
+    }
+
+    fn try_send(&self, command: ExecutorCommand) -> bool {
         let delivered = self
             .commands
             .as_ref()
@@ -164,7 +202,6 @@ impl MacosActionExecutor {
         if self.handle.is_none() {
             return;
         }
-        self.stop.store(true, Ordering::Release);
         self.commands.take();
         let completed = self.completed.recv_timeout(SHUTDOWN_WAIT).is_ok();
         if let Some(handle) = self.handle.take() {
@@ -185,25 +222,26 @@ impl Drop for MacosActionExecutor {
 
 fn worker_loop<P>(
     marker: i64,
-    stop: Arc<AtomicBool>,
     commands: Receiver<ExecutorCommand>,
     results: Sender<ExecutorResult>,
     kpis: Arc<ExecutorKpis>,
     post: P,
 ) where
-    P: Fn(&Action, i64, u16) -> ExecutionOutcome,
+    P: Fn(&ExecutorWork, i64) -> ExecutionOutcome,
 {
-    while !stop.load(Ordering::Acquire) {
+    loop {
         let command = match commands.recv_timeout(WORKER_POLL) {
             Ok(command) => command,
             Err(RecvTimeoutError::Timeout) => continue,
             Err(RecvTimeoutError::Disconnected) => break,
         };
-        let outcome = post(&command.action, marker, command.repeat);
+        let kind = command.work.kind();
+        let outcome = post(&command.work, marker);
         kpis.note(outcome);
         if results
             .send(ExecutorResult {
                 session: command.session,
+                kind,
                 outcome,
             })
             .is_err()
@@ -222,14 +260,47 @@ fn worker_loop<P>(
 }
 
 #[cfg(target_os = "macos")]
-fn execute(action: &Action, marker: i64, repeat: u16) -> ExecutionOutcome {
-    execute_with(
-        action,
-        marker,
-        repeat,
-        native::post_access_allowed,
-        native::create_tag_and_post_repeat,
-    )
+fn execute(work: &ExecutorWork, marker: i64) -> ExecutionOutcome {
+    match work {
+        ExecutorWork::Keyboard { action, repeat } => execute_with(
+            action,
+            marker,
+            *repeat,
+            native::post_access_allowed,
+            native::create_tag_and_post_repeat,
+        ),
+        ExecutorWork::Replay {
+            trigger,
+            down_at,
+            up_at,
+        } => execute_replay_with(
+            *trigger,
+            *down_at,
+            *up_at,
+            marker,
+            native::post_access_allowed,
+            native::create_tag_and_post_replay,
+        ),
+    }
+}
+
+fn execute_replay_with<A, P>(
+    trigger: TriggerButton,
+    down_at: Point,
+    up_at: Point,
+    marker: i64,
+    post_access_allowed: A,
+    post_replay: P,
+) -> ExecutionOutcome
+where
+    A: FnOnce() -> bool,
+    P: FnOnce(TriggerButton, Point, Point, i64) -> bool,
+{
+    if !post_access_allowed() || !post_replay(trigger, down_at, up_at, marker) {
+        ExecutionOutcome::FailedBeforeInjection
+    } else {
+        ExecutionOutcome::Posted
+    }
 }
 
 fn execute_with<A, P>(
@@ -301,6 +372,31 @@ mod tests {
     }
 
     #[test]
+    fn replay_permission_or_creation_failure_is_before_injection() {
+        let down = Point::new(1, 2);
+        let up = Point::new(3, 4);
+        for (access, created) in [(false, true), (true, false)] {
+            assert_eq!(
+                execute_replay_with(
+                    TriggerButton::Right,
+                    down,
+                    up,
+                    7,
+                    || access,
+                    |trigger, actual_down, actual_up, marker| {
+                        assert_eq!(
+                            (trigger, actual_down, actual_up, marker),
+                            (TriggerButton::Right, down, up, 7)
+                        );
+                        created
+                    },
+                ),
+                ExecutionOutcome::FailedBeforeInjection
+            );
+        }
+    }
+
+    #[test]
     fn later_repeat_generation_failure_is_failed_after_injection() {
         let repeats = Cell::new(0);
 
@@ -352,7 +448,7 @@ mod tests {
         let release_block = Arc::new(AtomicBool::new(false));
         let worker_blocked = Arc::clone(&blocked);
         let worker_release = Arc::clone(&release_block);
-        let executor = MacosActionExecutor::spawn_with(7, move |_, _, _| {
+        let executor = MacosActionExecutor::spawn_with(7, move |_, _| {
             worker_blocked.store(true, Ordering::Release);
             while !worker_release.load(Ordering::Acquire) {
                 thread::yield_now();
@@ -391,7 +487,7 @@ mod tests {
     #[test]
     fn worker_stop_rejects_new_actions_without_blocking_input_owner() {
         let executor =
-            MacosActionExecutor::spawn_with(7, |_, _, _| panic!("injected worker stop")).unwrap();
+            MacosActionExecutor::spawn_with(7, |_, _| panic!("injected worker stop")).unwrap();
         assert!(executor.try_dispatch(SessionId(1), keyboard(&["a"]), 1));
         let deadline = Instant::now() + Duration::from_secs(1);
         while executor.poll().is_ok() && Instant::now() < deadline {
@@ -418,7 +514,7 @@ mod tests {
         let release_block = Arc::new(AtomicBool::new(false));
         let worker_blocked = Arc::clone(&blocked);
         let worker_release = Arc::clone(&release_block);
-        let executor = MacosActionExecutor::spawn_with(7, move |_, _, _| {
+        let executor = MacosActionExecutor::spawn_with(7, move |_, _| {
             worker_blocked.store(true, Ordering::Release);
             while !worker_release.load(Ordering::Acquire) {
                 thread::yield_now();

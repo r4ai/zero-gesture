@@ -30,6 +30,7 @@ ADRは実装の詳細設計ではなく、後続PRが守る外部契約、不変
 | [0023](./0023-objc2-macos-context-native-leaf.md) | Accepted | P04R1 context owner split、objc2所有権、nullable AX Create例外、既存worker/cache契約とKPIを固定する |
 | [0024](./0024-objc2-macos-event-tap-owner.md) | Accepted | P04R2 Event Tap owner split、generated CG/CF ownership、callback ABI、P04R3 named marker field統合とrollback境界を固定する |
 | [0025](./0025-objc2-macos-action-native-leaf.md) | Accepted | P04R3 action executor split、generated CGEvent/CFRetained所有権、named self-event field、既存worker契約とKPIを固定する |
+| [0026](./0026-macos-active-input.md) | Accepted | P04b3c-aでsuppress-capable Event Tap、revalidation-only activation、tagged mouse replay、fail-open/shutdown順序を固定する |
 
 ## Reading order
 
@@ -67,6 +68,9 @@ P04R3でreader/writerを同時移行したnamed marker field、維持したP04b2
 ADR 0025はP04R3で実装した`executor::macos`のworker/native/keymap分離、
 generated `CFRetained<CGEvent>`所有権、named source-user-data fieldへの原子的な
 reader/writer移行、維持した17 obligationsと局所KPIを記録する。
+ADR 0026はP04b3c-aでcallbackのsuppress/pass境界、foregroundを変更しない
+target再検証、tagged mouse replay、queue-full fail-open、teardown時のaccepted
+FIFO/replay ordering、Windows不変、継承95件と新規9件の契約在庫を記録する。
 
 ## Status policy
 

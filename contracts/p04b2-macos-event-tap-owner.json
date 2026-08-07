@@ -37,10 +37,10 @@
     },
     {
       "id": "P04B2-PASS-001",
-      "obligation": "The CGEventTap is listen-only and subscribes only to the supported mouse-event mask, so P04b2 cannot suppress physical input.",
+      "obligation": "The exact P04b2 mouse-event mask remains in use, and a non-suppressing self event returns its original pointer unchanged.",
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/hook/macos/mod.rs",
-      "evidence_name": "event_tap_spec_is_exactly_listen_only_mouse_observation"
+      "evidence_name": "p04b2_mouse_mask_and_non_suppressing_pointer_contract_are_preserved"
     },
     {
       "id": "P04B2-LIFECYCLE-001",

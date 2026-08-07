@@ -1,0 +1,67 @@
+{
+  "cases": [
+    {
+      "id": "P04B3CA-ACTIVE-001",
+      "obligation": "The macOS Event Tap is suppress-capable and subscribes only to the supported mouse-event mask.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos/mod.rs",
+      "evidence_name": "event_tap_spec_is_suppress_capable_with_exact_mouse_mask"
+    },
+    {
+      "id": "P04B3CA-HOT-001",
+      "obligation": "An eligible macOS trigger reaches an explicit suppress decision without callback-core heap allocation.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos/mod.rs",
+      "evidence_name": "active_callback_decides_suppression_without_allocating"
+    },
+    {
+      "id": "P04B3CA-OVERLOAD-001",
+      "obligation": "A full observation queue prevents a new macOS session from suppressing its physical trigger.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos/mod.rs",
+      "evidence_name": "callback_queue_overload_cannot_start_new_suppression"
+    },
+    {
+      "id": "P04B3CA-CALLBACK-001",
+      "obligation": "The production macOS callback maps its disposition to the OS return contract: null for explicit suppression and the original event otherwise.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos/mod.rs",
+      "evidence_name": "actual_callback_returns_null_only_for_explicit_suppression"
+    },
+    {
+      "id": "P04B3CA-REVALIDATE-001",
+      "obligation": "A changed focused target fails macOS activation revalidation, dispatches no configured action, and replays the captured trigger.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos/mod.rs",
+      "evidence_name": "changed_focus_fails_activation_and_replays_the_captured_trigger"
+    },
+    {
+      "id": "P04B3CA-REPLAY-001",
+      "obligation": "A macOS mouse replay posts one tagged down/up pair in order at the captured coordinates.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/executor/macos/native.rs",
+      "evidence_name": "mouse_replay_posts_tagged_balanced_pair_at_captured_coordinates"
+    },
+    {
+      "id": "P04B3CA-REPLAY-002",
+      "obligation": "A nullable macOS replay event creation posts neither half of the physical trigger pair.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/executor/macos/native.rs",
+      "evidence_name": "nullable_mouse_replay_event_posts_no_partial_pair"
+    },
+    {
+      "id": "P04B3CA-FAILURE-001",
+      "obligation": "A macOS replay permission or event-creation failure is classified before injection.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/executor/macos/mod.rs",
+      "evidence_name": "replay_permission_or_creation_failure_is_before_injection"
+    },
+    {
+      "id": "P04B3CA-LIFECYCLE-001",
+      "obligation": "macOS shutdown first restores callback pass-through and drains exactly one reserved replay for an active suppressed trigger.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos/mod.rs",
+      "evidence_name": "shutdown_disables_callback_and_drains_one_reserved_replay"
+    }
+  ]
+}
