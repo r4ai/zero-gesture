@@ -18,6 +18,10 @@ macOS. P04R0 chooses the library policy and compile surface before migrating
 any production leaf. This phase must not change input, action, context,
 rendering, process, IPC, or Windows behavior.
 
+P04R1 applies that policy to the context leaf. Its concrete ownership and
+nullable-result decision are recorded in
+[ADR 0023](./0023-objc2-macos-context-native-leaf.md).
+
 ## Decision
 
 ### Library policy
@@ -26,7 +30,8 @@ macOS framework access uses the maintained objc2 family when the required
 symbol and ownership contract are represented correctly. Direct framework
 dependencies live only under
 `target.'cfg(target_os = "macos")'.dependencies`, disable default features,
-and enable only features exercised by the next migration seam. P04R0 selects:
+and enable only features exercised by a production migration seam. P04R0
+originally selected:
 
 - `objc2-core-graphics`: `CGEvent`, `CGEventTypes`, and
   `CGRemoteOperation`;
@@ -35,12 +40,16 @@ and enable only features exercised by the next migration seam. P04R0 selects:
 - `objc2-app-kit`: `NSApplication` and its `NSResponder` superclass; and
 - `objc2-quartz-core`: `CALayer`.
 
-`objc2-core-foundation` is not a direct dependency because no P04R0 production
-code imports it. Framework feature edges supply it transitively. `libc`
-remains direct because the existing macOS UDS endpoint, peer credential,
-polling, and filesystem implementation still calls libc. A later phase may
-change an explicit feature set when its production seam and tests require
-more symbols; it must retain target scoping and disabled default features.
+P04R1 replaces the AppKit selection with `NSRunningApplication`,
+`NSWorkspace`, and their `libc` process identifier support; adds direct
+`objc2` for its autorelease pool; enables ApplicationServices `libc`; and
+adds direct `objc2-core-foundation` features `CFBase`, `CFDictionary`, and
+`CFString`. Production now imports those ownership and string types directly.
+Core Graphics and QuartzCore selections remain for P04R2 and the later
+renderer seam. `libc` also remains direct for process identity/path and the
+existing macOS UDS implementation. Each later phase may change an explicit
+feature set only when its production seam and tests require more symbols; it
+must retain target scoping and disabled default features.
 
 Tauri continues to own process bootstrap, Settings WebView lifecycle,
 commands, tray integration, and packaging. It is not an input-callback,
@@ -52,8 +61,9 @@ Migration replaces implementation inside the existing ownership modules:
 
 - `hook::macos` owns Event Tap installation, callback context, run loop, and
   normalized-input queue;
-- `hook::macos_context` owns prompt-free Accessibility/AppKit queries,
-  timeout, identity, and cache policy;
+- `hook::macos::context` owns prompt-free Accessibility/AppKit queries,
+  timeout, identity, and cache policy; its private `native` child is the only
+  context module that names Apple framework types;
 - `executor::macos` owns tagged Core Graphics event creation and posting; and
 - the later macOS renderer owner will own its AppKit/Core Animation objects.
 
@@ -109,10 +119,11 @@ Core Graphics for the entire tap lifetime.
 1. **P04R0 — Foundation:** add target-scoped dependencies, this ADR, support
    checks, a representative symbol smoke, and the Apple Silicon
    compile/package gate; change no production behavior or runtime contract.
-2. **P04R1 — Context split and migration:** split the existing context owner
-   into `hook/macos/context/{mod,native}` and migrate its
+2. **P04R1 — Context split and migration (complete):** split the existing
+   context owner into `hook/macos/context/{mod,native}` and migrate its
    Accessibility/AppKit leaf to objc2. Preserve prompt-free preflight,
-   timeout, identity, freshness, and Unknown failure semantics.
+   timeout, identity, freshness, and Unknown failure semantics. ADR 0023
+   records the one nullable raw leaf retained by this phase.
 3. **P04R2 — Event Tap split and migration:** split the input owner into
    `hook/macos/{mod,callback,run_loop,consumer}` and migrate its Core Graphics
    leaf to objc2. Preserve callback ABI, bounded work, lifecycle, and the
@@ -186,9 +197,10 @@ Windows-host support checks verify target scoping and disabled default
 features. The existing contract checker continues to validate the inherited
 five P04 manifests without a P04R0 registration.
 The macOS 26 arm64 job compiles and runs representative `CGEvent`,
-`AXUIElement`, `NSApplication`, and `CALayer` type references, runs Clippy for
-every target, runs the existing macOS library tests, creates the ad-hoc signed
-application bundle, and reruns packaged process/UDS acceptance.
+`AXUIElement`, `NSRunningApplication`, `NSWorkspace`, `CFString`, and
+`CALayer` type references, runs Clippy for every target, runs the existing
+macOS library tests, creates the ad-hoc signed application bundle, and reruns
+packaged process/UDS acceptance.
 
 The symbol smoke does not call an OS function and therefore changes no
 permission or runtime state. Noninteractive CI still does not prove TCC
@@ -198,8 +210,8 @@ physical/manual release evidence.
 
 ## Consequences
 
-The next migration has a reviewed, minimal binding surface and can replace
-raw implementation locally without changing the module interfaces. Windows
-does not resolve or compile these dependencies. P04R0 adds dependency compile
-cost and three support checks, but no resident process, state, thread, queue,
-callback work, or runtime failure mode.
+The context migration now has a reviewed private native leaf without changing
+its worker/cache interface. The next migration applies the same policy to the
+Event Tap owner. Windows does not resolve or compile these dependencies.
+P04R0 added dependency compile cost and support checks; P04R1 changes only
+the context implementation behind the existing worker boundary.

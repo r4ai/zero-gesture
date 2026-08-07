@@ -27,6 +27,7 @@ ADRは実装の詳細設計ではなく、後続PRが守る外部契約、不変
 | [0020](./0020-engine-owned-windows-settings-control.md) | Accepted | typed Settings error、conflict-safe draft、Engine-owned Windows capture protocolを固定する |
 | [0021](./0021-windows-nsis-installed-acceptance.md) | Accepted | current-user NSIS、retention、installed release acceptance、KPI、Authenticode blockerを固定する |
 | [0022](./0022-objc2-macos-library-foundation.md) | Accepted | P04R0 foundationからcontext・Event Tap・action移行、Active Input、Native Overlay、shell、distributionへ進むmacOS順序とobjc2不変条件を固定する |
+| [0023](./0023-objc2-macos-context-native-leaf.md) | Accepted | P04R1 context owner split、objc2所有権、nullable AX Create例外、既存worker/cache契約とKPIを固定する |
 
 ## Reading order
 
@@ -53,6 +54,10 @@ P04R1 context、P04R2 listen-only Event Tap、P04R3 action executorの分割移�
 P04b3c-a Active Input、P04b3c-b Native Overlay、P05m shell/permissions/autostart、
 P06m distribution/physical acceptanceの順序を記録する。UDS分割は任意の後続作業とし、
 R0はruntime contractを追加せず既存5 manifestの95 obligationsを継承する。
+ADR 0023はP04R1で実装した`hook::macos::context`のpolicy/native分離、
+NSWorkspace/NSRunningApplication・AXUIElement・Core Foundationの生成binding所有権、
+nullable AX application Createだけに限定したtyped raw leaf、維持した24 obligationsと
+局所KPIを記録する。
 
 ## Status policy
 
