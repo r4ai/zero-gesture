@@ -30,7 +30,8 @@ and enable only features exercised by the next migration seam. P04R0 selects:
 
 - `objc2-core-graphics`: `CGEvent`, `CGEventTypes`, and
   `CGRemoteOperation`;
-- `objc2-application-services`: `AXError` and `AXUIElement`;
+- `objc2-application-services`: `AXError`, `AXUIElement`, and the parent
+  `HIServices` re-export feature;
 - `objc2-app-kit`: `NSApplication` and its `NSResponder` superclass; and
 - `objc2-quartz-core`: `CALayer`.
 
