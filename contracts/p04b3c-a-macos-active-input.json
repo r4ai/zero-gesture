@@ -2,10 +2,10 @@
   "cases": [
     {
       "id": "P04B3CA-ACTIVE-001",
-      "obligation": "The macOS Event Tap is suppress-capable and subscribes only to the supported mouse-event mask.",
+      "obligation": "macOS active input is admitted only after prompt-free Post Event preflight; unavailable access publishes ready while preserving the original event and starting no session.",
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/hook/macos/mod.rs",
-      "evidence_name": "event_tap_spec_is_suppress_capable_with_exact_mouse_mask"
+      "evidence_name": "unavailable_post_access_publishes_ready_and_keeps_original_event_pass_through"
     },
     {
       "id": "P04B3CA-HOT-001",

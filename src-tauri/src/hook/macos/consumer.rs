@@ -85,6 +85,13 @@ impl MacosInputConsumer {
         self.pending_activation.is_some()
     }
 
+    #[cfg(test)]
+    pub(super) fn has_unpolled_executor_result(&self) -> bool {
+        self.executor
+            .as_ref()
+            .is_some_and(MacosActionExecutor::has_result)
+    }
+
     #[cfg(any(target_os = "macos", test))]
     pub(super) fn refresh_context(
         &mut self,
@@ -274,6 +281,10 @@ impl MacosInputConsumer {
         tick: u32,
     ) {
         state.disable_active_input();
+        if self.pending_executor.is_some() {
+            state.with_owner_mut(|owner| owner.shutdown());
+            return;
+        }
         state.with_owner_mut(|owner| owner.shutdown_with_replay());
         self.drain_owner_work(state, context, tick, None);
     }

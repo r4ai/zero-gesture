@@ -219,6 +219,9 @@ P04b3c-aではEvent Tapをsuppress-capableへ切り替える。callbackはself m
 満杯ならkernel評価前にpassし、抑止を開始しない。callbackはexplicitなSuppress
 だけNULLを返し、それ以外は元event pointerを返す。allocation、lock、blocking
 send、I/O、IPC、OS context query、event posting、Tauri/WebView callを行わない。
+run-loop ownerはworker起動とactive input enableより前にpromptなしPost Event
+preflightを行い、利用不可ならdegraded readinessをpublishしてpass-throughのまま
+stopを待つ。
 
 macOSの`Activate`はforeground activationではなく再検証gateである。consumerは
 resolver完了のrequest id、target token、exact point、100 ms freshnessを確認し、
@@ -231,12 +234,12 @@ replayは既存8件executor mailboxの別work kindとし、捕捉したbutton/do
 からdown/up eventを両方生成してprocess markerを付け終えてから順にpostする。
 permission拒否または片方のNULL生成では一件もpostしない。queue rejectionや
 worker lossをcallbackは待たない。shutdownはactive inputを先にdisableして
-pass-throughへ戻し、ownerに残る通常action/render workを捨てたうえで、既存kernelの
-failure/shutdown phaseが選ぶ場合だけ予約済みreplayを一件生成する。executorがすでに
-受理したactionはFIFOに残し、replayを同時に受理できない場合は二重実行せずdegrade
-する。その後tap disable/invalidate、owner detach、executor sender closeによる
-accepted FIFO drain、context shutdownの順でteardownする。executor joinは既存の
-100 ms boundを維持する。native overlayはP04b3c-b Native Overlayへdeferする。
+pass-throughへ戻す。executorがaction/replayを受理済みならownerをreplayなしで閉じて
+accepted FIFOだけをdrainする。未受理ならownerに残る通常action/render workを
+捨て、既存kernelのfailure/shutdown phaseが選ぶ予約済みreplayを一件生成する。
+その後tap disable/invalidate、owner detach、executor sender closeによるaccepted
+FIFO drain、context shutdownの順でteardownする。executor joinは既存の100 ms
+boundを維持する。native overlayはP04b3c-b Native Overlayへdeferする。
 
 P04R0 Foundationはruntime behaviorを変えず、Core Graphics、
 ApplicationServices、AppKit、QuartzCoreのobjc2 framework crateをmacOS

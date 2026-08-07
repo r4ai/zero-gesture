@@ -14,6 +14,11 @@ mod keymap;
 #[cfg(target_os = "macos")]
 mod native;
 
+#[cfg(target_os = "macos")]
+pub(crate) fn post_access_allowed() -> bool {
+    native::post_access_allowed()
+}
+
 const ACTION_MAILBOX_CAPACITY: usize = 8;
 const RESULT_MAILBOX_CAPACITY: usize = 8;
 const WORKER_POLL: Duration = Duration::from_millis(10);
@@ -192,6 +197,11 @@ impl MacosActionExecutor {
             Err(TryRecvError::Empty) => Ok(None),
             Err(TryRecvError::Disconnected) => Err(()),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_result(&self) -> bool {
+        !self.results.is_empty()
     }
 
     pub(crate) fn shutdown(mut self) {

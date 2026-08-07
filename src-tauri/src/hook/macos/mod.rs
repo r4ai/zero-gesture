@@ -312,6 +312,8 @@ mod tests {
     use super::callback::event_tap_callback;
     use super::consumer::{drain_input, InputStepFunctions, MacosInputConsumer, OwnerClock};
     use super::context::ContextWorker;
+    #[cfg(target_os = "macos")]
+    use super::run_loop::post_access_ready;
     use super::run_loop::{
         classify_run_loop_result, dispatch_startup_failure, executor_marker, prepare_marked_state,
         publish_ready, run_non_timeout_owner_step, RunLoopDisposition, StartupFailure,
@@ -786,6 +788,43 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
+    fn unavailable_post_access_publishes_ready_and_keeps_original_event_pass_through() {
+        let (_directory, _config_owner, reader, generation) = consumer_reader();
+        let physical =
+            OwnedTestEvent::mouse(CGEventType::RightMouseDown, CGMouseButton(1), 42, 1.0, 2.0);
+        let pointer = std::ptr::NonNull::from(&*physical.0);
+        let tick = (CGEvent::timestamp(Some(&physical.0)) / 1_000_000) as u32;
+        let mut owner = super::super::owner::NativeInputOwner::new(reader);
+        owner.set_context(Some(ContextView {
+            generation,
+            binding_set: BindingSetId::from_index(0).unwrap(),
+            target: crate::domain::input::TargetToken(9),
+            point: Point::new(1, 2),
+            updated_tick: tick,
+        }));
+        let state = TapState::with_owner(41, Some(owner));
+        let (events, receiver) = crossbeam_channel::bounded(1);
+
+        assert!(!post_access_ready(&state, &events, || false).unwrap());
+        assert!(matches!(receiver.recv().unwrap(), HookEvent::Ready(1)));
+        let returned = unsafe {
+            event_tap_callback(
+                std::ptr::null_mut(),
+                CGEventType::RightMouseDown,
+                pointer,
+                std::ptr::from_ref(&state).cast_mut().cast(),
+            )
+        };
+
+        assert_eq!(returned, pointer.as_ptr());
+        assert!(state
+            .with_owner_mut(|owner| owner.pop_action())
+            .flatten()
+            .is_none());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
     fn p04b2_mouse_mask_and_non_suppressing_pointer_contract_are_preserved() {
         let expected_mask = event_mask(EVENT_LEFT_MOUSE_DOWN)
             | event_mask(EVENT_LEFT_MOUSE_UP)
@@ -1114,6 +1153,55 @@ mod tests {
         consumer.prepare_shutdown(&state, &mut context_worker, 2);
         state.detach_owner();
         consumer.finish_shutdown();
+        context_worker.shutdown();
+    }
+
+    #[test]
+    fn shutdown_does_not_replay_after_an_accepted_action_completed_unpolled() {
+        let (_directory, _owner, reader, _generation) = consumer_reader();
+        let actions = Arc::new(AtomicUsize::new(0));
+        let replays = Arc::new(AtomicUsize::new(0));
+        let worker_actions = Arc::clone(&actions);
+        let worker_replays = Arc::clone(&replays);
+        let executor = MacosActionExecutor::spawn_with(41, move |work, _| {
+            match work {
+                ExecutorWork::Keyboard { .. } => {
+                    worker_actions.fetch_add(1, Ordering::Relaxed);
+                }
+                ExecutorWork::Replay { .. } => {
+                    worker_replays.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+            ExecutionOutcome::Posted
+        })
+        .unwrap();
+        let target = crate::domain::input::TargetToken(9);
+        let mut context_worker = ContextWorker::spawn_test(reader.clone(), Some(target));
+        let state =
+            TapState::with_owner(41, Some(super::super::owner::NativeInputOwner::new(reader)));
+        state.enable_active_input();
+        let mut consumer = MacosInputConsumer::new(executor);
+        let mut clock = OwnerClock::new();
+        let point = Point::new(0, 0);
+        context_worker.observe(MouseEvent::MouseMove, point, 1_000_000);
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while context_worker.latest(point, 1).is_none() && Instant::now() < deadline {
+            thread::yield_now();
+        }
+        consumer.refresh_context(&state, &mut context_worker, 1);
+        drive_right_release(&state, &mut context_worker, &mut consumer, &mut clock);
+
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !consumer.has_unpolled_executor_result() && Instant::now() < deadline {
+            thread::yield_now();
+        }
+        assert!(consumer.has_unpolled_executor_result());
+        consumer.prepare_shutdown(&state, &mut context_worker, 3);
+        state.detach_owner();
+        consumer.finish_shutdown();
+
+        assert_eq!(actions.load(Ordering::Relaxed), 1);
+        assert_eq!(replays.load(Ordering::Relaxed), 0);
         context_worker.shutdown();
     }
 

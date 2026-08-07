@@ -27,9 +27,14 @@ dispatch; it does not need to bring an application or window to the foreground.
 ### Suppress-capable Event Tap and callback boundary
 
 The Event Tap changes from `ListenOnly` to the suppress-capable default option
-while retaining the exact P04b2 mouse-event mask. After readiness is published,
-the run-loop owner explicitly enables active input. Before that point, and
-after shutdown begins, the callback is pass-through.
+while retaining the exact P04b2 mouse-event mask. Before starting the context
+and action workers, the run-loop owner performs the prompt-free
+`CGPreflightPostEventAccess` check in the private Core Graphics leaf. If Post
+Event access is unavailable, it publishes degraded readiness, tears down the
+tap, and waits for stop without ever enabling suppression. After both access
+checks and worker readiness succeed, the owner publishes readiness and
+explicitly enables active input. Before that point, and after shutdown begins,
+the callback is pass-through.
 
 The callback performs only these ordered operations:
 
@@ -98,10 +103,11 @@ Normal stop, readiness publication failure, and run-loop degradation use the
 same teardown order:
 
 1. disable active input so every later callback returns the original event;
-2. discard ordinary work still pending in the owner and drive the active
-   kernel session through the existing executor-failure/shutdown phases; this
-   materializes one replay only when that state machine selects its reserved
-   replay path;
+2. if the executor already accepted an action or replay, close the owner
+   without synthesizing another replay and retain that accepted FIFO command;
+   otherwise discard ordinary owner work and drive the active kernel session
+   through the existing executor-failure/shutdown phases so its reserved
+   replay is materialized once;
 3. disable and invalidate the Event Tap and remove its run-loop source;
 4. detach the input owner;
 5. close the executor command sender so accepted FIFO work, including the
@@ -109,11 +115,11 @@ same teardown order:
    before detaching an in-flight OS call; and
 6. shut down the context worker.
 
-An action already accepted by the executor is not removed from its FIFO. If
-such an in-flight command prevents replay admission, the owner degrades instead
-of dispatching both action and replay. The executor does not use a stop flag
-that can overtake accepted FIFO work. Shutdown does not create more than the
-kernel's one terminal replay for one active session.
+An action already accepted by the executor is not removed from its FIFO, and
+an unpolled completion is treated conservatively as accepted work rather than
+as proof that replay is safe. The executor does not use a stop flag that can
+overtake accepted FIFO work. Shutdown does not dispatch both an accepted action
+and a newly synthesized replay.
 
 ### Platform and phase boundary
 
@@ -156,9 +162,9 @@ docs.rs configuration, and a zero Windows-source diff for this phase.
 The authoritative Apple Silicon job must run macOS Clippy and all library and
 contract tests, then build the ad-hoc signed bundle and rerun packaged
 process/UDS acceptance. The focused native tests prove callback return values,
-queue-full fail-open behavior, changed-target replay selection, tagged balanced
-replay creation/post ordering, nullable creation, failure classification, and
-shutdown replay ordering.
+Post Event denial pass-through, queue-full fail-open behavior, changed-target
+replay selection, tagged balanced replay creation/post ordering, nullable
+creation, failure classification, and both shutdown terminal paths.
 
 Noninteractive CI does not prove live Listen Event or Post Event TCC grants,
 suppression and replay delivery in another application, foreground changes

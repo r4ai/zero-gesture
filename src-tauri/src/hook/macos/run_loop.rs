@@ -31,7 +31,7 @@ use super::TapState;
 #[cfg(target_os = "macos")]
 use crate::config::ConfigSnapshotReader;
 #[cfg(target_os = "macos")]
-use crate::executor::macos::MacosActionExecutor;
+use crate::executor::macos::{post_access_allowed, MacosActionExecutor};
 use crate::hook::owner::NativeInputOwner;
 
 #[cfg(target_os = "macos")]
@@ -159,6 +159,21 @@ fn run_active(
     state: Box<TapState>,
     resources: TapResources,
 ) -> Result<(), HookFailure> {
+    let post_access = match post_access_ready(&state, &events, post_access_allowed) {
+        Ok(available) => available,
+        Err(failure) => {
+            drop(resources);
+            state.detach_owner();
+            return Err(failure);
+        }
+    };
+    if !post_access {
+        warn!("macOS input owner is pass-through: Post Event access is unavailable");
+        drop(resources);
+        state.detach_owner();
+        wait_for_stop(&stop);
+        return Ok(());
+    }
     let mut context = match ContextWorker::spawn(reader.clone()) {
         Ok(context) => context,
         Err(failure) => {
@@ -276,6 +291,20 @@ pub(super) fn publish_ready(events: &Sender<HookEvent>) -> Result<(), HookFailur
     events
         .send(HookEvent::Ready(1))
         .map_err(|_| HookFailure::new("event tap", "readiness receiver disappeared"))
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn post_access_ready(
+    state: &TapState,
+    events: &Sender<HookEvent>,
+    preflight: impl FnOnce() -> bool,
+) -> Result<bool, HookFailure> {
+    if preflight() {
+        return Ok(true);
+    }
+    state.disable_active_input();
+    publish_ready(events)?;
+    Ok(false)
 }
 
 #[cfg(target_os = "macos")]
