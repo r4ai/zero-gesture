@@ -228,7 +228,11 @@ windowの再読、厳密な型/UTF境界、PID start identity、Unknown劣化は
 生成`AXUIElement::new_application`がNULLでpanicするため、このCreate関数だけは
 nullableなtyped raw leafを残し、NULLを`TargetExited`へ変換する。process identity/path
 は引き続きlibcを使う。P04R2はlisten-only Event Tapを
-`hook/macos/{mod,callback,run_loop,consumer}`へ分割して移行する。P04R3はaction
+`hook/macos/{mod,callback,run_loop,consumer}`へ分割し、generated
+CGEvent/CFMachPort/CFRunLoop型と`CFRetained` ownershipへ移行した。callbackは
+generated `C-unwind` ABIでborrowed eventを読み、同じpointerを必ず返す。
+既存executorとのmarker reader/writer parityのため数値55を一つの共有定数として
+暫定維持し、Appleのgenerated field 42への切替はP04R3で両側を同時に行う。P04R3はaction
 executorを`executor/macos/{mod,native,keymap}`へ分割して移行する。その後に
 P04b3c-a Active Input、P04b3c-b Native Overlay、P05m shell/permissions/autostart、
 P06m distribution/physical acceptanceを進める。UDS分割は必要なら後で行う任意作業
@@ -236,7 +240,8 @@ P06m distribution/physical acceptanceを進める。UDS分割は必要なら後�
 command、tray、packagingを所有し、native input callbackやAX/action/renderingの
 interfaceにはしない。callback不変条件、段階移行、library選定と却下案は
 [ADR 0022](./adr/0022-objc2-macos-library-foundation.md)、context実装境界は
-[ADR 0023](./adr/0023-objc2-macos-context-native-leaf.md)を正とする。
+[ADR 0023](./adr/0023-objc2-macos-context-native-leaf.md)、Event Tap実装境界は
+[ADR 0024](./adr/0024-objc2-macos-event-tap-owner.md)を正とする。
 R0は新しいruntime contractを追加しない。既存5 manifestの95 obligationsを
 唯一の契約在庫として維持し、Cargo target policyと代表symbol compileは
 obligationへ数えないsupport checkとして扱う。
@@ -294,7 +299,7 @@ TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成
 | :------------------- | :--------------------------------- | :----------------------------------------------- |
 | **App Framework**    | `tauri` v2                         | アプリケーションシェル、設定UI、ビルドシステム   |
 | **Windows API**      | `windows-sys`                      | Win32 APIへのRawアクセス (Hooks, GDI, Input)     |
-| **macOS Input**      | objc2 Core Graphics（raw FFIから段階移行） | listen-only Event Tapとrun-loop ownership       |
+| **macOS Input**      | objc2 Core Graphics / Core Foundation | generated listen-only Event Tapとrun-loop ownership |
 | **macOS Context**    | objc2 AppKit / ApplicationServices / Core Foundation | frontmost appとfocused windowのbounded worker解決 |
 | **macOS Rendering**  | objc2 AppKit / QuartzCore（後続phase） | owner-thread限定のnative overlay                 |
 | **Concurrency**      | `std::thread`, `crossbeam-channel` | スレッド管理と高速なメッセージパッシング         |
@@ -322,8 +327,11 @@ TauriのWindow機能を使わず、Rustから直接Win32ウィンドウを作成
 │   │   │   └── macos.rs       // bounded tagged CGEvent keyboard worker
 │   │   ├── hook/
 │   │   │   ├── owner.rs       // InputKernel、config pin、固定action/renderer lane
-│   │   │   ├── macos.rs       // listen-only CGEventTapとrun-loop consumer
 │   │   │   ├── macos/
+│   │   │   │   ├── mod.rs      // normalized record、固定SPSC、契約test
+│   │   │   │   ├── callback.rs // generated CGEvent callback hot leaf
+│   │   │   │   ├── run_loop.rs // CGEventTap/CFRunLoop ownership
+│   │   │   │   ├── consumer.rs // context/action consumer
 │   │   │   │   └── context/
 │   │   │   │       ├── mod.rs    // bounded AX worker/cache/mailbox contract
 │   │   │   │       └── native.rs // private objc2 AppKit/AX/CF ownership leaf

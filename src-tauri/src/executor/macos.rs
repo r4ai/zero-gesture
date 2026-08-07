@@ -16,7 +16,9 @@ const RESULT_MAILBOX_CAPACITY: usize = 8;
 const WORKER_POLL: Duration = Duration::from_millis(10);
 const SHUTDOWN_WAIT: Duration = Duration::from_millis(100);
 const SESSION_EVENT_TAP: u32 = 1;
-const EVENT_FIELD_SOURCE_USER_DATA: u32 = 55;
+// P04R2 keeps the existing reader/writer field parity. P04R3 must switch this
+// shared value atomically to generated `CGEventField::EventSourceUserData`.
+pub(crate) const EVENT_FIELD_SOURCE_USER_DATA: u32 = 55;
 
 type CGEventRef = *mut c_void;
 

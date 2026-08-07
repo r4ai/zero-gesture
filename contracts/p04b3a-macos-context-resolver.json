@@ -11,14 +11,14 @@
       "id": "P04B3A-ISOLATION-001",
       "obligation": "The actual Event Tap callback returns a real self-tagged CGEvent without queueing it and normalizes a real foreign-tagged CGEvent into the queue.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos.rs",
+      "evidence_file": "src-tauri/src/hook/macos/mod.rs",
       "evidence_name": "actual_callback_filters_self_and_enqueues_a_real_foreign_event"
     },
     {
       "id": "P04B3A-ISOLATION-002",
       "obligation": "The actual Event Tap callback only enqueues foreign input; the shared production run-loop drain leaf later invokes the context and action consumer from that same TapState queue.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos.rs",
+      "evidence_file": "src-tauri/src/hook/macos/mod.rs",
       "evidence_name": "actual_callback_only_enqueues_and_actual_drain_later_invokes_consumer"
     },
     {

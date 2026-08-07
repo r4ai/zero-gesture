@@ -67,7 +67,7 @@ libc = "0.2"
 objc2 = { version = "0.6.4", default-features = false }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSRunningApplication", "NSWorkspace", "libc"] }
 objc2-application-services = { version = "0.3.2", default-features = false, features = ["AXError", "AXUIElement", "HIServices", "libc"] }
-objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["CFBase", "CFDictionary", "CFString"] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["CFBase", "CFDate", "CFDictionary", "CFMachPort", "CFRunLoop", "CFString"] }
 objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["CGEvent", "CGEventTypes", "CGRemoteOperation"] }
 objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["CALayer"] }
 

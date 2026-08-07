@@ -6,38 +6,19 @@
 //! input owner, bounded context worker, and bounded action executor.
 
 use std::cell::UnsafeCell;
-use std::ffi::c_void;
 use std::mem::MaybeUninit;
-#[cfg(target_os = "macos")]
-use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::Arc;
-use std::thread;
-use std::time::{Duration, Instant};
 
-use crossbeam_channel::Sender;
-#[cfg(target_os = "macos")]
-use log::warn;
-
+mod callback;
+mod consumer;
 mod context;
+mod run_loop;
 
-use super::owner::{ActionWork, ContextRoute, ContextView, NativeInputOwner};
-use super::{HookEvent, HookFailure};
-use crate::config::ConfigSnapshotReader;
-use crate::domain::input::SessionId;
 use crate::domain::{MouseEvent, Point, TriggerButton};
-use crate::executor::macos::{ExecutionOutcome, MacosActionExecutor};
 #[cfg(target_os = "macos")]
-use context::ContextWorker;
+pub(super) use run_loop::run_loop_macos;
 
 const EVENT_QUEUE_CAPACITY: usize = 64;
-#[cfg(target_os = "macos")]
-const RUN_LOOP_SLICE_SECONDS: f64 = 0.01;
-const DEGRADED_STOP_POLL: Duration = Duration::from_millis(10);
-const RUN_LOOP_FINISHED: i32 = 1;
-const RUN_LOOP_STOPPED: i32 = 2;
-const RUN_LOOP_TIMED_OUT: i32 = 3;
-const RUN_LOOP_HANDLED_SOURCE: i32 = 4;
 
 const EVENT_LEFT_MOUSE_DOWN: u32 = 1;
 const EVENT_LEFT_MOUSE_UP: u32 = 2;
@@ -50,100 +31,9 @@ const EVENT_SCROLL_WHEEL: u32 = 22;
 const EVENT_OTHER_MOUSE_DOWN: u32 = 25;
 const EVENT_OTHER_MOUSE_UP: u32 = 26;
 const EVENT_OTHER_MOUSE_DRAGGED: u32 = 27;
-#[cfg(target_os = "macos")]
-const EVENT_TAP_DISABLED_BY_TIMEOUT: u32 = u32::MAX - 1;
-#[cfg(target_os = "macos")]
-const EVENT_TAP_DISABLED_BY_USER_INPUT: u32 = u32::MAX;
-
-#[cfg(target_os = "macos")]
-const EVENT_FIELD_MOUSE_BUTTON_NUMBER: u32 = 3;
-#[cfg(target_os = "macos")]
-const EVENT_FIELD_SCROLL_DELTA_AXIS_1: u32 = 11;
-const EVENT_FIELD_SOURCE_USER_DATA: u32 = 55;
 const MIDDLE_MOUSE_BUTTON: i64 = 2;
 
-#[cfg(target_os = "macos")]
-const SESSION_EVENT_TAP: u32 = 1;
-#[cfg(target_os = "macos")]
-const HEAD_INSERT_EVENT_TAP: u32 = 0;
 const LISTEN_ONLY_EVENT_TAP: u32 = 1;
-
-#[cfg(target_os = "macos")]
-extern "C" {
-    fn arc4random_buf(buffer: *mut c_void, length: usize);
-}
-
-type CGEventRef = *mut c_void;
-#[cfg(target_os = "macos")]
-type CFMachPortRef = *mut c_void;
-#[cfg(target_os = "macos")]
-type CFRunLoopRef = *mut c_void;
-#[cfg(target_os = "macos")]
-type CFRunLoopSourceRef = *mut c_void;
-#[cfg(target_os = "macos")]
-type CFStringRef = *const c_void;
-
-#[cfg(target_os = "macos")]
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct CGPoint {
-    x: f64,
-    y: f64,
-}
-
-#[cfg(target_os = "macos")]
-type EventTapCallback = unsafe extern "C" fn(
-    proxy: *mut c_void,
-    event_type: u32,
-    event: CGEventRef,
-    user_info: *mut c_void,
-) -> CGEventRef;
-
-#[cfg(target_os = "macos")]
-#[link(name = "ApplicationServices", kind = "framework")]
-extern "C" {
-    fn CGPreflightListenEventAccess() -> bool;
-    #[cfg(test)]
-    fn CGEventCreateMouseEvent(
-        source: *const c_void,
-        event_type: u32,
-        position: CGPoint,
-        button: u32,
-    ) -> CGEventRef;
-    fn CGEventTapCreate(
-        tap: u32,
-        place: u32,
-        options: u32,
-        events_of_interest: u64,
-        callback: Option<EventTapCallback>,
-        user_info: *mut c_void,
-    ) -> CFMachPortRef;
-    fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
-    fn CGEventTapIsEnabled(tap: CFMachPortRef) -> bool;
-    fn CGEventGetLocation(event: CGEventRef) -> CGPoint;
-    fn CGEventGetIntegerValueField(event: CGEventRef, field: u32) -> i64;
-    fn CGEventGetTimestamp(event: CGEventRef) -> u64;
-    #[cfg(test)]
-    fn CGEventSetIntegerValueField(event: CGEventRef, field: u32, value: i64);
-}
-
-#[cfg(target_os = "macos")]
-#[link(name = "CoreFoundation", kind = "framework")]
-extern "C" {
-    static kCFRunLoopDefaultMode: CFStringRef;
-
-    fn CFMachPortCreateRunLoopSource(
-        allocator: *const c_void,
-        port: CFMachPortRef,
-        order: isize,
-    ) -> CFRunLoopSourceRef;
-    fn CFMachPortInvalidate(port: CFMachPortRef);
-    fn CFRunLoopGetCurrent() -> CFRunLoopRef;
-    fn CFRunLoopAddSource(run_loop: CFRunLoopRef, source: CFRunLoopSourceRef, mode: CFStringRef);
-    fn CFRunLoopRemoveSource(run_loop: CFRunLoopRef, source: CFRunLoopSourceRef, mode: CFStringRef);
-    fn CFRunLoopRunInMode(mode: CFStringRef, seconds: f64, return_after_source: bool) -> i32;
-    fn CFRelease(value: *const c_void);
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct NormalizedInput {
@@ -166,12 +56,6 @@ struct RawInput {
     x: f64,
     y: f64,
     timestamp_ns: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RunLoopDisposition {
-    Continue,
-    Degrade,
 }
 
 struct SpscQueue<T: Copy, const N: usize> {
@@ -289,20 +173,6 @@ impl TapState {
         }
     }
 
-    #[cfg(target_os = "macos")]
-    fn reenable_if_requested(&self, tap: CFMachPortRef) {
-        if !self.take_reenable_request() {
-            return;
-        }
-        self.reenable_attempts.fetch_add(1, Ordering::Relaxed);
-        unsafe {
-            CGEventTapEnable(tap, true);
-            if !CGEventTapIsEnabled(tap) {
-                self.reenable_failures.fetch_add(1, Ordering::Relaxed);
-            }
-        }
-    }
-
     #[cfg(test)]
     fn snapshot(&self) -> KpiSnapshot {
         KpiSnapshot {
@@ -315,157 +185,6 @@ impl TapState {
     }
 }
 
-struct OwnerClock {
-    tick: u32,
-    observed_at: Instant,
-}
-
-impl OwnerClock {
-    fn new() -> Self {
-        Self {
-            tick: 0,
-            observed_at: Instant::now(),
-        }
-    }
-
-    fn observe(&mut self, timestamp_ns: u64) -> u32 {
-        self.tick = (timestamp_ns / 1_000_000) as u32;
-        self.observed_at = Instant::now();
-        self.tick
-    }
-
-    #[cfg(target_os = "macos")]
-    fn current(&self) -> u32 {
-        self.tick
-            .wrapping_add(self.observed_at.elapsed().as_millis() as u32)
-    }
-}
-
-struct MacosInputConsumer {
-    owner: NativeInputOwner,
-    executor: Option<MacosActionExecutor>,
-    current_context: Option<ContextView>,
-    pending_action: Option<SessionId>,
-    executor_alive: bool,
-}
-
-impl MacosInputConsumer {
-    fn new(reader: ConfigSnapshotReader, executor: MacosActionExecutor) -> Self {
-        Self {
-            owner: NativeInputOwner::new(reader),
-            executor: Some(executor),
-            current_context: None,
-            pending_action: None,
-            executor_alive: true,
-        }
-    }
-
-    fn consume(&mut self, input: NormalizedInput, context: Option<ContextView>, tick: u32) {
-        self.current_context = context;
-        self.owner.set_context(context);
-        let _ = self.owner.callback(input.event, input.point, tick);
-        self.drain_owner_work(tick);
-    }
-
-    #[cfg(target_os = "macos")]
-    fn context_route(&mut self, event: MouseEvent) -> ContextRoute {
-        self.owner.context_route(event)
-    }
-
-    fn safety_timer(&mut self, tick: u32) {
-        self.poll_executor();
-        self.owner.safety_timer(tick);
-        self.drain_owner_work(tick);
-    }
-
-    fn drain_owner_work(&mut self, tick: u32) {
-        self.poll_executor();
-        while let Some(work) = self.owner.pop_action() {
-            match work {
-                ActionWork::Activate { session, target } => {
-                    let ready = self.current_context.is_some_and(|context| {
-                        context.target == target
-                            && tick.wrapping_sub(context.updated_tick)
-                                <= super::owner::CONTEXT_MAX_AGE_MS
-                    });
-                    self.owner.activation_result(session, ready);
-                }
-                ActionWork::Dispatch {
-                    session,
-                    generation,
-                    action,
-                    repeat,
-                } => self.dispatch(session, generation, action, repeat),
-                ActionWork::Replay { .. } => {}
-            }
-        }
-        while self.owner.pop_render().is_some() {}
-    }
-
-    fn dispatch(
-        &mut self,
-        session: SessionId,
-        generation: crate::domain::input::ConfigGeneration,
-        action: crate::domain::ActionId,
-        repeat: u16,
-    ) {
-        let Some(runtime) = self.owner.runtime(generation) else {
-            self.owner.executor_fault();
-            return;
-        };
-        let delivered = self.executor_alive
-            && self.pending_action.is_none()
-            && self.executor.as_ref().is_some_and(|executor| {
-                executor.try_dispatch(session, runtime.action(action).clone(), repeat)
-            });
-        if delivered {
-            self.pending_action = Some(session);
-        } else {
-            self.owner.action_failed_before_injection(session);
-        }
-    }
-
-    fn poll_executor(&mut self) {
-        loop {
-            let result = self.executor.as_ref().map(MacosActionExecutor::poll);
-            match result {
-                Some(Ok(Some(result))) if self.pending_action == Some(result.session) => {
-                    self.pending_action = None;
-                    match result.outcome {
-                        ExecutionOutcome::Posted => {
-                            self.owner.injection_started(result.session);
-                            self.owner.action_completed(result.session);
-                        }
-                        ExecutionOutcome::FailedBeforeInjection => {
-                            self.owner.action_failed_before_injection(result.session);
-                        }
-                        ExecutionOutcome::FailedAfterInjection => {
-                            self.owner.injection_started(result.session);
-                            self.owner.action_failed_after_injection(result.session);
-                        }
-                    }
-                }
-                Some(Ok(Some(_))) => self.owner.executor_fault(),
-                Some(Ok(None)) | None => break,
-                Some(Err(())) => {
-                    self.executor_alive = false;
-                    if self.pending_action.take().is_some() {
-                        self.owner.executor_fault();
-                    }
-                    break;
-                }
-            }
-        }
-    }
-
-    fn shutdown(mut self) {
-        self.owner.shutdown();
-        if let Some(executor) = self.executor.take() {
-            executor.shutdown();
-        }
-    }
-}
-
 #[cfg(test)]
 #[derive(Debug, PartialEq, Eq)]
 struct KpiSnapshot {
@@ -474,344 +193,6 @@ struct KpiSnapshot {
     dropped: u64,
     processed: u64,
     disabled: u64,
-}
-
-#[cfg(target_os = "macos")]
-struct TapResources {
-    run_loop: CFRunLoopRef,
-    source: CFRunLoopSourceRef,
-    tap: CFMachPortRef,
-}
-
-#[cfg(target_os = "macos")]
-impl Drop for TapResources {
-    fn drop(&mut self) {
-        unsafe {
-            CGEventTapEnable(self.tap, false);
-            CFRunLoopRemoveSource(self.run_loop, self.source, kCFRunLoopDefaultMode);
-            CFMachPortInvalidate(self.tap);
-            CFRelease(self.source.cast_const());
-            CFRelease(self.tap.cast_const());
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-enum StartupMode {
-    Active(TapResources),
-    PermissionDenied,
-    CreationFailed,
-}
-
-#[derive(Clone, Copy)]
-enum StartupFailure {
-    PermissionDenied,
-    CreationFailed,
-}
-
-#[cfg(target_os = "macos")]
-pub(super) fn run_loop_macos(
-    reader: ConfigSnapshotReader,
-    stop: Arc<AtomicBool>,
-    events: Sender<HookEvent>,
-) -> Result<(), HookFailure> {
-    let marker = unsafe { process_instance_marker() };
-    let (state, mode) = prepare_marked_state(marker, |state| unsafe { start_event_tap(state) });
-    match mode {
-        StartupMode::Active(resources) => run_active(reader, stop, events, state, resources),
-        StartupMode::PermissionDenied => {
-            dispatch_startup_failure(StartupFailure::PermissionDenied, stop, events)
-        }
-        StartupMode::CreationFailed => {
-            dispatch_startup_failure(StartupFailure::CreationFailed, stop, events)
-        }
-    }
-}
-
-fn prepare_marked_state<T>(
-    marker: i64,
-    install_tap: impl FnOnce(&TapState) -> T,
-) -> (Box<TapState>, T) {
-    let state = Box::new(TapState::with_marker(marker));
-    let tap = install_tap(state.as_ref());
-    (state, tap)
-}
-
-fn executor_marker(state: &TapState) -> i64 {
-    state.marker
-}
-
-fn dispatch_startup_failure(
-    failure: StartupFailure,
-    stop: Arc<AtomicBool>,
-    events: Sender<HookEvent>,
-) -> Result<(), HookFailure> {
-    #[cfg(target_os = "macos")]
-    match failure {
-        StartupFailure::PermissionDenied => {
-            warn!("macOS input owner is pass-through: Listen Event access is unavailable");
-        }
-        StartupFailure::CreationFailed => {
-            warn!("macOS input owner is pass-through: event tap creation failed");
-        }
-    }
-    #[cfg(not(target_os = "macos"))]
-    let _ = failure;
-    run_degraded(stop, events)
-}
-
-fn run_degraded(stop: Arc<AtomicBool>, events: Sender<HookEvent>) -> Result<(), HookFailure> {
-    publish_ready(&events)?;
-    wait_for_stop(&stop);
-    Ok(())
-}
-
-fn wait_for_stop(stop: &AtomicBool) {
-    while !stop.load(Ordering::Acquire) {
-        thread::sleep(DEGRADED_STOP_POLL);
-    }
-}
-
-fn run_non_timeout_owner_step<R>(stop: &AtomicBool, resources: R) {
-    drop(resources);
-    wait_for_stop(stop);
-}
-
-#[cfg(target_os = "macos")]
-fn run_active(
-    reader: ConfigSnapshotReader,
-    stop: Arc<AtomicBool>,
-    events: Sender<HookEvent>,
-    state: Box<TapState>,
-    resources: TapResources,
-) -> Result<(), HookFailure> {
-    let mut context = ContextWorker::spawn(reader.clone())?;
-    let executor = MacosActionExecutor::spawn(executor_marker(&state))
-        .map_err(|_| HookFailure::new("macOS action", "failed to start"))?;
-    let mut consumer = MacosInputConsumer::new(reader, executor);
-    let mut clock = OwnerClock::new();
-    publish_ready(&events)?;
-    while !stop.load(Ordering::Acquire) {
-        let result =
-            unsafe { CFRunLoopRunInMode(kCFRunLoopDefaultMode, RUN_LOOP_SLICE_SECONDS, false) };
-        if classify_run_loop_result(result) == RunLoopDisposition::Degrade {
-            drain_input(
-                &state,
-                &mut context,
-                &mut consumer,
-                &mut clock,
-                &MACOS_INPUT_STEP_FUNCTIONS,
-            );
-            run_non_timeout_owner_step(&stop, resources);
-            consumer.shutdown();
-            context.shutdown();
-            return Ok(());
-        }
-        drain_input(
-            &state,
-            &mut context,
-            &mut consumer,
-            &mut clock,
-            &MACOS_INPUT_STEP_FUNCTIONS,
-        );
-        consumer.safety_timer(clock.current());
-        state.reenable_if_requested(resources.tap);
-    }
-    drain_input(
-        &state,
-        &mut context,
-        &mut consumer,
-        &mut clock,
-        &MACOS_INPUT_STEP_FUNCTIONS,
-    );
-    drop(resources);
-    consumer.shutdown();
-    context.shutdown();
-    Ok(())
-}
-
-fn drain_input<C, W>(
-    state: &TapState,
-    context: &mut W,
-    consumer: &mut C,
-    clock: &mut OwnerClock,
-    functions: &InputStepFunctions<C, W>,
-) {
-    state.drain(|input| {
-        process_input_step(input, clock, context, consumer, functions);
-    });
-}
-
-#[cfg(target_os = "macos")]
-const MACOS_INPUT_STEP_FUNCTIONS: InputStepFunctions<MacosInputConsumer, ContextWorker> =
-    InputStepFunctions {
-        route: MacosInputConsumer::context_route,
-        set_needed: ContextWorker::set_needed,
-        observe: ContextWorker::observe,
-        latest: ContextWorker::latest,
-        consume: MacosInputConsumer::consume,
-    };
-
-struct InputStepFunctions<C, W> {
-    route: fn(&mut C, MouseEvent) -> ContextRoute,
-    set_needed: fn(&mut W, bool),
-    observe: fn(&mut W, MouseEvent, Point, u64),
-    latest: fn(&mut W, Point, u32) -> Option<ContextView>,
-    consume: fn(&mut C, NormalizedInput, Option<ContextView>, u32),
-}
-
-fn process_input_step<C, W>(
-    input: NormalizedInput,
-    clock: &mut OwnerClock,
-    context: &mut W,
-    consumer: &mut C,
-    functions: &InputStepFunctions<C, W>,
-) {
-    let tick = clock.observe(input.timestamp_ns);
-    let route = (functions.route)(consumer, input.event);
-    let needed = route != ContextRoute::Inactive;
-    (functions.set_needed)(context, needed);
-    if route == ContextRoute::Observe {
-        (functions.observe)(context, input.event, input.point, input.timestamp_ns);
-    }
-    let current = needed
-        .then(|| (functions.latest)(context, input.point, tick))
-        .flatten();
-    (functions.consume)(consumer, input, current, tick);
-}
-
-#[cfg(target_os = "macos")]
-unsafe fn process_instance_marker() -> i64 {
-    let mut marker = 0_u64;
-    arc4random_buf(
-        std::ptr::from_mut(&mut marker).cast::<c_void>(),
-        std::mem::size_of::<u64>(),
-    );
-    if marker == 0 {
-        1
-    } else {
-        marker as i64
-    }
-}
-
-fn classify_run_loop_result(result: i32) -> RunLoopDisposition {
-    if result == RUN_LOOP_TIMED_OUT {
-        RunLoopDisposition::Continue
-    } else {
-        RunLoopDisposition::Degrade
-    }
-}
-
-fn publish_ready(events: &Sender<HookEvent>) -> Result<(), HookFailure> {
-    events
-        .send(HookEvent::Ready(1))
-        .map_err(|_| HookFailure::new("event tap", "readiness receiver disappeared"))
-}
-
-#[cfg(target_os = "macos")]
-unsafe fn start_event_tap(state: &TapState) -> StartupMode {
-    if !CGPreflightListenEventAccess() {
-        return StartupMode::PermissionDenied;
-    }
-    let spec = event_tap_spec();
-    let tap = CGEventTapCreate(
-        SESSION_EVENT_TAP,
-        HEAD_INSERT_EVENT_TAP,
-        spec.options,
-        spec.mask,
-        Some(event_tap_callback),
-        ptr::from_ref(state).cast_mut().cast(),
-    );
-    if tap.is_null() {
-        return StartupMode::CreationFailed;
-    }
-    let source = CFMachPortCreateRunLoopSource(ptr::null(), tap, 0);
-    if source.is_null() {
-        CFMachPortInvalidate(tap);
-        CFRelease(tap.cast_const());
-        return StartupMode::CreationFailed;
-    }
-    let run_loop = CFRunLoopGetCurrent();
-    CFRunLoopAddSource(run_loop, source, kCFRunLoopDefaultMode);
-    CGEventTapEnable(tap, true);
-    if !CGEventTapIsEnabled(tap) {
-        CFRunLoopRemoveSource(run_loop, source, kCFRunLoopDefaultMode);
-        CFMachPortInvalidate(tap);
-        CFRelease(source.cast_const());
-        CFRelease(tap.cast_const());
-        return StartupMode::CreationFailed;
-    }
-    StartupMode::Active(TapResources {
-        run_loop,
-        source,
-        tap,
-    })
-}
-
-#[cfg(target_os = "macos")]
-unsafe extern "C" fn event_tap_callback(
-    _proxy: *mut c_void,
-    event_type: u32,
-    event: CGEventRef,
-    user_info: *mut c_void,
-) -> CGEventRef {
-    let state = &*user_info.cast::<TapState>();
-    if matches!(
-        event_type,
-        EVENT_TAP_DISABLED_BY_TIMEOUT | EVENT_TAP_DISABLED_BY_USER_INPUT
-    ) {
-        state.note_disabled();
-        return event;
-    }
-
-    capture_callback_event(
-        state,
-        event_type,
-        event,
-        CGEventGetIntegerValueField,
-        read_raw_event,
-    );
-    event
-}
-
-type IntegerFieldReader = unsafe extern "C" fn(CGEventRef, u32) -> i64;
-type RawEventReader = unsafe fn(u32, CGEventRef) -> RawInput;
-
-unsafe fn capture_callback_event(
-    state: &TapState,
-    event_type: u32,
-    event: CGEventRef,
-    read_integer: IntegerFieldReader,
-    read_raw: RawEventReader,
-) {
-    let marker = read_integer(event, EVENT_FIELD_SOURCE_USER_DATA);
-    if marker == state.marker {
-        return;
-    }
-    state.capture_raw(read_raw(event_type, event));
-}
-
-#[cfg(target_os = "macos")]
-unsafe fn read_raw_event(event_type: u32, event: CGEventRef) -> RawInput {
-    let location = CGEventGetLocation(event);
-    let button = if matches!(event_type, EVENT_OTHER_MOUSE_DOWN | EVENT_OTHER_MOUSE_UP) {
-        CGEventGetIntegerValueField(event, EVENT_FIELD_MOUSE_BUTTON_NUMBER)
-    } else {
-        0
-    };
-    let scroll = if event_type == EVENT_SCROLL_WHEEL {
-        CGEventGetIntegerValueField(event, EVENT_FIELD_SCROLL_DELTA_AXIS_1)
-    } else {
-        0
-    };
-    RawInput {
-        event_type,
-        button,
-        scroll,
-        x: location.x,
-        y: location.y,
-        timestamp_ns: CGEventGetTimestamp(event),
-    }
 }
 
 fn normalize_event(event_type: u32, button: i64, scroll: i64) -> Option<MouseEvent> {
@@ -866,18 +247,37 @@ const fn event_mask(event_type: u32) -> u64 {
 #[cfg(test)]
 mod tests {
     use std::cell::{Cell, RefCell};
-    use std::ffi::c_void;
     use std::rc::Rc;
-    use std::sync::atomic::AtomicUsize;
-    use std::time::Instant;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::thread;
+    use std::time::{Duration, Instant};
 
+    use super::super::owner::{ContextRoute, ContextView};
+    use super::super::HookEvent;
+    use super::callback::capture_callback_event;
+    #[cfg(target_os = "macos")]
+    use super::callback::event_tap_callback;
+    use super::consumer::{drain_input, InputStepFunctions, MacosInputConsumer, OwnerClock};
+    use super::run_loop::{
+        classify_run_loop_result, dispatch_startup_failure, executor_marker, prepare_marked_state,
+        publish_ready, run_non_timeout_owner_step, RunLoopDisposition, StartupFailure,
+    };
     use super::*;
     use crate::config::{
-        ActiveConfig, BindingRecord, ConfigDocument, ConfigOwner, DocumentAction, GestureBinding,
-        GestureMode, GesturePattern, GestureStep, Key,
+        ActiveConfig, BindingRecord, ConfigDocument, ConfigOwner, ConfigSnapshotReader,
+        DocumentAction, GestureBinding, GestureMode, GesturePattern, GestureStep, Key,
     };
     use crate::domain::input::tests::count_allocations;
     use crate::domain::{BindingSetId, TriggerButton as DomainTriggerButton};
+    #[cfg(target_os = "macos")]
+    use crate::executor::macos::EVENT_FIELD_SOURCE_USER_DATA;
+    use crate::executor::macos::{ExecutionOutcome, MacosActionExecutor};
+    use crossbeam_channel::Sender;
+    #[cfg(target_os = "macos")]
+    use objc2_core_foundation::CGPoint;
+    #[cfg(target_os = "macos")]
+    use objc2_core_graphics::{CGEvent, CGEventField, CGEventType, CGMouseButton};
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum InputStepCall {
@@ -950,24 +350,7 @@ mod tests {
         }
     }
 
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    enum CallbackRead {
-        Integer(u32),
-        Raw(u32),
-    }
-
-    thread_local! {
-        static CALLBACK_MARKER: Cell<i64> = const { Cell::new(0) };
-        static CALLBACK_READS: RefCell<Vec<CallbackRead>> = const { RefCell::new(Vec::new()) };
-    }
-
-    unsafe extern "C" fn record_callback_marker(_: *mut c_void, field: u32) -> i64 {
-        CALLBACK_READS.with(|reads| reads.borrow_mut().push(CallbackRead::Integer(field)));
-        CALLBACK_MARKER.get()
-    }
-
-    unsafe fn record_callback_raw(event_type: u32, _: *mut c_void) -> RawInput {
-        CALLBACK_READS.with(|reads| reads.borrow_mut().push(CallbackRead::Raw(event_type)));
+    fn callback_raw(event_type: u32) -> RawInput {
         RawInput {
             event_type,
             button: 0,
@@ -976,15 +359,6 @@ mod tests {
             y: 2.0,
             timestamp_ns: 3,
         }
-    }
-
-    fn reset_callback_reads(marker: i64) {
-        CALLBACK_MARKER.set(marker);
-        CALLBACK_READS.with(|reads| {
-            let mut reads = reads.borrow_mut();
-            reads.clear();
-            reads.reserve(2);
-        });
     }
 
     struct DropRecorder(Sender<()>);
@@ -996,28 +370,24 @@ mod tests {
     }
 
     #[cfg(target_os = "macos")]
-    struct OwnedTestEvent(CGEventRef);
+    struct OwnedTestEvent(objc2_core_foundation::CFRetained<CGEvent>);
 
     #[cfg(target_os = "macos")]
     impl OwnedTestEvent {
         fn mouse_move(marker: i64, x: f64, y: f64) -> Self {
-            let event = unsafe {
-                CGEventCreateMouseEvent(std::ptr::null(), EVENT_MOUSE_MOVED, CGPoint { x, y }, 0)
-            };
-            assert!(!event.is_null());
-            unsafe {
-                CGEventSetIntegerValueField(event, EVENT_FIELD_SOURCE_USER_DATA, marker);
-            }
+            let event = CGEvent::new_mouse_event(
+                None,
+                CGEventType::MouseMoved,
+                CGPoint { x, y },
+                CGMouseButton(0),
+            )
+            .unwrap();
+            CGEvent::set_integer_value_field(
+                Some(&event),
+                CGEventField(EVENT_FIELD_SOURCE_USER_DATA),
+                marker,
+            );
             Self(event)
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    impl Drop for OwnedTestEvent {
-        fn drop(&mut self) {
-            unsafe {
-                CFRelease(self.0.cast_const());
-            }
         }
     }
 
@@ -1129,23 +499,17 @@ mod tests {
     #[test]
     fn self_tagged_callback_event_is_filtered_before_input_queue() {
         let state = TapState::with_marker(41);
-        reset_callback_reads(41);
+        let raw_read = Cell::new(false);
 
-        let (_, allocations) = count_allocations(|| unsafe {
-            capture_callback_event(
-                &state,
-                EVENT_MOUSE_MOVED,
-                std::ptr::null_mut(),
-                record_callback_marker,
-                record_callback_raw,
-            );
+        let (_, allocations) = count_allocations(|| {
+            capture_callback_event(&state, 41, || {
+                raw_read.set(true);
+                callback_raw(EVENT_MOUSE_MOVED)
+            });
         });
 
         assert_eq!(allocations, 0);
-        assert_eq!(
-            CALLBACK_READS.with(|reads| reads.borrow().clone()),
-            vec![CallbackRead::Integer(EVENT_FIELD_SOURCE_USER_DATA)]
-        );
+        assert!(!raw_read.get());
         assert!(state.queue.pop().is_none());
         assert_eq!(state.snapshot().received, 0);
     }
@@ -1153,25 +517,14 @@ mod tests {
     #[test]
     fn foreign_tagged_callback_event_reaches_input_queue() {
         let state = TapState::with_marker(41);
-        reset_callback_reads(42);
+        let raw_read = Cell::new(false);
 
-        unsafe {
-            capture_callback_event(
-                &state,
-                EVENT_MOUSE_MOVED,
-                std::ptr::null_mut(),
-                record_callback_marker,
-                record_callback_raw,
-            );
-        }
+        capture_callback_event(&state, 42, || {
+            raw_read.set(true);
+            callback_raw(EVENT_MOUSE_MOVED)
+        });
 
-        assert_eq!(
-            CALLBACK_READS.with(|reads| reads.borrow().clone()),
-            vec![
-                CallbackRead::Integer(EVENT_FIELD_SOURCE_USER_DATA),
-                CallbackRead::Raw(EVENT_MOUSE_MOVED),
-            ]
-        );
+        assert!(raw_read.get());
         assert_eq!(
             state.queue.pop(),
             Some(NormalizedInput {
@@ -1246,30 +599,51 @@ mod tests {
         let state = TapState::with_marker(41);
         let self_event = OwnedTestEvent::mouse_move(41, 1.0, 2.0);
         let foreign_event = OwnedTestEvent::mouse_move(42, 3.0, 4.0);
+        let self_pointer = std::ptr::NonNull::from(&*self_event.0);
+        let foreign_pointer = std::ptr::NonNull::from(&*foreign_event.0);
 
-        unsafe {
+        let returned = unsafe {
             event_tap_callback(
                 std::ptr::null_mut(),
-                EVENT_MOUSE_MOVED,
-                self_event.0,
+                CGEventType::MouseMoved,
+                self_pointer,
                 std::ptr::from_ref(&state).cast_mut().cast(),
-            );
-        }
+            )
+        };
+        assert_eq!(returned, self_pointer.as_ptr());
         assert!(state.queue.pop().is_none());
         assert_eq!(state.snapshot().received, 0);
 
-        unsafe {
+        let returned = unsafe {
             event_tap_callback(
                 std::ptr::null_mut(),
-                EVENT_MOUSE_MOVED,
-                foreign_event.0,
+                CGEventType::MouseMoved,
+                foreign_pointer,
                 std::ptr::from_ref(&state).cast_mut().cast(),
-            );
-        }
+            )
+        };
+        assert_eq!(returned, foreign_pointer.as_ptr());
         let input = state.queue.pop().unwrap();
         assert_eq!(input.event, MouseEvent::MouseMove);
         assert_eq!(input.point, Point::new(3, 4));
         assert_eq!(state.snapshot().received, 1);
+
+        for event_type in [
+            CGEventType::TapDisabledByTimeout,
+            CGEventType::TapDisabledByUserInput,
+        ] {
+            let returned = unsafe {
+                event_tap_callback(
+                    std::ptr::null_mut(),
+                    event_type,
+                    foreign_pointer,
+                    std::ptr::from_ref(&state).cast_mut().cast(),
+                )
+            };
+            assert_eq!(returned, foreign_pointer.as_ptr());
+        }
+        assert_eq!(state.snapshot().disabled, 2);
+        assert!(state.take_reenable_request());
     }
 
     #[cfg(target_os = "macos")]
@@ -1286,15 +660,17 @@ mod tests {
             calls: Rc::clone(&worker_calls),
         };
         let mut clock = OwnerClock::new();
+        let event_pointer = std::ptr::NonNull::from(&*event.0);
 
-        unsafe {
+        let returned = unsafe {
             event_tap_callback(
                 std::ptr::null_mut(),
-                EVENT_MOUSE_MOVED,
-                event.0,
+                CGEventType::MouseMoved,
+                event_pointer,
                 std::ptr::from_ref(&state).cast_mut().cast(),
-            );
-        }
+            )
+        };
+        assert_eq!(returned, event_pointer.as_ptr());
         assert!(worker_calls.borrow().is_empty());
 
         drain_input(
@@ -1607,16 +983,8 @@ mod tests {
 
     #[test]
     fn non_timeout_owner_step_drops_resources_waits_and_does_not_republish_ready() {
-        assert_eq!(
-            classify_run_loop_result(RUN_LOOP_TIMED_OUT),
-            RunLoopDisposition::Continue
-        );
-        for result in [
-            RUN_LOOP_FINISHED,
-            RUN_LOOP_STOPPED,
-            RUN_LOOP_HANDLED_SOURCE,
-            -1,
-        ] {
+        assert_eq!(classify_run_loop_result(3), RunLoopDisposition::Continue);
+        for result in [1, 2, 4, -1] {
             assert_eq!(
                 classify_run_loop_result(result),
                 RunLoopDisposition::Degrade

@@ -4,56 +4,56 @@
       "id": "P04B2-HOT-001",
       "obligation": "The macOS callback core normalizes and enqueues representative mouse input without heap allocation.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos.rs",
+      "evidence_file": "src-tauri/src/hook/macos/mod.rs",
       "evidence_name": "callback_core_normalizes_mouse_input_without_allocating"
     },
     {
       "id": "P04B2-OVERLOAD-001",
       "obligation": "A full macOS callback queue drops the new event while preserving accepted FIFO input and bounded KPI counters.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos.rs",
+      "evidence_file": "src-tauri/src/hook/macos/mod.rs",
       "evidence_name": "callback_queue_overload_drops_new_input_and_preserves_fifo_order"
     },
     {
       "id": "P04B2-DISABLE-001",
       "obligation": "Repeated timeout or user-input disable notifications coalesce into one worker-side re-enable request without callback-side retry.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos.rs",
+      "evidence_file": "src-tauri/src/hook/macos/mod.rs",
       "evidence_name": "tap_disable_notifications_coalesce_for_worker_side_reenable"
     },
     {
       "id": "P04B2-ORDER-001",
       "obligation": "The bounded SPSC consumer receives distinct normalized event, point, and timestamp values in callback order.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos.rs",
+      "evidence_file": "src-tauri/src/hook/macos/mod.rs",
       "evidence_name": "spsc_consumer_receives_distinct_inputs_in_callback_order"
     },
     {
       "id": "P04B2-NORMALIZE-001",
       "obligation": "macOS mouse buttons, movement, and signed scroll input map to the existing portable mouse boundary.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos.rs",
+      "evidence_file": "src-tauri/src/hook/macos/mod.rs",
       "evidence_name": "macos_event_mapping_matches_the_portable_mouse_boundary"
     },
     {
       "id": "P04B2-PASS-001",
       "obligation": "The CGEventTap is listen-only and subscribes only to the supported mouse-event mask, so P04b2 cannot suppress physical input.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos.rs",
+      "evidence_file": "src-tauri/src/hook/macos/mod.rs",
       "evidence_name": "event_tap_spec_is_exactly_listen_only_mouse_observation"
     },
     {
       "id": "P04B2-LIFECYCLE-001",
       "obligation": "A permission-denied or creation-failed macOS owner still publishes pass-through readiness and observes deterministic Engine stop.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos.rs",
+      "evidence_file": "src-tauri/src/hook/macos/mod.rs",
       "evidence_name": "degraded_owner_publishes_ready_and_stops_deterministically"
     },
     {
       "id": "P04B2-LIFECYCLE-002",
       "obligation": "Only a timed-out CFRunLoop slice continues normally; non-timeout handling drops active resources and waits for bounded Engine stop without republishing readiness.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos.rs",
+      "evidence_file": "src-tauri/src/hook/macos/mod.rs",
       "evidence_name": "non_timeout_owner_step_drops_resources_waits_and_does_not_republish_ready"
     }
   ]

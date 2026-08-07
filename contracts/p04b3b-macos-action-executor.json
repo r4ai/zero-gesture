@@ -4,21 +4,21 @@
       "id": "P04B3B-TAG-001",
       "obligation": "A callback event carrying this process instance marker is ignored before normalized input accounting or queue insertion.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos.rs",
+      "evidence_file": "src-tauri/src/hook/macos/mod.rs",
       "evidence_name": "self_tagged_callback_event_is_filtered_before_input_queue"
     },
     {
       "id": "P04B3B-TAG-002",
       "obligation": "A physical or external callback event carrying a different marker continues through the normalized input queue.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos.rs",
+      "evidence_file": "src-tauri/src/hook/macos/mod.rs",
       "evidence_name": "foreign_tagged_callback_event_reaches_input_queue"
     },
     {
       "id": "P04B3B-TAG-003",
       "obligation": "The process marker is created and copied into callback state before tap installation and into the executor worker.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos.rs",
+      "evidence_file": "src-tauri/src/hook/macos/mod.rs",
       "evidence_name": "process_marker_is_copied_before_tap_install_and_executor_spawn"
     },
     {
@@ -88,7 +88,7 @@
       "id": "P04B3B-CONTEXT-001",
       "obligation": "The production input step evaluates context need, conditionally observes and reads context, then invokes the existing consumer in that order.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos.rs",
+      "evidence_file": "src-tauri/src/hook/macos/mod.rs",
       "evidence_name": "production_input_step_orders_and_gates_context_before_consumer"
     },
     {
@@ -102,14 +102,14 @@
       "id": "P04B3B-CONTEXT-003",
       "obligation": "Fresh matched context selects and dispatches the existing ordered macOS keyboard action.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos.rs",
+      "evidence_file": "src-tauri/src/hook/macos/mod.rs",
       "evidence_name": "fresh_context_selects_and_dispatches_the_macos_action"
     },
     {
       "id": "P04B3B-CONTEXT-004",
       "obligation": "Unknown or stale context never dispatches a macOS action.",
       "runner": "macos-cargo-test",
-      "evidence_file": "src-tauri/src/hook/macos.rs",
+      "evidence_file": "src-tauri/src/hook/macos/mod.rs",
       "evidence_name": "unknown_or_stale_context_never_dispatches_a_macos_action"
     },
     {
