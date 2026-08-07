@@ -31,7 +31,8 @@ use super::TapState;
 #[cfg(target_os = "macos")]
 use crate::config::ConfigSnapshotReader;
 #[cfg(target_os = "macos")]
-use crate::executor::macos::MacosActionExecutor;
+use crate::executor::macos::{post_access_allowed, MacosActionExecutor};
+use crate::hook::owner::NativeInputOwner;
 
 #[cfg(target_os = "macos")]
 const RUN_LOOP_SLICE_SECONDS: f64 = 0.01;
@@ -83,7 +84,8 @@ pub(in crate::hook) fn run_loop_macos(
     // SAFETY: arc4random_buf accepts this initialized stack buffer and exact
     // byte length; no pointer escapes the call.
     let marker = unsafe { process_instance_marker() };
-    let (state, mode) = prepare_marked_state(marker, |state| {
+    let owner = NativeInputOwner::new(reader.clone());
+    let (state, mode) = prepare_marked_state(marker, Some(owner), |state| {
         // SAFETY: the boxed state address remains stable until `resources`
         // disables and invalidates the tap before `state` is dropped.
         unsafe { start_event_tap(state) }
@@ -101,9 +103,10 @@ pub(in crate::hook) fn run_loop_macos(
 
 pub(super) fn prepare_marked_state<T>(
     marker: i64,
+    owner: Option<NativeInputOwner>,
     install_tap: impl FnOnce(&TapState) -> T,
 ) -> (Box<TapState>, T) {
-    let state = Box::new(TapState::with_marker(marker));
+    let state = Box::new(TapState::with_owner(marker, owner));
     let tap = install_tap(state.as_ref());
     (state, tap)
 }
@@ -156,6 +159,21 @@ fn run_active(
     state: Box<TapState>,
     resources: TapResources,
 ) -> Result<(), HookFailure> {
+    let post_access = match post_access_ready(&state, &events, post_access_allowed) {
+        Ok(available) => available,
+        Err(failure) => {
+            drop(resources);
+            state.detach_owner();
+            return Err(failure);
+        }
+    };
+    if !post_access {
+        warn!("macOS input owner is pass-through: Post Event access is unavailable");
+        drop(resources);
+        state.detach_owner();
+        wait_for_stop(&stop);
+        return Ok(());
+    }
     let mut context = match ContextWorker::spawn(reader.clone()) {
         Ok(context) => context,
         Err(failure) => {
@@ -171,14 +189,17 @@ fn run_active(
             return Err(HookFailure::new("macOS action", "failed to start"));
         }
     };
-    let mut consumer = MacosInputConsumer::new(reader, executor);
+    let mut consumer = MacosInputConsumer::new(executor);
     let mut clock = OwnerClock::new();
     if let Err(failure) = publish_ready(&events) {
+        consumer.prepare_shutdown(&state, &mut context, clock.current());
         drop(resources);
-        consumer.shutdown();
+        state.detach_owner();
+        consumer.finish_shutdown();
         context.shutdown();
         return Err(failure);
     }
+    state.enable_active_input();
     while !stop.load(Ordering::Acquire) {
         let result = CFRunLoop::run_in_mode(Some(resources.mode), RUN_LOOP_SLICE_SECONDS, false);
         if classify_run_loop_result(result.0) == RunLoopDisposition::Degrade {
@@ -189,9 +210,12 @@ fn run_active(
                 &mut clock,
                 &MACOS_INPUT_STEP_FUNCTIONS,
             );
-            run_non_timeout_owner_step(&stop, resources);
-            consumer.shutdown();
+            consumer.prepare_shutdown(&state, &mut context, clock.current());
+            drop(resources);
+            state.detach_owner();
+            consumer.finish_shutdown();
             context.shutdown();
+            wait_for_stop(&stop);
             return Ok(());
         }
         drain_input(
@@ -201,7 +225,7 @@ fn run_active(
             &mut clock,
             &MACOS_INPUT_STEP_FUNCTIONS,
         );
-        consumer.safety_timer(clock.current());
+        consumer.safety_timer(&state, &mut context, clock.current());
         reenable_if_requested(&state, &resources.tap);
     }
     drain_input(
@@ -211,8 +235,10 @@ fn run_active(
         &mut clock,
         &MACOS_INPUT_STEP_FUNCTIONS,
     );
+    consumer.prepare_shutdown(&state, &mut context, clock.current());
     drop(resources);
-    consumer.shutdown();
+    state.detach_owner();
+    consumer.finish_shutdown();
     context.shutdown();
     Ok(())
 }
@@ -265,6 +291,20 @@ pub(super) fn publish_ready(events: &Sender<HookEvent>) -> Result<(), HookFailur
     events
         .send(HookEvent::Ready(1))
         .map_err(|_| HookFailure::new("event tap", "readiness receiver disappeared"))
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn post_access_ready(
+    state: &TapState,
+    events: &Sender<HookEvent>,
+    preflight: impl FnOnce() -> bool,
+) -> Result<bool, HookFailure> {
+    if preflight() {
+        return Ok(true);
+    }
+    state.disable_active_input();
+    publish_ready(events)?;
+    Ok(false)
 }
 
 #[cfg(target_os = "macos")]

@@ -11,15 +11,20 @@ use objc2_core_graphics::{CGEvent, CGEventField, CGEventTapProxy, CGEventType};
 use super::{RawInput, TapState};
 #[cfg(target_os = "macos")]
 use super::{EVENT_OTHER_MOUSE_DOWN, EVENT_OTHER_MOUSE_UP, EVENT_SCROLL_WHEEL};
+use crate::domain::Disposition;
 
 pub(super) fn capture_callback_event(
     state: &TapState,
     source_marker: i64,
     raw: impl FnOnce() -> RawInput,
-) {
-    if source_marker != state.marker {
-        state.capture_raw(raw());
+) -> Disposition {
+    if source_marker == state.marker {
+        return Disposition::Pass;
     }
+    let Some((input, observation_reserved)) = state.capture_raw(raw()) else {
+        return Disposition::Pass;
+    };
+    state.decide(input, observation_reserved)
 }
 
 #[cfg(target_os = "macos")]
@@ -46,10 +51,13 @@ pub(super) unsafe extern "C-unwind" fn event_tap_callback(
     let event_ref = unsafe { event.as_ref() };
     let source_marker =
         CGEvent::integer_value_field(Some(event_ref), CGEventField::EventSourceUserData);
-    capture_callback_event(state, source_marker, || {
+    let disposition = capture_callback_event(state, source_marker, || {
         read_raw_event(event_type.0, event_ref)
     });
-    event.as_ptr()
+    match disposition {
+        Disposition::Pass => event.as_ptr(),
+        Disposition::Suppress => std::ptr::null_mut(),
+    }
 }
 
 #[cfg(target_os = "macos")]

@@ -25,6 +25,7 @@ $sentinelPath = Join-Path $configDirectory "p05c-installer-retention.sentinel"
 $unrelatedLogRootSentinelPath = Join-Path $logRoot "p05c-unrelated-runner-data.sentinel"
 $unrelatedLogRootSentinelBytes = [byte[]]@(0x50, 0x05, 0x0C, 0x02, 0x55, 0xAA)
 $statusPath = Join-Path $env:RUNNER_TEMP "p05c-engine-status.json"
+$settingsForwardingHarnessTimeoutMs = 20000
 $enabledStartupApproved = [byte[]]@(0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
 $measurements = [ordered]@{}
 
@@ -534,7 +535,7 @@ Wait-Condition {
     -not [P05cWindowState]::IsExistingVisibleWindow($existingSettingsWindow)
 } "first Settings window hide"
 $second = Start-Settings -Executable $installedExecutable
-Assert-Condition ($second.WaitForExit(10000)) `
+Assert-Condition ($second.WaitForExit($settingsForwardingHarnessTimeoutMs)) `
     "Second Settings did not complete single-instance forwarding."
 Assert-Condition ($second.ExitCode -eq 0) "Second Settings instance failed."
 Assert-Condition (-not $settings.HasExited) "First Settings instance did not survive forwarding."

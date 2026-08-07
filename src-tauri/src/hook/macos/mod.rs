@@ -1,9 +1,9 @@
-//! macOS listen-only event-tap owner.
+//! macOS active event-tap owner.
 //!
 //! The Core Graphics callback compares one process marker, normalizes fields
-//! already present in foreign events, appends to one fixed SPSC queue, and
-//! updates atomics. The run-loop side drains that queue into the existing
-//! input owner, bounded context worker, and bounded action executor.
+//! already present in foreign events, evaluates the existing input owner, and
+//! appends context observations to one fixed SPSC queue. The run-loop side
+//! drains context observations and already-decided effects.
 
 use std::cell::UnsafeCell;
 use std::mem::MaybeUninit;
@@ -14,7 +14,8 @@ mod consumer;
 mod context;
 mod run_loop;
 
-use crate::domain::{MouseEvent, Point, TriggerButton};
+use super::owner::NativeInputOwner;
+use crate::domain::{Disposition, MouseEvent, Point, TriggerButton};
 #[cfg(target_os = "macos")]
 pub(super) use run_loop::run_loop_macos;
 
@@ -33,7 +34,7 @@ const EVENT_OTHER_MOUSE_UP: u32 = 26;
 const EVENT_OTHER_MOUSE_DRAGGED: u32 = 27;
 const MIDDLE_MOUSE_BUTTON: i64 = 2;
 
-const LISTEN_ONLY_EVENT_TAP: u32 = 1;
+const ACTIVE_EVENT_TAP: u32 = 0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct NormalizedInput {
@@ -105,6 +106,11 @@ impl<T: Copy, const N: usize> SpscQueue<T, N> {
 
 struct TapState {
     marker: i64,
+    // The Event Tap callback and run-loop drain execute on the one native
+    // owner thread. The option is installed before active input is enabled,
+    // gated off before teardown, and taken only after tap invalidation.
+    owner: UnsafeCell<Option<NativeInputOwner>>,
+    active_input: AtomicBool,
     queue: SpscQueue<NormalizedInput, EVENT_QUEUE_CAPACITY>,
     received: AtomicU64,
     enqueued: AtomicU64,
@@ -124,8 +130,14 @@ impl TapState {
     }
 
     fn with_marker(marker: i64) -> Self {
+        Self::with_owner(marker, None)
+    }
+
+    fn with_owner(marker: i64, owner: Option<NativeInputOwner>) -> Self {
         Self {
             marker,
+            owner: UnsafeCell::new(owner),
+            active_input: AtomicBool::new(false),
             queue: SpscQueue::new(),
             received: AtomicU64::new(0),
             enqueued: AtomicU64::new(0),
@@ -140,21 +152,61 @@ impl TapState {
         }
     }
 
-    fn capture_raw(&self, raw: RawInput) {
-        let Some(event) = normalize_event(raw.event_type, raw.button, raw.scroll) else {
-            return;
-        };
+    fn capture_raw(&self, raw: RawInput) -> Option<(NormalizedInput, bool)> {
+        let event = normalize_event(raw.event_type, raw.button, raw.scroll)?;
         self.received.fetch_add(1, Ordering::Relaxed);
         let input = NormalizedInput {
             event,
             point: Point::new(raw.x.round() as i32, raw.y.round() as i32),
             timestamp_ns: raw.timestamp_ns,
         };
-        if self.queue.push(input) {
+        let enqueued = self.queue.push(input);
+        if enqueued {
             self.enqueued.fetch_add(1, Ordering::Relaxed);
         } else {
             self.dropped.fetch_add(1, Ordering::Relaxed);
         }
+        Some((input, enqueued))
+    }
+
+    fn decide(&self, input: NormalizedInput, observation_reserved: bool) -> Disposition {
+        if !self.active_input.load(Ordering::Acquire) {
+            return Disposition::Pass;
+        }
+        // SAFETY: Core Graphics invokes this callback on the run-loop owner
+        // thread. The run-loop never accesses the owner until callback return.
+        let owner = unsafe { &mut *self.owner.get() };
+        owner.as_mut().map_or(Disposition::Pass, |owner| {
+            owner.callback_with_start_reservation(
+                input.event,
+                input.point,
+                (input.timestamp_ns / 1_000_000) as u32,
+                observation_reserved,
+            )
+        })
+    }
+
+    fn enable_active_input(&self) {
+        // SAFETY: setup and callback use the same owner thread, and callback
+        // entry is gated until after this check.
+        debug_assert!(unsafe { (&*self.owner.get()).is_some() });
+        self.active_input.store(true, Ordering::Release);
+    }
+
+    fn disable_active_input(&self) {
+        self.active_input.store(false, Ordering::Release);
+    }
+
+    fn with_owner_mut<T>(&self, use_owner: impl FnOnce(&mut NativeInputOwner) -> T) -> Option<T> {
+        // SAFETY: called only from the Event Tap owner thread outside callback.
+        unsafe { (&mut *self.owner.get()).as_mut().map(use_owner) }
+    }
+
+    fn detach_owner(&self) -> Option<NativeInputOwner> {
+        debug_assert!(!self.active_input.load(Ordering::Acquire));
+        // SAFETY: teardown has disabled and invalidated the tap, so no callback
+        // can race the owner-thread take.
+        unsafe { (&mut *self.owner.get()).take() }
     }
 
     fn note_disabled(&self) {
@@ -225,7 +277,7 @@ fn scroll_steps(delta: i64) -> u16 {
 
 const fn event_tap_spec() -> EventTapSpec {
     EventTapSpec {
-        options: LISTEN_ONLY_EVENT_TAP,
+        options: ACTIVE_EVENT_TAP,
         mask: event_mask(EVENT_LEFT_MOUSE_DOWN)
             | event_mask(EVENT_LEFT_MOUSE_UP)
             | event_mask(EVENT_RIGHT_MOUSE_DOWN)
@@ -259,6 +311,9 @@ mod tests {
     #[cfg(target_os = "macos")]
     use super::callback::event_tap_callback;
     use super::consumer::{drain_input, InputStepFunctions, MacosInputConsumer, OwnerClock};
+    use super::context::ContextWorker;
+    #[cfg(target_os = "macos")]
+    use super::run_loop::post_access_ready;
     use super::run_loop::{
         classify_run_loop_result, dispatch_startup_failure, executor_marker, prepare_marked_state,
         publish_ready, run_non_timeout_owner_step, RunLoopDisposition, StartupFailure,
@@ -270,7 +325,7 @@ mod tests {
     };
     use crate::domain::input::tests::count_allocations;
     use crate::domain::{BindingSetId, TriggerButton as DomainTriggerButton};
-    use crate::executor::macos::{ExecutionOutcome, MacosActionExecutor};
+    use crate::executor::macos::{ExecutionOutcome, ExecutorWork, MacosActionExecutor};
     use crossbeam_channel::Sender;
     #[cfg(target_os = "macos")]
     use objc2_core_foundation::CGPoint;
@@ -295,7 +350,11 @@ mod tests {
         calls: Rc<RefCell<Vec<InputStepCall>>>,
     }
 
-    fn fake_context_route(consumer: &mut FakeInputConsumer, _: MouseEvent) -> ContextRoute {
+    fn fake_context_route(
+        consumer: &mut FakeInputConsumer,
+        _: &TapState,
+        _: MouseEvent,
+    ) -> ContextRoute {
         consumer.calls.borrow_mut().push(InputStepCall::Route);
         consumer.route
     }
@@ -328,6 +387,8 @@ mod tests {
 
     fn fake_consume(
         consumer: &mut FakeInputConsumer,
+        _: &TapState,
+        _: &mut FakeContextWorker,
         _: NormalizedInput,
         context: Option<ContextView>,
         _: u32,
@@ -373,13 +434,18 @@ mod tests {
     #[cfg(target_os = "macos")]
     impl OwnedTestEvent {
         fn mouse_move(marker: i64, x: f64, y: f64) -> Self {
-            let event = CGEvent::new_mouse_event(
-                None,
-                CGEventType::MouseMoved,
-                CGPoint { x, y },
-                CGMouseButton(0),
-            )
-            .unwrap();
+            Self::mouse(CGEventType::MouseMoved, CGMouseButton(0), marker, x, y)
+        }
+
+        fn mouse(
+            event_type: CGEventType,
+            button: CGMouseButton,
+            marker: i64,
+            x: f64,
+            y: f64,
+        ) -> Self {
+            let event =
+                CGEvent::new_mouse_event(None, event_type, CGPoint { x, y }, button).unwrap();
             CGEvent::set_integer_value_field(
                 Some(&event),
                 CGEventField::EventSourceUserData,
@@ -421,19 +487,73 @@ mod tests {
         }
     }
 
-    fn drive_right_release(consumer: &mut MacosInputConsumer, first_context: Option<ContextView>) {
+    fn callback_and_drain(
+        state: &TapState,
+        context: &mut ContextWorker,
+        consumer: &mut MacosInputConsumer,
+        clock: &mut OwnerClock,
+        input: NormalizedInput,
+    ) -> crate::domain::Disposition {
+        let disposition = state.decide(input, state.queue.push(input));
+        drain_input(
+            state,
+            context,
+            consumer,
+            clock,
+            &InputStepFunctions {
+                route: MacosInputConsumer::context_route,
+                set_needed: ContextWorker::set_needed,
+                observe: ContextWorker::observe,
+                latest: ContextWorker::latest,
+                consume: MacosInputConsumer::consume,
+            },
+        );
+        disposition
+    }
+
+    fn drive_right_release(
+        state: &TapState,
+        context: &mut ContextWorker,
+        consumer: &mut MacosInputConsumer,
+        clock: &mut OwnerClock,
+    ) {
         let start = Point::new(0, 0);
         let end = Point::new(100, 0);
-        consumer.consume(
-            input(MouseEvent::ButtonDown(DomainTriggerButton::Right), start, 1),
-            first_context,
-            1,
+        assert_eq!(
+            callback_and_drain(
+                state,
+                context,
+                consumer,
+                clock,
+                input(MouseEvent::ButtonDown(DomainTriggerButton::Right), start, 1),
+            ),
+            crate::domain::Disposition::Suppress
         );
-        consumer.consume(input(MouseEvent::MouseMove, end, 2), None, 2);
-        consumer.consume(
-            input(MouseEvent::ButtonUp(DomainTriggerButton::Right), end, 3),
-            None,
-            3,
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while consumer.has_pending_activation() && Instant::now() < deadline {
+            consumer.safety_timer(state, context, 1);
+            thread::yield_now();
+        }
+        assert!(!consumer.has_pending_activation());
+        assert_eq!(
+            callback_and_drain(
+                state,
+                context,
+                consumer,
+                clock,
+                input(MouseEvent::MouseMove, end, 2),
+            ),
+            crate::domain::Disposition::Pass
+        );
+        assert_eq!(
+            callback_and_drain(
+                state,
+                context,
+                consumer,
+                clock,
+                input(MouseEvent::ButtonUp(DomainTriggerButton::Right), end, 3),
+            ),
+            crate::domain::Disposition::Suppress
         );
     }
 
@@ -534,6 +654,81 @@ mod tests {
     }
 
     #[test]
+    fn active_callback_decides_suppression_without_allocating() {
+        let (_directory, _config_owner, reader, generation) = consumer_reader();
+        let point = Point::new(1, 2);
+        let mut owner = super::super::owner::NativeInputOwner::new(reader);
+        owner.set_context(Some(ContextView {
+            generation,
+            binding_set: BindingSetId::from_index(0).unwrap(),
+            target: crate::domain::input::TargetToken(9),
+            point,
+            updated_tick: 3,
+        }));
+        let state = TapState::with_owner(41, Some(owner));
+        state.enable_active_input();
+
+        let (disposition, allocations) = count_allocations(|| {
+            capture_callback_event(&state, 42, || RawInput {
+                event_type: EVENT_RIGHT_MOUSE_DOWN,
+                button: 0,
+                scroll: 0,
+                x: 1.0,
+                y: 2.0,
+                timestamp_ns: 3_000_000,
+            })
+        });
+
+        assert_eq!(disposition, crate::domain::Disposition::Suppress);
+        assert_eq!(allocations, 0);
+        assert!(matches!(
+            state.with_owner_mut(|owner| owner.pop_action()).flatten(),
+            Some(super::super::owner::ActionWork::Activate { .. })
+        ));
+    }
+
+    #[test]
+    fn callback_queue_overload_cannot_start_new_suppression() {
+        let (_directory, _config_owner, reader, generation) = consumer_reader();
+        let point = Point::new(1, 2);
+        let mut owner = super::super::owner::NativeInputOwner::new(reader);
+        owner.set_context(Some(ContextView {
+            generation,
+            binding_set: BindingSetId::from_index(0).unwrap(),
+            target: crate::domain::input::TargetToken(9),
+            point,
+            updated_tick: 3,
+        }));
+        let state = TapState::with_owner(41, Some(owner));
+        state.enable_active_input();
+        for timestamp_ns in 0..EVENT_QUEUE_CAPACITY as u64 {
+            state.capture_raw(RawInput {
+                event_type: EVENT_MOUSE_MOVED,
+                button: 0,
+                scroll: 0,
+                x: 0.0,
+                y: 0.0,
+                timestamp_ns,
+            });
+        }
+
+        let disposition = capture_callback_event(&state, 42, || RawInput {
+            event_type: EVENT_RIGHT_MOUSE_DOWN,
+            button: 0,
+            scroll: 0,
+            x: 1.0,
+            y: 2.0,
+            timestamp_ns: 3_000_000,
+        });
+
+        assert_eq!(disposition, crate::domain::Disposition::Pass);
+        assert!(state
+            .with_owner_mut(|owner| owner.pop_action())
+            .flatten()
+            .is_none());
+    }
+
+    #[test]
     fn production_input_step_orders_and_gates_context_before_consumer() {
         let cases = [
             (
@@ -589,6 +784,74 @@ mod tests {
 
             assert_eq!(*calls.borrow(), expected);
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn unavailable_post_access_publishes_ready_and_keeps_original_event_pass_through() {
+        let (_directory, _config_owner, reader, generation) = consumer_reader();
+        let physical =
+            OwnedTestEvent::mouse(CGEventType::RightMouseDown, CGMouseButton(1), 42, 1.0, 2.0);
+        let pointer = std::ptr::NonNull::from(&*physical.0);
+        let tick = (CGEvent::timestamp(Some(&physical.0)) / 1_000_000) as u32;
+        let mut owner = super::super::owner::NativeInputOwner::new(reader);
+        owner.set_context(Some(ContextView {
+            generation,
+            binding_set: BindingSetId::from_index(0).unwrap(),
+            target: crate::domain::input::TargetToken(9),
+            point: Point::new(1, 2),
+            updated_tick: tick,
+        }));
+        let state = TapState::with_owner(41, Some(owner));
+        let (events, receiver) = crossbeam_channel::bounded(1);
+
+        assert!(!post_access_ready(&state, &events, || false).unwrap());
+        assert!(matches!(receiver.recv().unwrap(), HookEvent::Ready(1)));
+        let returned = unsafe {
+            event_tap_callback(
+                std::ptr::null_mut(),
+                CGEventType::RightMouseDown,
+                pointer,
+                std::ptr::from_ref(&state).cast_mut().cast(),
+            )
+        };
+
+        assert_eq!(returned, pointer.as_ptr());
+        assert!(state
+            .with_owner_mut(|owner| owner.pop_action())
+            .flatten()
+            .is_none());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn p04b2_mouse_mask_and_non_suppressing_pointer_contract_are_preserved() {
+        let expected_mask = event_mask(EVENT_LEFT_MOUSE_DOWN)
+            | event_mask(EVENT_LEFT_MOUSE_UP)
+            | event_mask(EVENT_RIGHT_MOUSE_DOWN)
+            | event_mask(EVENT_RIGHT_MOUSE_UP)
+            | event_mask(EVENT_MOUSE_MOVED)
+            | event_mask(EVENT_LEFT_MOUSE_DRAGGED)
+            | event_mask(EVENT_RIGHT_MOUSE_DRAGGED)
+            | event_mask(EVENT_SCROLL_WHEEL)
+            | event_mask(EVENT_OTHER_MOUSE_DOWN)
+            | event_mask(EVENT_OTHER_MOUSE_UP)
+            | event_mask(EVENT_OTHER_MOUSE_DRAGGED);
+        assert_eq!(event_tap_spec().mask, expected_mask);
+
+        let state = TapState::with_marker(41);
+        let event = OwnedTestEvent::mouse_move(41, 1.0, 2.0);
+        let pointer = std::ptr::NonNull::from(&*event.0);
+        let returned = unsafe {
+            event_tap_callback(
+                std::ptr::null_mut(),
+                CGEventType::MouseMoved,
+                pointer,
+                std::ptr::from_ref(&state).cast_mut().cast(),
+            )
+        };
+
+        assert_eq!(returned, pointer.as_ptr());
     }
 
     #[cfg(target_os = "macos")]
@@ -690,12 +953,80 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn actual_callback_returns_null_only_for_explicit_suppression() {
+        let (_directory, _config_owner, reader, generation) = consumer_reader();
+        let physical =
+            OwnedTestEvent::mouse(CGEventType::RightMouseDown, CGMouseButton(1), 42, 1.0, 2.0);
+        let physical_pointer = std::ptr::NonNull::from(&*physical.0);
+        let tick = (CGEvent::timestamp(Some(&physical.0)) / 1_000_000) as u32;
+        let mut owner = super::super::owner::NativeInputOwner::new(reader);
+        owner.set_context(Some(ContextView {
+            generation,
+            binding_set: BindingSetId::from_index(0).unwrap(),
+            target: crate::domain::input::TargetToken(9),
+            point: Point::new(1, 2),
+            updated_tick: tick,
+        }));
+        let state = TapState::with_owner(41, Some(owner));
+        state.enable_active_input();
+
+        let returned = unsafe {
+            event_tap_callback(
+                std::ptr::null_mut(),
+                CGEventType::RightMouseDown,
+                physical_pointer,
+                std::ptr::from_ref(&state).cast_mut().cast(),
+            )
+        };
+        assert!(returned.is_null());
+
+        let self_event =
+            OwnedTestEvent::mouse(CGEventType::RightMouseDown, CGMouseButton(1), 41, 1.0, 2.0);
+        let self_pointer = std::ptr::NonNull::from(&*self_event.0);
+        let returned = unsafe {
+            event_tap_callback(
+                std::ptr::null_mut(),
+                CGEventType::RightMouseDown,
+                self_pointer,
+                std::ptr::from_ref(&state).cast_mut().cast(),
+            )
+        };
+        assert_eq!(returned, self_pointer.as_ptr());
+
+        let unknown = CGEvent::new_keyboard_event(None, 0, true).unwrap();
+        let unknown_pointer = std::ptr::NonNull::from(&*unknown);
+        let returned = unsafe {
+            event_tap_callback(
+                std::ptr::null_mut(),
+                CGEventType::KeyDown,
+                unknown_pointer,
+                std::ptr::from_ref(&state).cast_mut().cast(),
+            )
+        };
+        assert_eq!(returned, unknown_pointer.as_ptr());
+
+        let returned = unsafe {
+            event_tap_callback(
+                std::ptr::null_mut(),
+                CGEventType::TapDisabledByTimeout,
+                physical_pointer,
+                std::ptr::from_ref(&state).cast_mut().cast(),
+            )
+        };
+        assert_eq!(returned, physical_pointer.as_ptr());
+    }
+
     #[test]
     fn fresh_context_selects_and_dispatches_the_macos_action() {
-        let (_directory, _owner, reader, generation) = consumer_reader();
+        let (_directory, _owner, reader, _generation) = consumer_reader();
         let dispatched = Arc::new(AtomicUsize::new(0));
         let worker_dispatched = Arc::clone(&dispatched);
-        let executor = MacosActionExecutor::spawn_with(41, move |action, marker, repeat| {
+        let executor = MacosActionExecutor::spawn_with(41, move |work, marker| {
+            let ExecutorWork::Keyboard { action, repeat } = work else {
+                panic!("expected keyboard action");
+            };
             assert_eq!(
                 action,
                 &crate::config::Action::Keyboard {
@@ -703,32 +1034,229 @@ mod tests {
                 }
             );
             assert_eq!(marker, 41);
-            assert_eq!(repeat, 1);
+            assert_eq!(*repeat, 1);
             worker_dispatched.fetch_add(1, Ordering::Relaxed);
             ExecutionOutcome::Posted
         })
         .unwrap();
-        let mut consumer = MacosInputConsumer::new(reader, executor);
+        let target = crate::domain::input::TargetToken(9);
+        let mut context_worker = ContextWorker::spawn_test(reader.clone(), Some(target));
+        let state =
+            TapState::with_owner(41, Some(super::super::owner::NativeInputOwner::new(reader)));
+        state.enable_active_input();
+        let mut consumer = MacosInputConsumer::new(executor);
+        let mut clock = OwnerClock::new();
         let point = Point::new(0, 0);
-
-        drive_right_release(
-            &mut consumer,
-            Some(ContextView {
-                generation,
-                binding_set: BindingSetId::from_index(0).unwrap(),
-                target: crate::domain::input::TargetToken(9),
-                point,
-                updated_tick: 1,
-            }),
-        );
+        context_worker.observe(MouseEvent::MouseMove, point, 1_000_000);
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while context_worker.latest(point, 1).is_none() && Instant::now() < deadline {
+            thread::yield_now();
+        }
+        consumer.refresh_context(&state, &mut context_worker, 1);
+        drive_right_release(&state, &mut context_worker, &mut consumer, &mut clock);
 
         let deadline = Instant::now() + Duration::from_secs(1);
         while dispatched.load(Ordering::Relaxed) == 0 && Instant::now() < deadline {
-            consumer.safety_timer(3);
+            consumer.safety_timer(&state, &mut context_worker, 3);
             thread::yield_now();
         }
         assert_eq!(dispatched.load(Ordering::Relaxed), 1);
-        consumer.shutdown();
+        consumer.prepare_shutdown(&state, &mut context_worker, 3);
+        state.detach_owner();
+        consumer.finish_shutdown();
+        context_worker.shutdown();
+    }
+
+    #[test]
+    fn changed_focus_fails_activation_and_replays_the_captured_trigger() {
+        let (_directory, _owner, reader, generation) = consumer_reader();
+        let replays = Arc::new(AtomicUsize::new(0));
+        let worker_replays = Arc::clone(&replays);
+        let executor = MacosActionExecutor::spawn_with(41, move |work, marker| {
+            let ExecutorWork::Replay {
+                trigger,
+                down_at,
+                up_at,
+            } = work
+            else {
+                panic!("activation failure must not dispatch the action");
+            };
+            assert_eq!(
+                (*trigger, *down_at, *up_at, marker),
+                (
+                    DomainTriggerButton::Right,
+                    Point::new(0, 0),
+                    Point::new(10, 20),
+                    41,
+                )
+            );
+            worker_replays.fetch_add(1, Ordering::Relaxed);
+            ExecutionOutcome::Posted
+        })
+        .unwrap();
+        let mut context_worker =
+            ContextWorker::spawn_test(reader.clone(), Some(crate::domain::input::TargetToken(10)));
+        let mut owner = super::super::owner::NativeInputOwner::new(reader);
+        owner.set_context(Some(ContextView {
+            generation,
+            binding_set: BindingSetId::from_index(0).unwrap(),
+            target: crate::domain::input::TargetToken(9),
+            point: Point::new(0, 0),
+            updated_tick: 1,
+        }));
+        let state = TapState::with_owner(41, Some(owner));
+        state.enable_active_input();
+        let mut consumer = MacosInputConsumer::new(executor);
+        let mut clock = OwnerClock::new();
+
+        assert_eq!(
+            callback_and_drain(
+                &state,
+                &mut context_worker,
+                &mut consumer,
+                &mut clock,
+                input(
+                    MouseEvent::ButtonDown(DomainTriggerButton::Right),
+                    Point::new(0, 0),
+                    1,
+                ),
+            ),
+            crate::domain::Disposition::Suppress
+        );
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while consumer.has_pending_activation() && Instant::now() < deadline {
+            consumer.safety_timer(&state, &mut context_worker, 1);
+            thread::yield_now();
+        }
+        assert!(!consumer.has_pending_activation());
+        assert_eq!(
+            callback_and_drain(
+                &state,
+                &mut context_worker,
+                &mut consumer,
+                &mut clock,
+                input(
+                    MouseEvent::ButtonUp(DomainTriggerButton::Right),
+                    Point::new(10, 20),
+                    2,
+                ),
+            ),
+            crate::domain::Disposition::Suppress
+        );
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while replays.load(Ordering::Relaxed) == 0 && Instant::now() < deadline {
+            consumer.safety_timer(&state, &mut context_worker, 2);
+            thread::yield_now();
+        }
+        assert_eq!(replays.load(Ordering::Relaxed), 1);
+
+        consumer.prepare_shutdown(&state, &mut context_worker, 2);
+        state.detach_owner();
+        consumer.finish_shutdown();
+        context_worker.shutdown();
+    }
+
+    #[test]
+    fn shutdown_does_not_replay_after_an_accepted_action_completed_unpolled() {
+        let (_directory, _owner, reader, _generation) = consumer_reader();
+        let actions = Arc::new(AtomicUsize::new(0));
+        let replays = Arc::new(AtomicUsize::new(0));
+        let worker_actions = Arc::clone(&actions);
+        let worker_replays = Arc::clone(&replays);
+        let executor = MacosActionExecutor::spawn_with(41, move |work, _| {
+            match work {
+                ExecutorWork::Keyboard { .. } => {
+                    worker_actions.fetch_add(1, Ordering::Relaxed);
+                }
+                ExecutorWork::Replay { .. } => {
+                    worker_replays.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+            ExecutionOutcome::Posted
+        })
+        .unwrap();
+        let target = crate::domain::input::TargetToken(9);
+        let mut context_worker = ContextWorker::spawn_test(reader.clone(), Some(target));
+        let state =
+            TapState::with_owner(41, Some(super::super::owner::NativeInputOwner::new(reader)));
+        state.enable_active_input();
+        let mut consumer = MacosInputConsumer::new(executor);
+        let mut clock = OwnerClock::new();
+        let point = Point::new(0, 0);
+        context_worker.observe(MouseEvent::MouseMove, point, 1_000_000);
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while context_worker.latest(point, 1).is_none() && Instant::now() < deadline {
+            thread::yield_now();
+        }
+        consumer.refresh_context(&state, &mut context_worker, 1);
+        drive_right_release(&state, &mut context_worker, &mut consumer, &mut clock);
+
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !consumer.has_unpolled_executor_result() && Instant::now() < deadline {
+            thread::yield_now();
+        }
+        assert!(consumer.has_unpolled_executor_result());
+        consumer.prepare_shutdown(&state, &mut context_worker, 3);
+        state.detach_owner();
+        consumer.finish_shutdown();
+
+        assert_eq!(actions.load(Ordering::Relaxed), 1);
+        assert_eq!(replays.load(Ordering::Relaxed), 0);
+        context_worker.shutdown();
+    }
+
+    #[test]
+    fn shutdown_disables_callback_and_drains_one_reserved_replay() {
+        let (_directory, _owner, reader, generation) = consumer_reader();
+        let replayed = Arc::new(AtomicUsize::new(0));
+        let worker_replayed = Arc::clone(&replayed);
+        let executor = MacosActionExecutor::spawn_with(41, move |work, _| {
+            assert!(matches!(
+                work,
+                ExecutorWork::Replay {
+                    trigger: DomainTriggerButton::Right,
+                    down_at,
+                    up_at,
+                } if *down_at == Point::new(4, 5) && *up_at == Point::new(4, 5)
+            ));
+            worker_replayed.fetch_add(1, Ordering::Relaxed);
+            ExecutionOutcome::Posted
+        })
+        .unwrap();
+        let mut context_worker =
+            ContextWorker::spawn_test(reader.clone(), Some(crate::domain::input::TargetToken(9)));
+        let mut owner = super::super::owner::NativeInputOwner::new(reader);
+        owner.set_context(Some(ContextView {
+            generation,
+            binding_set: BindingSetId::from_index(0).unwrap(),
+            target: crate::domain::input::TargetToken(9),
+            point: Point::new(4, 5),
+            updated_tick: 1,
+        }));
+        let state = TapState::with_owner(41, Some(owner));
+        state.enable_active_input();
+        assert_eq!(
+            state.decide(
+                input(
+                    MouseEvent::ButtonDown(DomainTriggerButton::Right),
+                    Point::new(4, 5),
+                    1,
+                ),
+                true,
+            ),
+            crate::domain::Disposition::Suppress
+        );
+        let mut consumer = MacosInputConsumer::new(executor);
+
+        consumer.prepare_shutdown(&state, &mut context_worker, 1);
+        assert_eq!(
+            state.decide(input(MouseEvent::MouseMove, Point::new(9, 9), 2), true,),
+            crate::domain::Disposition::Pass
+        );
+        state.detach_owner();
+        consumer.finish_shutdown();
+        assert_eq!(replayed.load(Ordering::Relaxed), 1);
+        context_worker.shutdown();
     }
 
     #[test]
@@ -737,12 +1265,17 @@ mod tests {
             let (_directory, _owner, reader, generation) = consumer_reader();
             let dispatched = Arc::new(AtomicUsize::new(0));
             let worker_dispatched = Arc::clone(&dispatched);
-            let executor = MacosActionExecutor::spawn_with(41, move |_, _, _| {
+            let executor = MacosActionExecutor::spawn_with(41, move |_, _| {
                 worker_dispatched.fetch_add(1, Ordering::Relaxed);
                 ExecutionOutcome::Posted
             })
             .unwrap();
-            let mut consumer = MacosInputConsumer::new(reader, executor);
+            let mut context_worker = ContextWorker::spawn_test(reader.clone(), None);
+            let state =
+                TapState::with_owner(41, Some(super::super::owner::NativeInputOwner::new(reader)));
+            state.enable_active_input();
+            let mut consumer = MacosInputConsumer::new(executor);
+            let mut clock = OwnerClock::new();
             let context = first_context.map(|updated_tick| ContextView {
                 generation,
                 binding_set: BindingSetId::from_index(0).unwrap(),
@@ -750,38 +1283,43 @@ mod tests {
                 point: Point::new(0, 0),
                 updated_tick,
             });
-
-            if first_context.is_some() {
-                consumer.consume(
-                    input(
-                        MouseEvent::ButtonDown(DomainTriggerButton::Right),
-                        Point::new(0, 0),
-                        101,
-                    ),
-                    context,
-                    101,
-                );
-                consumer.consume(
-                    input(MouseEvent::MouseMove, Point::new(100, 0), 102),
-                    None,
-                    102,
-                );
-                consumer.consume(
-                    input(
-                        MouseEvent::ButtonUp(DomainTriggerButton::Right),
-                        Point::new(100, 0),
-                        103,
-                    ),
-                    None,
+            state.with_owner_mut(|owner| owner.set_context(context));
+            callback_and_drain(
+                &state,
+                &mut context_worker,
+                &mut consumer,
+                &mut clock,
+                input(
+                    MouseEvent::ButtonDown(DomainTriggerButton::Right),
+                    Point::new(0, 0),
+                    if first_context.is_some() { 101 } else { 1 },
+                ),
+            );
+            callback_and_drain(
+                &state,
+                &mut context_worker,
+                &mut consumer,
+                &mut clock,
+                input(MouseEvent::MouseMove, Point::new(100, 0), 102),
+            );
+            callback_and_drain(
+                &state,
+                &mut context_worker,
+                &mut consumer,
+                &mut clock,
+                input(
+                    MouseEvent::ButtonUp(DomainTriggerButton::Right),
+                    Point::new(100, 0),
                     103,
-                );
-            } else {
-                drive_right_release(&mut consumer, context);
-            }
+                ),
+            );
             thread::sleep(Duration::from_millis(20));
-            consumer.safety_timer(103);
+            consumer.safety_timer(&state, &mut context_worker, 103);
             assert_eq!(dispatched.load(Ordering::Relaxed), 0);
-            consumer.shutdown();
+            consumer.prepare_shutdown(&state, &mut context_worker, 103);
+            state.detach_owner();
+            consumer.finish_shutdown();
+            context_worker.shutdown();
         }
     }
 
@@ -829,7 +1367,7 @@ mod tests {
     fn process_marker_is_copied_before_tap_install_and_executor_spawn() {
         let calls = Rc::new(RefCell::new(Vec::new()));
         let tap_calls = Rc::clone(&calls);
-        let (state, ()) = prepare_marked_state(41, move |state| {
+        let (state, ()) = prepare_marked_state(41, None, move |state| {
             tap_calls.borrow_mut().push(("tap", state.marker));
         });
         calls
@@ -931,7 +1469,7 @@ mod tests {
     }
 
     #[test]
-    fn event_tap_spec_is_exactly_listen_only_mouse_observation() {
+    fn event_tap_spec_is_suppress_capable_with_exact_mouse_mask() {
         let expected_mask = event_mask(EVENT_LEFT_MOUSE_DOWN)
             | event_mask(EVENT_LEFT_MOUSE_UP)
             | event_mask(EVENT_RIGHT_MOUSE_DOWN)
@@ -947,7 +1485,7 @@ mod tests {
         assert_eq!(
             event_tap_spec(),
             EventTapSpec {
-                options: 1,
+                options: 0,
                 mask: expected_mask,
             }
         );

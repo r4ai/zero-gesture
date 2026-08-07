@@ -134,9 +134,10 @@ Core Graphics for the entire tap lifetime.
    creation/posting to objc2. Preserve marker, ordering, bounded queue, and
    fail-open behavior. ADR 0025 records the generated ownership and atomic
    named-field integration requirement.
-5. **P04b3c-a — Active Input:** add active suppression, trigger replay, and
-   target revalidation/activation only after the migrated input/action leaves
-   retain their existing contracts.
+5. **P04b3c-a — Active Input (complete):** add active suppression, trigger
+   replay, and revalidation-only activation after the migrated input/action
+   leaves retain their existing contracts. ADR 0026 records the callback,
+   replay, shutdown, and no-foreground-activation boundaries.
 6. **P04b3c-b — Native Overlay:** add the deferred native renderer behind its
    real owner seam using AppKit/Core Animation. Define the second concrete
    renderer behavior before introducing any shared renderer seam.
@@ -217,5 +218,5 @@ leaves without changing their existing owner interfaces. Windows does not
 resolve or compile these dependencies. P04R0 added dependency compile cost and
 support checks; P04R1-R3 changed implementation and ownership only behind the
 existing private seams. ADRs 0024 and 0025 are authoritative for the completed
-atomic named-field integration. The next behavior phase is P04b3c-a Active
-Input.
+atomic named-field integration, and ADR 0026 is authoritative for the completed
+P04b3c-a Active Input phase. The next behavior phase is P04b3c-b Native Overlay.
