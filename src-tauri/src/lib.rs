@@ -84,19 +84,25 @@ impl WorkerThreads {
     fn spawn(
         reader: config::ConfigSnapshotReader,
         capture: Arc<capture::WindowCapture>,
+        #[cfg(target_os = "macos")] app_handle: tauri::AppHandle,
     ) -> Result<Self, RuntimeProjectionError> {
         #[cfg(debug_assertions)]
         if let Some(path) = std::env::var_os("ZG_P03_TEST_WORKER_START_MARKER") {
             std::fs::write(path, b"worker-started").map_err(RuntimeProjectionError::TestMarker)?;
         }
         info!("starting native input owner");
-        let (hook_thread_tid, hook_stop, hook_handle, hook_events) =
-            hook::spawn(reader, Arc::clone(&capture)).map_err(|source| {
-                RuntimeProjectionError::WorkerSpawn {
-                    worker: "hook",
-                    source,
-                }
-            })?;
+        #[cfg(target_os = "macos")]
+        let overlay = overlay::macos::MacosOverlayClient::new(app_handle);
+        let (hook_thread_tid, hook_stop, hook_handle, hook_events) = hook::spawn(
+            reader,
+            Arc::clone(&capture),
+            #[cfg(target_os = "macos")]
+            overlay,
+        )
+        .map_err(|source| RuntimeProjectionError::WorkerSpawn {
+            worker: "hook",
+            source,
+        })?;
         info!("native input owner started");
 
         Ok(Self {
@@ -161,8 +167,14 @@ impl ThreadRuntime {
     fn start(
         reader: config::ConfigSnapshotReader,
         capture: Arc<capture::WindowCapture>,
+        #[cfg(target_os = "macos")] app_handle: tauri::AppHandle,
     ) -> Result<Self, RuntimeProjectionError> {
-        let initial_state = RuntimeState::Running(WorkerThreads::spawn(reader, capture)?);
+        let initial_state = RuntimeState::Running(WorkerThreads::spawn(
+            reader,
+            capture,
+            #[cfg(target_os = "macos")]
+            app_handle,
+        )?);
         Ok(Self {
             state: Mutex::new(initial_state),
         })
@@ -471,10 +483,15 @@ fn run_engine() -> Result<(), String> {
             app.manage(engine_control);
             app.manage(ConfigDir(config_dir_path));
             let capture = Arc::new(capture::WindowCapture::new());
-            let thread_runtime = ThreadRuntime::start(snapshot_reader, Arc::clone(&capture))
-                .map_err(|error| {
-                    tauri::Error::Setup((Box::new(error) as Box<dyn std::error::Error>).into())
-                })?;
+            let thread_runtime = ThreadRuntime::start(
+                snapshot_reader,
+                Arc::clone(&capture),
+                #[cfg(target_os = "macos")]
+                app.handle().clone(),
+            )
+            .map_err(|error| {
+                tauri::Error::Setup((Box::new(error) as Box<dyn std::error::Error>).into())
+            })?;
             app.manage(thread_runtime);
             app.state::<ThreadRuntime>()
                 .monitor_owner(app.handle().clone())
@@ -541,10 +558,15 @@ fn run_engine() -> Result<(), String> {
             app.manage(engine_control);
             app.manage(ConfigDir(config_dir_path));
             let capture = Arc::new(capture::WindowCapture::new());
-            let thread_runtime = ThreadRuntime::start(snapshot_reader, Arc::clone(&capture))
-                .map_err(|error| {
-                    tauri::Error::Setup((Box::new(error) as Box<dyn std::error::Error>).into())
-                })?;
+            let thread_runtime = ThreadRuntime::start(
+                snapshot_reader,
+                Arc::clone(&capture),
+                #[cfg(target_os = "macos")]
+                app.handle().clone(),
+            )
+            .map_err(|error| {
+                tauri::Error::Setup((Box::new(error) as Box<dyn std::error::Error>).into())
+            })?;
             app.manage(thread_runtime);
             app.state::<ThreadRuntime>()
                 .monitor_owner(app.handle().clone())

@@ -1,0 +1,74 @@
+{
+  "cases": [
+    {
+      "id": "P04B3CB-QUEUE-001",
+      "obligation": "The 64-entry macOS overlay queue reserves terminal capacity from accepted start through end while allowing saturated point and label work to degrade without blocking.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/overlay/macos/mod.rs",
+      "evidence_name": "macos_overlay_queue_reserves_terminal_capacity_under_lossy_overload"
+    },
+    {
+      "id": "P04B3CB-SCHEDULE-001",
+      "obligation": "Coalesced overlay wakeups cannot strand accepted work when enqueue races the pending-wake transition.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/overlay/macos/mod.rs",
+      "evidence_name": "main_thread_wakeup_is_coalesced_without_stranding_work"
+    },
+    {
+      "id": "P04B3CB-OWNERSHIP-001",
+      "obligation": "The macOS overlay starts without native resources or a main-thread readiness acknowledgement and creates native state only after an accepted start.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/overlay/macos/mod.rs",
+      "evidence_name": "overlay_startup_is_lazy_and_requires_no_main_thread_ready_ack"
+    },
+    {
+      "id": "P04B3CB-WINDOW-001",
+      "obligation": "The native overlay window policy is transparent, click-through, nonactivating, and available on all Spaces including full-screen auxiliary presentation.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/overlay/macos/native.rs",
+      "evidence_name": "native_overlay_window_policy_is_click_through_and_nonactivating"
+    },
+    {
+      "id": "P04B3CB-TRAIL-001",
+      "obligation": "The macOS trail applies pinned color and thickness in point order while retaining at most 64 visual points.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/overlay/macos/native.rs",
+      "evidence_name": "trail_is_bounded_ordered_and_uses_pinned_appearance"
+    },
+    {
+      "id": "P04B3CB-LABEL-001",
+      "obligation": "The pinned action label preserves family and size, maps configured weight to bounded native steps, uses a bounded surface at the latest accepted trail point, and hides when no action label is present.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/overlay/macos/native.rs",
+      "evidence_name": "label_uses_pinned_text_at_latest_point_and_hides_for_none"
+    },
+    {
+      "id": "P04B3CB-DISPLAY-001",
+      "obligation": "A changed screen-frame signature is detected and clears the retained trail before later visual work.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/overlay/macos/native.rs",
+      "evidence_name": "display_change_is_detected_and_clears_retained_trail"
+    },
+    {
+      "id": "P04B3CB-LIFECYCLE-001",
+      "obligation": "Overlay end makes native visual state inactive, clears retained trail points, and releases the owned label state.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/overlay/macos/native.rs",
+      "evidence_name": "overlay_end_clears_trail_and_releases_owned_label"
+    },
+    {
+      "id": "P04B3CB-FAILURE-001",
+      "obligation": "A renderer failure preserves exactly one replay for a suppressed trigger through prepare and finish shutdown while later physical input passes through.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos/mod.rs",
+      "evidence_name": "renderer_failure_replay_survives_prepare_and_finish_shutdown"
+    },
+    {
+      "id": "P04B3CB-SHUTDOWN-001",
+      "obligation": "A Tauri main-thread exit request delegates bounded worker and overlay shutdown without synchronously waiting on its own main-thread drain.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/tray.rs",
+      "evidence_name": "main_thread_exit_never_waits_for_its_own_overlay_shutdown_drain"
+    }
+  ]
+}

@@ -31,6 +31,7 @@ ADRは実装の詳細設計ではなく、後続PRが守る外部契約、不変
 | [0024](./0024-objc2-macos-event-tap-owner.md) | Accepted | P04R2 Event Tap owner split、generated CG/CF ownership、callback ABI、P04R3 named marker field統合とrollback境界を固定する |
 | [0025](./0025-objc2-macos-action-native-leaf.md) | Accepted | P04R3 action executor split、generated CGEvent/CFRetained所有権、named self-event field、既存worker契約とKPIを固定する |
 | [0026](./0026-macos-active-input.md) | Accepted | P04b3c-aでsuppress-capable Event Tap、revalidation-only activation、tagged mouse replay、fail-open/shutdown順序を固定する |
+| [0027](./0027-macos-native-overlay.md) | Accepted | P04b3c-bでbounded queue、coalesced Tauri main-thread scheduling、AppKit/Core Animation overlay、renderer fault replayを固定する |
 
 ## Reading order
 
@@ -71,6 +72,9 @@ reader/writer移行、維持した17 obligationsと局所KPIを記録する。
 ADR 0026はP04b3c-aでcallbackのsuppress/pass境界、foregroundを変更しない
 target再検証、tagged mouse replay、queue-full fail-open、teardown時のaccepted
 FIFO/replay ordering、Windows不変、継承95件と新規9件の契約在庫を記録する。
+ADR 0027はP04b3c-bで既存render laneをmacOS専用の64件queueへ接続し、
+Tauriをcoalesced main-thread schedulerだけに使うAppKit/Core Animation所有権、
+visual overload、renderer fault replay、bounded shutdown、Windows不変を記録する。
 
 ## Status policy
 
