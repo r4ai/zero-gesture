@@ -2162,6 +2162,7 @@ dependencies = [
  "objc2",
  "objc2-core-foundation",
  "objc2-foundation",
+ "objc2-quartz-core",
 ]
 
 [[package]]
@@ -2300,6 +2301,7 @@ dependencies = [
  "bitflags 2.13.1",
  "objc2",
  "objc2-core-foundation",
+ "objc2-core-graphics",
  "objc2-foundation",
 ]
 
@@ -5102,6 +5104,7 @@ dependencies = [
  "objc2-application-services",
  "objc2-core-foundation",
  "objc2-core-graphics",
+ "objc2-foundation",
  "objc2-quartz-core",
  "regex",
  "serde",

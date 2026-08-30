@@ -131,15 +131,20 @@ pub fn setup_macos_packaging_spike<R: Runtime>(app: &mut App<R>) -> tauri::Resul
                 }
             }
             MENU_QUIT => {
-                let runtime = app.state::<crate::ThreadRuntime>();
-                if let Err(error) = quit_engine_with(|effect| match effect {
-                    EngineQuitEffect::StopWorkers => runtime.shutdown(),
-                    EngineQuitEffect::Exit => {
-                        app.exit(0);
-                        Ok(())
+                let exiting = app.clone();
+                if let Err(error) = spawn_engine_quit(move || {
+                    let runtime = exiting.state::<crate::ThreadRuntime>();
+                    if let Err(error) = quit_engine_with(|effect| match effect {
+                        EngineQuitEffect::StopWorkers => runtime.shutdown(),
+                        EngineQuitEffect::Exit => {
+                            exiting.exit(0);
+                            Ok(())
+                        }
+                    }) {
+                        warn!("failed to stop macOS Engine: {error}");
                     }
                 }) {
-                    warn!("failed to stop macOS packaging-spike Engine: {error}");
+                    warn!("failed to start macOS Engine shutdown: {error}");
                 }
             }
             _ => {}
@@ -162,6 +167,14 @@ pub fn setup_macos_packaging_spike<R: Runtime>(app: &mut App<R>) -> tauri::Resul
     }
     tray.build(app)?;
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn spawn_engine_quit(work: impl FnOnce() + Send + 'static) -> std::io::Result<()> {
+    std::thread::Builder::new()
+        .name("engine-quit".to_string())
+        .spawn(work)
+        .map(drop)
 }
 
 fn launch_settings_process() -> std::io::Result<()> {
@@ -490,6 +503,28 @@ mod tests {
             effects,
             vec![EngineQuitEffect::StopWorkers, EngineQuitEffect::Exit]
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn main_thread_exit_never_waits_for_its_own_overlay_shutdown_drain() {
+        let (started_tx, started_rx) = mpsc::sync_channel(1);
+        let (release_tx, release_rx) = mpsc::sync_channel(1);
+        let (finished_tx, finished_rx) = mpsc::sync_channel(1);
+
+        spawn_engine_quit(move || {
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            finished_tx.send(()).unwrap();
+        })
+        .unwrap();
+
+        started_rx.recv_timeout(Duration::from_millis(100)).unwrap();
+        assert!(finished_rx.try_recv().is_err());
+        release_tx.send(()).unwrap();
+        finished_rx
+            .recv_timeout(Duration::from_millis(100))
+            .unwrap();
     }
 
     #[test]

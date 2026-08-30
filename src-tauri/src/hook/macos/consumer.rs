@@ -2,12 +2,19 @@
 
 use std::time::Instant;
 
+#[cfg(target_os = "macos")]
+use super::super::owner::RenderWork;
 use super::super::owner::{ActionWork, ContextRoute, ContextView};
 use super::context::ContextWorker;
 use super::{NormalizedInput, TapState};
 use crate::domain::input::{SessionId, TargetToken};
 use crate::domain::{MouseEvent, Point};
 use crate::executor::macos::{ExecutionOutcome, ExecutorWorkKind, MacosActionExecutor};
+#[cfg(target_os = "macos")]
+use crate::overlay::macos::{Delivery, MacosOverlayClient};
+
+#[cfg(target_os = "macos")]
+const RENDERER_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(100);
 
 pub(super) struct OwnerClock {
     tick: u32,
@@ -40,6 +47,12 @@ pub(super) struct MacosInputConsumer {
     pending_activation: Option<PendingActivation>,
     pending_executor: Option<(SessionId, ExecutorWorkKind)>,
     executor_alive: bool,
+    #[cfg(target_os = "macos")]
+    overlay: Option<MacosOverlayClient>,
+    #[cfg(target_os = "macos")]
+    render_generation: Option<crate::domain::input::ConfigGeneration>,
+    #[cfg(target_os = "macos")]
+    renderer_failed: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -51,12 +64,32 @@ struct PendingActivation {
 }
 
 impl MacosInputConsumer {
-    pub(super) fn new(executor: MacosActionExecutor) -> Self {
+    #[cfg(target_os = "macos")]
+    pub(super) fn new(executor: MacosActionExecutor, overlay: MacosOverlayClient) -> Self {
         Self {
             executor: Some(executor),
             pending_activation: None,
             pending_executor: None,
             executor_alive: true,
+            overlay: Some(overlay),
+            render_generation: None,
+            renderer_failed: false,
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn new_test(executor: MacosActionExecutor) -> Self {
+        Self {
+            executor: Some(executor),
+            pending_activation: None,
+            pending_executor: None,
+            executor_alive: true,
+            #[cfg(target_os = "macos")]
+            overlay: None,
+            #[cfg(target_os = "macos")]
+            render_generation: None,
+            #[cfg(target_os = "macos")]
+            renderer_failed: false,
         }
     }
 
@@ -125,6 +158,7 @@ impl MacosInputConsumer {
         input_point: Option<Point>,
     ) {
         self.poll_executor(state);
+        self.drain_renderer(state);
         while let Some(work) = state.with_owner_mut(|owner| owner.pop_action()).flatten() {
             match work {
                 ActionWork::Activate { session, target } => {
@@ -157,12 +191,89 @@ impl MacosInputConsumer {
                 } => self.replay(state, session, trigger, down_at, up_at),
             }
         }
+        self.poll_activation(state, context, tick);
+    }
+
+    #[cfg(target_os = "macos")]
+    fn drain_renderer(&mut self, state: &TapState) {
+        if self.renderer_failed {
+            return;
+        }
+        if self
+            .overlay
+            .as_ref()
+            .is_some_and(MacosOverlayClient::has_failed)
+        {
+            self.fail_renderer(state);
+            return;
+        }
+        while let Some(work) = state.with_owner_mut(|owner| owner.pop_render()).flatten() {
+            let Some(overlay) = self.overlay.as_mut() else {
+                continue;
+            };
+            let delivery = match work {
+                RenderWork::Start { generation, .. } => {
+                    let Some(runtime) = state
+                        .with_owner_mut(|owner| owner.runtime(generation))
+                        .flatten()
+                    else {
+                        self.fail_renderer(state);
+                        return;
+                    };
+                    let delivery = overlay.start(&runtime);
+                    if delivery == Delivery::Accepted {
+                        self.render_generation = Some(generation);
+                    }
+                    delivery
+                }
+                RenderWork::Point { point, .. } => overlay.point(point),
+                RenderWork::Label { action, .. } => {
+                    let label = action.and_then(|action| {
+                        self.render_generation.and_then(|generation| {
+                            state
+                                .with_owner_mut(|owner| owner.runtime(generation))
+                                .flatten()
+                                .map(|runtime| runtime.action_label(action).to_string())
+                        })
+                    });
+                    overlay.label(label)
+                }
+                RenderWork::End { .. } => {
+                    self.render_generation = None;
+                    overlay.end()
+                }
+            };
+            match delivery {
+                Delivery::Accepted => {}
+                Delivery::Full
+                    if matches!(work, RenderWork::Point { .. } | RenderWork::Label { .. }) => {}
+                Delivery::Full | Delivery::Fault => {
+                    self.fail_renderer(state);
+                    return;
+                }
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn drain_renderer(&mut self, state: &TapState) {
         while state
             .with_owner_mut(|owner| owner.pop_render())
             .flatten()
             .is_some()
         {}
-        self.poll_activation(state, context, tick);
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn fail_renderer(&mut self, state: &TapState) {
+        self.renderer_failed = true;
+        state.disable_active_input();
+        state.with_owner_mut(|owner| owner.renderer_terminated());
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn renderer_failed(&self) -> bool {
+        self.renderer_failed
     }
 
     fn dispatch(
@@ -281,12 +392,31 @@ impl MacosInputConsumer {
         tick: u32,
     ) {
         state.disable_active_input();
-        if self.pending_executor.is_some() {
+        #[cfg(target_os = "macos")]
+        let renderer_failed = self.renderer_failed;
+        #[cfg(not(target_os = "macos"))]
+        let renderer_failed = false;
+        if renderer_failed {
+            // `renderer_terminated` already queued Replay and shut down the kernel;
+            // do not call `shutdown_with_replay` and clear that lane.
+            if self.pending_executor.is_some() {
+                self.poll_executor(state);
+            } else {
+                self.drain_owner_work(state, context, tick, None);
+            }
             state.with_owner_mut(|owner| owner.shutdown());
-            return;
+        } else if self.pending_executor.is_some() {
+            state.with_owner_mut(|owner| owner.shutdown());
+        } else {
+            state.with_owner_mut(|owner| owner.shutdown_with_replay());
+            self.drain_owner_work(state, context, tick, None);
         }
-        state.with_owner_mut(|owner| owner.shutdown_with_replay());
-        self.drain_owner_work(state, context, tick, None);
+        #[cfg(target_os = "macos")]
+        if let Some(overlay) = &mut self.overlay {
+            if !overlay.shutdown(RENDERER_SHUTDOWN_TIMEOUT) {
+                self.renderer_failed = true;
+            }
+        }
     }
 
     pub(super) fn finish_shutdown(mut self) {

@@ -65,11 +65,12 @@ windows-sys = { version = "0.61", features = [
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"
 objc2 = { version = "0.6.4", default-features = false }
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSRunningApplication", "NSWorkspace", "libc"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSColor", "NSFont", "NSFontDescriptor", "NSFontManager", "NSGraphics", "NSResponder", "NSRunningApplication", "NSScreen", "NSView", "NSWindow", "NSWorkspace", "libc", "objc2-core-foundation", "objc2-quartz-core"] }
 objc2-application-services = { version = "0.3.2", default-features = false, features = ["AXError", "AXUIElement", "HIServices", "libc"] }
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["CFBase", "CFDate", "CFDictionary", "CFMachPort", "CFRunLoop", "CFString"] }
-objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["CGEvent", "CGEventTypes", "CGRemoteOperation"] }
-objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["CALayer"] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["CGColor", "CGEvent", "CGEventTypes", "CGPath", "CGRemoteOperation"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSArray", "NSGeometry", "NSObject", "NSString", "objc2-core-foundation"] }
+objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["CALayer", "CAShapeLayer", "CATextLayer", "CATransaction", "objc2-core-foundation", "objc2-core-graphics"] }
 
 [dev-dependencies]
 tempfile = "3"

@@ -1,8 +1,8 @@
 # Zero Gesture Architecture Design Document
 
 > [!NOTE]
-> この文書はP05bのWindows Settings control、P04b3c-aまでのmacOS active input・context/action境界、
-> P04R3のobjc2 context/action native leafを説明する。
+> この文書はP05bのWindows Settings control、P04b3c-bまでのmacOS active input・context/action/render境界、
+> P04R3とNative Overlayのobjc2 native leafを説明する。
 > マルチプラットフォーム目標設計と後続移行ゲートは
 > [ADR index](./adr/README.md) を正とする。
 
@@ -239,7 +239,10 @@ accepted FIFOだけをdrainする。未受理ならownerに残る通常action/re
 捨て、既存kernelのfailure/shutdown phaseが選ぶ予約済みreplayを一件生成する。
 その後tap disable/invalidate、owner detach、executor sender closeによるaccepted
 FIFO drain、context shutdownの順でteardownする。executor joinは既存の100 ms
-boundを維持する。native overlayはP04b3c-b Native Overlayへdeferする。
+boundを維持する。P04b3c-bでは既存render laneを64件macOS overlay queueへ接続し、
+point/label overloadだけをdrop可能にする。Tauriはcoalesced main-thread scheduler
+だけに使い、AppKit/Core Animation objectはprivate thread-local leafが所有する。
+renderer faultはactive inputをpass-throughへ戻し、既存Replay/Cancelとfatal teardownへ進む。
 
 P04R0 Foundationはruntime behaviorを変えず、Core Graphics、
 ApplicationServices、AppKit、QuartzCoreのobjc2 framework crateをmacOS

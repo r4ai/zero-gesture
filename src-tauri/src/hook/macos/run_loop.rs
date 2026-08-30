@@ -33,6 +33,8 @@ use crate::config::ConfigSnapshotReader;
 #[cfg(target_os = "macos")]
 use crate::executor::macos::{post_access_allowed, MacosActionExecutor};
 use crate::hook::owner::NativeInputOwner;
+#[cfg(target_os = "macos")]
+use crate::overlay::macos::MacosOverlayClient;
 
 #[cfg(target_os = "macos")]
 const RUN_LOOP_SLICE_SECONDS: f64 = 0.01;
@@ -80,6 +82,7 @@ pub(in crate::hook) fn run_loop_macos(
     reader: ConfigSnapshotReader,
     stop: Arc<AtomicBool>,
     events: Sender<HookEvent>,
+    overlay: MacosOverlayClient,
 ) -> Result<(), HookFailure> {
     // SAFETY: arc4random_buf accepts this initialized stack buffer and exact
     // byte length; no pointer escapes the call.
@@ -91,7 +94,9 @@ pub(in crate::hook) fn run_loop_macos(
         unsafe { start_event_tap(state) }
     });
     match mode {
-        StartupMode::Active(resources) => run_active(reader, stop, events, state, resources),
+        StartupMode::Active(resources) => {
+            run_active(reader, stop, events, state, resources, overlay)
+        }
         StartupMode::PermissionDenied => {
             dispatch_startup_failure(StartupFailure::PermissionDenied, stop, events)
         }
@@ -158,6 +163,7 @@ fn run_active(
     events: Sender<HookEvent>,
     state: Box<TapState>,
     resources: TapResources,
+    overlay: MacosOverlayClient,
 ) -> Result<(), HookFailure> {
     let post_access = match post_access_ready(&state, &events, post_access_allowed) {
         Ok(available) => available,
@@ -189,7 +195,7 @@ fn run_active(
             return Err(HookFailure::new("macOS action", "failed to start"));
         }
     };
-    let mut consumer = MacosInputConsumer::new(executor);
+    let mut consumer = MacosInputConsumer::new(executor, overlay);
     let mut clock = OwnerClock::new();
     if let Err(failure) = publish_ready(&events) {
         consumer.prepare_shutdown(&state, &mut context, clock.current());
@@ -211,10 +217,17 @@ fn run_active(
                 &MACOS_INPUT_STEP_FUNCTIONS,
             );
             consumer.prepare_shutdown(&state, &mut context, clock.current());
+            let renderer_failed = consumer.renderer_failed();
             drop(resources);
             state.detach_owner();
             consumer.finish_shutdown();
             context.shutdown();
+            if renderer_failed {
+                return Err(HookFailure::new(
+                    "macOS overlay",
+                    "failed during owner degrade",
+                ));
+            }
             wait_for_stop(&stop);
             return Ok(());
         }
@@ -226,6 +239,14 @@ fn run_active(
             &MACOS_INPUT_STEP_FUNCTIONS,
         );
         consumer.safety_timer(&state, &mut context, clock.current());
+        if consumer.renderer_failed() {
+            consumer.prepare_shutdown(&state, &mut context, clock.current());
+            drop(resources);
+            state.detach_owner();
+            consumer.finish_shutdown();
+            context.shutdown();
+            return Err(HookFailure::new("macOS overlay", "terminated unexpectedly"));
+        }
         reenable_if_requested(&state, &resources.tap);
     }
     drain_input(
@@ -236,11 +257,16 @@ fn run_active(
         &MACOS_INPUT_STEP_FUNCTIONS,
     );
     consumer.prepare_shutdown(&state, &mut context, clock.current());
+    let renderer_failed = consumer.renderer_failed();
     drop(resources);
     state.detach_owner();
     consumer.finish_shutdown();
     context.shutdown();
-    Ok(())
+    if renderer_failed {
+        Err(HookFailure::new("macOS overlay", "failed to shut down"))
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(target_os = "macos")]
