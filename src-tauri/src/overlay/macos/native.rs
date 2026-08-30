@@ -312,7 +312,7 @@ impl LabelWindow {
         }
         let font = resolve_font(&spec, mtm);
         let font_name = font.fontName();
-        let cf_font_name: &CFString = (&*font_name).as_ref();
+        let cf_font_name: &CFString = (*font_name).as_ref();
         let cf_font_name: &CFType = cf_font_name.as_ref();
         unsafe {
             layer.setFont(Some(cf_font_name));
