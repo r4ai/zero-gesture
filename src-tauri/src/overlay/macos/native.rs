@@ -241,7 +241,7 @@ fn screen_frames(mtm: MainThreadMarker) -> Vec<ScreenFrame> {
 
 fn main_top(mtm: MainThreadMarker) -> f64 {
     NSScreen::mainScreen(mtm)
-        .map(|screen| screen.frame().max_y())
+        .map(|screen| screen.frame().max().y)
         .unwrap_or(0.0)
 }
 
@@ -262,8 +262,11 @@ impl TrailWindow {
         layer.setFillColor(None);
         layer.setStrokeColor(Some(&color(config.color, 1.0)));
         layer.setLineWidth(config.pen_width.max(1) as f64);
-        layer.setLineCap(kCALineCapRound);
-        layer.setLineJoin(kCALineJoinRound);
+        // SAFETY: Core Animation exports these process-lifetime constants.
+        unsafe {
+            layer.setLineCap(kCALineCapRound);
+            layer.setLineJoin(kCALineJoinRound);
+        }
         view.setWantsLayer(true);
         view.setLayer(Some(&layer));
         window.setContentView(Some(&view));

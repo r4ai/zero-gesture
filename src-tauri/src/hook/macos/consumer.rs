@@ -265,7 +265,7 @@ impl MacosInputConsumer {
     }
 
     #[cfg(target_os = "macos")]
-    fn fail_renderer(&mut self, state: &TapState) {
+    pub(super) fn fail_renderer(&mut self, state: &TapState) {
         self.renderer_failed = true;
         state.disable_active_input();
         state.with_owner_mut(|owner| owner.renderer_terminated());

@@ -31,7 +31,7 @@ pub(super) enum Command {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Delivery {
+pub(crate) enum Delivery {
     Accepted,
     Full,
     Fault,
