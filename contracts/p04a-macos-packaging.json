@@ -55,6 +55,13 @@
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/tests/p04a_macos_packaging.rs",
       "evidence_name": "engine_mode_enforces_managed_webview_invariant_during_run_events"
+    },
+    {
+      "id": "P04A-PROCESS-003",
+      "obligation": "The packaged Engine has accessory activation policy and does not create its own Dock item.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/tests/p04a_macos_packaging.rs",
+      "evidence_name": "engine_mode_stays_out_of_the_dock"
     }
   ]
 }

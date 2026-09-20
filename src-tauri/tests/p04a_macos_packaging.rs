@@ -156,3 +156,18 @@ fn engine_mode_enforces_managed_webview_invariant_during_run_events() {
     let bundle = app_bundle();
     let _engine = EngineProcess::start(&bundle);
 }
+
+#[test]
+fn engine_mode_stays_out_of_the_dock() {
+    use objc2_app_kit::{NSApplicationActivationPolicy, NSRunningApplication};
+
+    let engine = EngineProcess::start(&app_bundle());
+    let application = NSRunningApplication::runningApplicationWithProcessIdentifier(
+        engine.child.id().try_into().unwrap(),
+    )
+    .expect("packaged Engine must be registered with AppKit");
+    assert_eq!(
+        application.activationPolicy(),
+        NSApplicationActivationPolicy::Accessory
+    );
+}

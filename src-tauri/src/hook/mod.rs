@@ -26,6 +26,8 @@ use log::warn;
 
 use crate::config::ConfigSnapshotReader;
 use crate::domain::{MouseEvent, Point};
+#[cfg(target_os = "macos")]
+use crate::overlay::macos::MacosOverlayClient;
 
 pub(crate) fn record_window_capture(
     capture: &crate::capture::WindowCapture,
@@ -69,6 +71,7 @@ type HookSpawn = (
 pub fn spawn(
     reader: ConfigSnapshotReader,
     capture: Arc<crate::capture::WindowCapture>,
+    #[cfg(target_os = "macos")] overlay: MacosOverlayClient,
 ) -> io::Result<HookSpawn> {
     info!("starting hook thread");
     let tid = Arc::new(AtomicU32::new(0));
@@ -92,7 +95,7 @@ pub fn spawn(
             let result = {
                 let _ = capture;
                 panic::catch_unwind(AssertUnwindSafe(|| {
-                    macos::run_loop_macos(reader, thread_stop, event_tx.clone())
+                    macos::run_loop_macos(reader, thread_stop, event_tx.clone(), overlay)
                 }))
                 .unwrap_or_else(|_| Err(HookFailure::new("event tap", "panicked")))
             };

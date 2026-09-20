@@ -219,4 +219,5 @@ resolve or compile these dependencies. P04R0 added dependency compile cost and
 support checks; P04R1-R3 changed implementation and ownership only behind the
 existing private seams. ADRs 0024 and 0025 are authoritative for the completed
 atomic named-field integration, and ADR 0026 is authoritative for the completed
-P04b3c-a Active Input phase. The next behavior phase is P04b3c-b Native Overlay.
+P04b3c-a Active Input phase. ADR 0027 is authoritative for the completed
+P04b3c-b Native Overlay; P05m shell/permissions/autostart is the next phase.

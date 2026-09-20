@@ -1,4 +1,9 @@
-//! Gesture overlay thread.
+//! Native gesture overlays.
+//!
+//! macOS owns AppKit/Core Animation resources on the Tauri main thread in
+//! `macos`; its bounded queue keeps native objects inside that module.
+//!
+//! # Windows overlay thread
 //!
 //! Manages a transparent overlay window that draws the mouse gesture trail
 //! using a pluggable rendering backend on a near-fullscreen layered window.
@@ -18,7 +23,7 @@
 //!
 //! # Rendering
 //!
-//! Trail rendering is abstracted behind the [`TrailRenderer`] trait so that
+//! Windows trail rendering is abstracted behind the `TrailRenderer` trait so that
 //! the backend can be swapped (e.g. from GDI to Direct2D) without touching
 //! the window management or message-loop code.
 
@@ -26,6 +31,9 @@
 mod gdi;
 #[cfg(windows)]
 mod window;
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) mod macos;
 
 #[cfg(windows)]
 mod direct2d;
@@ -261,6 +269,20 @@ pub(super) struct OverlayConfig {
     pub label_padding: i32,
 }
 
+impl OverlayConfig {
+    fn from_runtime(runtime: &RuntimeConfig) -> Self {
+        let cfg = &runtime.appearance;
+        Self {
+            color: parse_hex_color(&cfg.trail_color),
+            pen_width: cfg.trail_thickness.round() as i32,
+            label_font_family: cfg.label_font_family.clone(),
+            label_font_size: cfg.label_font_size.round() as i32,
+            label_font_weight: cfg.label_font_weight,
+            label_padding: cfg.label_padding.round() as i32,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Public interface
 // ---------------------------------------------------------------------------
@@ -282,17 +304,7 @@ pub(crate) fn spawn(runtime: Arc<RuntimeConfig>) -> io::Result<(OverlayClient, J
     let (ready_tx, ready_rx) = mpsc::sync_channel(1);
 
     // Snapshot config before entering the thread.
-    let overlay_config = {
-        let cfg = &runtime.appearance;
-        OverlayConfig {
-            color: parse_hex_color(&cfg.trail_color),
-            pen_width: cfg.trail_thickness.round() as i32,
-            label_font_family: cfg.label_font_family.clone(),
-            label_font_size: cfg.label_font_size.round() as i32,
-            label_font_weight: cfg.label_font_weight,
-            label_padding: cfg.label_padding.round() as i32,
-        }
-    };
+    let overlay_config = OverlayConfig::from_runtime(&runtime);
 
     let worker_thread_id = Arc::clone(&thread_id);
     let worker_wake_pending = Arc::clone(&wake_pending);

@@ -1044,7 +1044,7 @@ mod tests {
         let state =
             TapState::with_owner(41, Some(super::super::owner::NativeInputOwner::new(reader)));
         state.enable_active_input();
-        let mut consumer = MacosInputConsumer::new(executor);
+        let mut consumer = MacosInputConsumer::new_test(executor);
         let mut clock = OwnerClock::new();
         let point = Point::new(0, 0);
         context_worker.observe(MouseEvent::MouseMove, point, 1_000_000);
@@ -1106,7 +1106,7 @@ mod tests {
         }));
         let state = TapState::with_owner(41, Some(owner));
         state.enable_active_input();
-        let mut consumer = MacosInputConsumer::new(executor);
+        let mut consumer = MacosInputConsumer::new_test(executor);
         let mut clock = OwnerClock::new();
 
         assert_eq!(
@@ -1180,7 +1180,7 @@ mod tests {
         let state =
             TapState::with_owner(41, Some(super::super::owner::NativeInputOwner::new(reader)));
         state.enable_active_input();
-        let mut consumer = MacosInputConsumer::new(executor);
+        let mut consumer = MacosInputConsumer::new_test(executor);
         let mut clock = OwnerClock::new();
         let point = Point::new(0, 0);
         context_worker.observe(MouseEvent::MouseMove, point, 1_000_000);
@@ -1246,7 +1246,7 @@ mod tests {
             ),
             crate::domain::Disposition::Suppress
         );
-        let mut consumer = MacosInputConsumer::new(executor);
+        let mut consumer = MacosInputConsumer::new_test(executor);
 
         consumer.prepare_shutdown(&state, &mut context_worker, 1);
         assert_eq!(
@@ -1255,6 +1255,66 @@ mod tests {
         );
         state.detach_owner();
         consumer.finish_shutdown();
+        assert_eq!(replayed.load(Ordering::Relaxed), 1);
+        context_worker.shutdown();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn renderer_failure_replay_survives_prepare_and_finish_shutdown() {
+        let (_directory, _config_owner, reader, generation) = consumer_reader();
+        let replayed = Arc::new(AtomicUsize::new(0));
+        let worker_replayed = Arc::clone(&replayed);
+        let down = Point::new(4, 5);
+        let executor = MacosActionExecutor::spawn_with(41, move |work, _| {
+            assert!(matches!(
+                work,
+                ExecutorWork::Replay {
+                    trigger: DomainTriggerButton::Right,
+                    down_at,
+                    up_at,
+                } if *down_at == down && *up_at == down
+            ));
+            worker_replayed.fetch_add(1, Ordering::Relaxed);
+            ExecutionOutcome::Posted
+        })
+        .unwrap();
+        let mut context_worker = ContextWorker::spawn_test(reader.clone(), None);
+        let mut owner = super::super::owner::NativeInputOwner::new(reader);
+        owner.set_context(Some(ContextView {
+            generation,
+            binding_set: BindingSetId::from_index(0).unwrap(),
+            target: crate::domain::input::TargetToken(9),
+            point: down,
+            updated_tick: 1,
+        }));
+        let state = TapState::with_owner(41, Some(owner));
+        state.enable_active_input();
+        assert_eq!(
+            state.decide(
+                input(MouseEvent::ButtonDown(DomainTriggerButton::Right), down, 1),
+                true,
+            ),
+            crate::domain::Disposition::Suppress
+        );
+        let mut consumer = MacosInputConsumer::new_test(executor);
+
+        consumer.fail_renderer(&state);
+        assert_eq!(
+            state.decide(
+                input(
+                    MouseEvent::ButtonUp(DomainTriggerButton::Right),
+                    Point::new(8, 9),
+                    2,
+                ),
+                true,
+            ),
+            crate::domain::Disposition::Pass
+        );
+        consumer.prepare_shutdown(&state, &mut context_worker, 2);
+        state.detach_owner();
+        consumer.finish_shutdown();
+
         assert_eq!(replayed.load(Ordering::Relaxed), 1);
         context_worker.shutdown();
     }
@@ -1274,7 +1334,7 @@ mod tests {
             let state =
                 TapState::with_owner(41, Some(super::super::owner::NativeInputOwner::new(reader)));
             state.enable_active_input();
-            let mut consumer = MacosInputConsumer::new(executor);
+            let mut consumer = MacosInputConsumer::new_test(executor);
             let mut clock = OwnerClock::new();
             let context = first_context.map(|updated_tick| ContextView {
                 generation,
