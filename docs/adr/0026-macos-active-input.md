@@ -153,6 +153,36 @@ CPU, memory, or canonical complexity number is invented locally. The
 repository-wide cognitive/cyclomatic metrics remain the pinned macOS/quality CI
 measurement defined by ADR 0006.
 
+## P06m amendment: stationary pointer context
+
+Physical testing on 2026-09-20 found that a right drag in the configured
+TextEdit target passed through without action dispatch. The event-only context
+requests left any stationary pointer sample stale after 100 ms. A final move
+inside the 25 ms request window was also discarded, leaving the cached point
+unable to match the next button-down. Both conditions now have red/green
+regression evidence.
+
+The existing run-loop safety timer refreshes the latest observed point through
+the existing coalescing context worker, at the existing 25 ms request limit.
+The consumer rechecks whether configuration needs context before this refresh.
+No pointer observation means no periodic query; invalidating context clears
+that point and requires a new observation before polling resumes. Button-down
+still requests immediate target revalidation. The callback does not query,
+wait, allocate, or schedule work beyond its existing fixed lanes.
+
+Exact-point, generation, target revalidation, and 100 ms freshness checks are
+unchanged. Slow or failed resolution still passes input rather than using a
+stale sample. This explicitly amends ADR 0018's event-only request policy:
+an enabled configuration with bindings may now continue bounded AX queries
+while the pointer is stationary. This costs background worker activity but
+avoids extending stale-target trust or introducing an observer graph. Physical
+CPU and responsiveness must be measured; these unit tests are not performance
+acceptance.
+
+Three additional unique context obligations make this slice `O=12, O_v=12,
+U=0, T=12, T_r=0` (automated only); the P04 inventory including the Dock-policy
+case in ADR 0014 is now 118. Windows owner/callback code is unchanged.
+
 ## Verification and limits
 
 Windows-host checks validate formatting, host tests, Clippy, the contract

@@ -543,6 +543,7 @@ fn run_engine() -> Result<(), String> {
     let app = tauri::Builder::default()
         .plugin(log_builder.build())
         .setup(move |app| {
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             let config_dir_path = engine_config_dir(app.path().app_config_dir()?);
             let Some(server) = prepare_engine_server(&config_dir_path).map_err(|error| {
                 tauri::Error::Setup((Box::new(error) as Box<dyn std::error::Error>).into())

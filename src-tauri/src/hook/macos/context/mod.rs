@@ -309,7 +309,7 @@ pub(super) struct ContextWorker {
     preflight_complete: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
     last_request_tick: Option<u32>,
-    last_request_point: Option<Point>,
+    last_observed_point: Option<Point>,
     next_request_id: u64,
     minimum_request_id: u64,
     needed: bool,
@@ -369,7 +369,7 @@ impl ContextWorker {
             preflight_complete,
             handle: Some(handle),
             last_request_tick: None,
-            last_request_point: None,
+            last_observed_point: None,
             next_request_id: 0,
             minimum_request_id: 0,
             needed: true,
@@ -383,7 +383,7 @@ impl ContextWorker {
         self.needed = needed;
         self.last_request_tick = None;
         if !needed {
-            self.last_request_point = None;
+            self.last_observed_point = None;
             self.minimum_request_id = self.next_request_id;
         }
     }
@@ -392,6 +392,7 @@ impl ContextWorker {
         if !self.needed {
             return;
         }
+        self.last_observed_point = Some(point);
         let tick = (timestamp_ns / 1_000_000) as u32;
         if request_due(self.last_request_tick, event, tick) {
             if self.next_request_id == u64::MAX {
@@ -405,7 +406,6 @@ impl ContextWorker {
                 tick,
             });
             self.last_request_tick = Some(tick);
-            self.last_request_point = Some(point);
         }
     }
 
@@ -423,9 +423,10 @@ impl ContextWorker {
         self.next_request_id
     }
 
-    pub(super) fn latest_observed(&mut self, tick: u32) -> Option<ContextView> {
-        self.last_request_point
-            .and_then(|point| self.latest(point, tick))
+    pub(super) fn refresh_observed(&mut self, tick: u32) -> Option<ContextView> {
+        let point = self.last_observed_point?;
+        self.observe(MouseEvent::MouseMove, point, u64::from(tick) * 1_000_000);
+        self.latest(point, tick)
     }
 
     pub(super) fn activation_result(
@@ -1046,6 +1047,55 @@ mod tests {
         assert!(mailbox.latest(Point::new(1, 2), 110).is_some());
         assert!(mailbox.latest(Point::new(1, 2), 111).is_none());
         assert!(mailbox.latest(Point::new(2, 2), 10).is_none());
+    }
+
+    #[test]
+    fn stationary_pointer_refreshes_context_without_extending_cache_freshness() {
+        let (_directory, reader) = reader();
+        let mut worker = ContextWorker::spawn_with(reader, allowed, fake_resolver).unwrap();
+        let point = Point::new(12, 34);
+        worker.observe(MouseEvent::MouseMove, point, 1_000_000);
+        assert!(wait_until(Duration::from_millis(200), || {
+            worker.latest(point, 1).is_some()
+        }));
+
+        assert!(wait_until(Duration::from_millis(200), || {
+            worker
+                .refresh_observed(200)
+                .is_some_and(|context| context.updated_tick == 200)
+        }));
+        assert!(worker.latest(point, 301).is_none());
+    }
+
+    #[test]
+    fn timer_refresh_uses_the_final_rate_limited_pointer_position() {
+        let (_directory, reader) = reader();
+        let mut worker = ContextWorker::spawn_with(reader, allowed, fake_resolver).unwrap();
+        worker.observe(MouseEvent::MouseMove, Point::new(1, 2), 1_000_000);
+        let final_point = Point::new(12, 34);
+        worker.observe(MouseEvent::MouseMove, final_point, 2_000_000);
+        assert_eq!(worker.last_request_id(), 1);
+
+        assert!(wait_until(Duration::from_millis(200), || {
+            worker
+                .refresh_observed(26)
+                .is_some_and(|context| context.point == final_point)
+        }));
+        assert_eq!(worker.last_request_id(), 2);
+    }
+
+    #[test]
+    fn timer_refresh_stays_idle_without_a_needed_pointer_observation() {
+        let (_directory, reader) = reader();
+        let mut worker = ContextWorker::spawn_with(reader, allowed, fake_resolver).unwrap();
+        assert!(worker.refresh_observed(100).is_none());
+        assert_eq!(worker.last_request_id(), 0);
+        worker.observe(MouseEvent::MouseMove, Point::new(1, 2), 101_000_000);
+        worker.set_needed(false);
+        assert!(worker.refresh_observed(200).is_none());
+        worker.set_needed(true);
+        assert!(worker.refresh_observed(300).is_none());
+        assert_eq!(worker.last_request_id(), 1);
     }
 
     #[test]

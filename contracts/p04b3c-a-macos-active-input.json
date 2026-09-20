@@ -62,6 +62,27 @@
       "runner": "macos-cargo-test",
       "evidence_file": "src-tauri/src/hook/macos/mod.rs",
       "evidence_name": "shutdown_disables_callback_and_drains_one_reserved_replay"
+    },
+    {
+      "id": "P04B3CA-REVALIDATE-002",
+      "obligation": "The run-loop timer refreshes a stationary pointer context after its original sample expires without extending the 100 ms cache freshness limit.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos/context/mod.rs",
+      "evidence_name": "stationary_pointer_refreshes_context_without_extending_cache_freshness"
+    },
+    {
+      "id": "P04B3CA-REVALIDATE-003",
+      "obligation": "The run-loop timer resolves the final rate-limited pointer position while preserving the 25 ms request bound.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos/context/mod.rs",
+      "evidence_name": "timer_refresh_uses_the_final_rate_limited_pointer_position"
+    },
+    {
+      "id": "P04B3CA-REVALIDATE-004",
+      "obligation": "Periodic context refresh submits no request before an observation or after invalidation until a new needed observation arrives.",
+      "runner": "macos-cargo-test",
+      "evidence_file": "src-tauri/src/hook/macos/context/mod.rs",
+      "evidence_name": "timer_refresh_stays_idle_without_a_needed_pointer_observation"
     }
   ]
 }

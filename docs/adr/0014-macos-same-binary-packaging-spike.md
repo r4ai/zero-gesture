@@ -32,6 +32,13 @@ Engine for `--engine`.
 Both modes therefore inherit the same bundle version, code signature, Team ID
 when Developer ID signed, and macOS privacy permission identity.
 
+The Engine selects AppKit's accessory activation policy during macOS setup.
+It remains a status-item application and owns no Dock item; Settings retains
+Tauri's regular application policy. This role-specific decision was added
+following duplicate Engine/Settings Dock items during P06m physical testing
+on 2026-09-20. A bundle-wide `LSUIElement` change would also hide Settings and
+is therefore not used. No new executable or identity is introduced.
+
 The P04a Engine builds only a native Tauri status item.
 It does not create a Tauri webview window and launches Settings with
 `current_exe --settings`.
@@ -140,17 +147,17 @@ P04a does not request those permissions and does not claim that result.
 
 ## Contract and test accounting
 
-`contracts/p04a-macos-packaging.json` contains eight independent obligations
-and eight macOS-only runnable system cases:
+`contracts/p04a-macos-packaging.json` contains nine independent obligations
+and nine macOS-only runnable system cases:
 
-- `O = 8`, `O_v = 8`, `U = 0`, and `O_v / O = 100%`;
-- `T = 8`, `T_u = 0`, `T_i = 0`, and `T_e = 8`;
+- `O = 9`, `O_v = 9`, `U = 0`, and `O_v / O = 100%`;
+- `T = 9`, `T_u = 0`, `T_i = 0`, and `T_e = 9`;
 - `T_r = 0`, `P = 0`, `D = 0`, and `F = 0`.
 
 Each obligation has one unique test.
 The existing Windows Cargo-test listing intentionally does not treat a
 macOS-only test as absent evidence.
-The macOS packaging job runs all eight tests against the just-built `.app`.
+The macOS packaging job runs all nine tests against the just-built `.app`.
 No source test is duplicated at another layer.
 That job also runs macOS-target Clippy with all warnings denied except
 `dead_code`: P04a intentionally compiles but does not connect the existing

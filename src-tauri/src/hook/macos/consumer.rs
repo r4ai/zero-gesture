@@ -132,7 +132,9 @@ impl MacosInputConsumer {
         context: &mut ContextWorker,
         tick: u32,
     ) {
-        let latest = context.latest_observed(tick);
+        let needed = self.context_route(state, MouseEvent::Other) != ContextRoute::Inactive;
+        context.set_needed(needed);
+        let latest = context.refresh_observed(tick);
         state.with_owner_mut(|owner| owner.set_context(latest));
         self.poll_activation(state, context, tick);
     }
