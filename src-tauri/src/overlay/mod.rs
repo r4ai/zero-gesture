@@ -1,4 +1,9 @@
-//! Gesture overlay thread.
+//! Native gesture overlays.
+//!
+//! macOS owns AppKit/Core Animation resources on the Tauri main thread in
+//! `macos`; its bounded queue keeps native objects inside that module.
+//!
+//! # Windows overlay thread
 //!
 //! Manages a transparent overlay window that draws the mouse gesture trail
 //! using a pluggable rendering backend on a near-fullscreen layered window.
@@ -18,7 +23,7 @@
 //!
 //! # Rendering
 //!
-//! Trail rendering is abstracted behind the [`TrailRenderer`] trait so that
+//! Windows trail rendering is abstracted behind the `TrailRenderer` trait so that
 //! the backend can be swapped (e.g. from GDI to Direct2D) without touching
 //! the window management or message-loop code.
 
